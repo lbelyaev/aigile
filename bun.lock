@@ -19,6 +19,13 @@
         "@aigile/types": "workspace:*",
       },
     },
+    "packages/roles": {
+      "name": "@aigile/roles",
+      "version": "0.0.0",
+      "dependencies": {
+        "@aigile/types": "workspace:*",
+      },
+    },
     "packages/types": {
       "name": "@aigile/types",
       "version": "0.0.0",
@@ -35,6 +42,8 @@
     "@aigile/acp": ["@aigile/acp@workspace:packages/acp"],
 
     "@aigile/adapters": ["@aigile/adapters@workspace:packages/adapters"],
+
+    "@aigile/roles": ["@aigile/roles@workspace:packages/roles"],
 
     "@aigile/types": ["@aigile/types@workspace:packages/types"],
 
