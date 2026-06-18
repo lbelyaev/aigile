@@ -8,6 +8,10 @@
         "typescript": "^5.7.3",
       },
     },
+    "packages/acp": {
+      "name": "@aigile/acp",
+      "version": "0.0.0",
+    },
     "packages/adapters": {
       "name": "@aigile/adapters",
       "version": "0.0.0",
@@ -28,6 +32,8 @@
     },
   },
   "packages": {
+    "@aigile/acp": ["@aigile/acp@workspace:packages/acp"],
+
     "@aigile/adapters": ["@aigile/adapters@workspace:packages/adapters"],
 
     "@aigile/types": ["@aigile/types@workspace:packages/types"],
