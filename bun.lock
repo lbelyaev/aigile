@@ -8,6 +8,13 @@
         "typescript": "^5.7.3",
       },
     },
+    "packages/adapters": {
+      "name": "@aigile/adapters",
+      "version": "0.0.0",
+      "dependencies": {
+        "@aigile/types": "workspace:*",
+      },
+    },
     "packages/types": {
       "name": "@aigile/types",
       "version": "0.0.0",
@@ -21,6 +28,8 @@
     },
   },
   "packages": {
+    "@aigile/adapters": ["@aigile/adapters@workspace:packages/adapters"],
+
     "@aigile/types": ["@aigile/types@workspace:packages/types"],
 
     "@aigile/workflow": ["@aigile/workflow@workspace:packages/workflow"],
