@@ -9,7 +9,8 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc -b",
-    "check": "bun run typecheck && bun test"
+    "check": "bun run typecheck && bun test",
+    "demo": "bun run packages/cli/src/main.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.2.21",

@@ -19,6 +19,26 @@
         "@aigile/types": "workspace:*",
       },
     },
+    "packages/cli": {
+      "name": "@aigile/cli",
+      "version": "0.0.0",
+      "bin": {
+        "aigile": "./src/main.ts",
+      },
+      "dependencies": {
+        "@aigile/demo": "workspace:*",
+      },
+    },
+    "packages/demo": {
+      "name": "@aigile/demo",
+      "version": "0.0.0",
+      "dependencies": {
+        "@aigile/adapters": "workspace:*",
+        "@aigile/roles": "workspace:*",
+        "@aigile/types": "workspace:*",
+        "@aigile/workflow": "workspace:*",
+      },
+    },
     "packages/roles": {
       "name": "@aigile/roles",
       "version": "0.0.0",
@@ -42,6 +62,10 @@
     "@aigile/acp": ["@aigile/acp@workspace:packages/acp"],
 
     "@aigile/adapters": ["@aigile/adapters@workspace:packages/adapters"],
+
+    "@aigile/cli": ["@aigile/cli@workspace:packages/cli"],
+
+    "@aigile/demo": ["@aigile/demo@workspace:packages/demo"],
 
     "@aigile/roles": ["@aigile/roles@workspace:packages/roles"],
 
