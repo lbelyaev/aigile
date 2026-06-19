@@ -22,6 +22,26 @@ export interface LinearGraphqlReadyIssueSourceOptions {
   fetchGraphql?: LinearFetchGraphql;
 }
 
+export interface LinearTeam {
+  key: string;
+  name: string;
+}
+
+export interface LinearGraphqlListTeamsOptions {
+  apiKey: string;
+  endpoint?: string;
+  first?: number;
+  fetchGraphql?: LinearFetchGraphql;
+}
+
+export interface LinearGraphqlListWorkflowStateNamesOptions {
+  apiKey: string;
+  teamKey: string;
+  endpoint?: string;
+  first?: number;
+  fetchGraphql?: LinearFetchGraphql;
+}
+
 interface LinearIssueResponse {
   issue?: {
     id?: unknown;
@@ -43,6 +63,12 @@ interface LinearIssuesResponse {
 interface LinearWorkflowStatesResponse {
   workflowStates?: {
     nodes?: Array<{ id?: unknown; name?: unknown }>;
+  };
+}
+
+interface LinearTeamsResponse {
+  teams?: {
+    nodes?: Array<{ key?: unknown; name?: unknown }>;
   };
 }
 
@@ -121,6 +147,45 @@ const toIssueRecords = (value: unknown): IssueRecord[] => {
 
 const looksLikeUuid = (value: string): boolean =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
+export const listLinearTeams = async (
+  options: LinearGraphqlListTeamsOptions,
+): Promise<LinearTeam[]> => {
+  const endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
+  const fetchGraphql = options.fetchGraphql ?? defaultFetchGraphql;
+  const response = await fetchGraphql(`
+    query LinearTeams($first: Int!) {
+      teams(first: $first) {
+        nodes { key name }
+      }
+    }
+  `, { first: options.first ?? 100 }, { apiKey: options.apiKey, endpoint });
+  return ((response as LinearTeamsResponse).teams?.nodes ?? [])
+    .filter((team): team is { key: string; name: string } =>
+      typeof team.key === "string" && team.key.length > 0 &&
+      typeof team.name === "string" && team.name.length > 0)
+    .map((team) => ({ key: team.key, name: team.name }));
+};
+
+export const listLinearWorkflowStateNames = async (
+  options: LinearGraphqlListWorkflowStateNamesOptions,
+): Promise<string[]> => {
+  const endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
+  const fetchGraphql = options.fetchGraphql ?? defaultFetchGraphql;
+  const response = await fetchGraphql(`
+    query WorkflowStatesByTeam($teamKey: String!, $first: Int!) {
+      workflowStates(filter: { team: { key: { eq: $teamKey } } }, first: $first) {
+        nodes { name }
+      }
+    }
+  `, {
+    teamKey: options.teamKey,
+    first: options.first ?? 100,
+  }, { apiKey: options.apiKey, endpoint });
+  return ((response as LinearWorkflowStatesResponse).workflowStates?.nodes ?? [])
+    .map((state) => state.name)
+    .filter((name): name is string => typeof name === "string" && name.length > 0);
+};
 
 export const createLinearGraphqlIssueTrackerAdapter = (
   options: LinearGraphqlIssueTrackerAdapterOptions,

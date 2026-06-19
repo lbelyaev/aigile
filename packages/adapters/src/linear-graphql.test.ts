@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 import {
   createLinearGraphqlIssueTrackerAdapter,
   createLinearGraphqlReadyIssueSource,
+  listLinearTeams,
+  listLinearWorkflowStateNames,
 } from "./index.js";
 
 describe("Linear GraphQL issue tracker adapter", () => {
@@ -120,5 +122,50 @@ describe("Linear GraphQL issue tracker adapter", () => {
       status: "Ready for Aigile",
       comments: [],
     }]);
+  });
+
+  it("lists Linear team keys and names", async () => {
+    await expect(listLinearTeams({
+      apiKey: "test-key",
+      fetchGraphql: async (query, variables) => {
+        expect(query).toContain("LinearTeams");
+        expect(variables).toEqual({ first: 100 });
+        return {
+          teams: {
+            nodes: [
+              { key: "ENG", name: "Engineering" },
+              { key: "OPS", name: "Operations" },
+            ],
+          },
+        };
+      },
+    })).resolves.toEqual([
+      { key: "ENG", name: "Engineering" },
+      { key: "OPS", name: "Operations" },
+    ]);
+  });
+
+  it("lists Linear workflow state names for a team key", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+
+    await expect(listLinearWorkflowStateNames({
+      apiKey: "test-key",
+      teamKey: "ENG",
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        return {
+          workflowStates: {
+            nodes: [
+              { name: "Ready for Aigile" },
+              { name: "In Progress" },
+            ],
+          },
+        };
+      },
+    })).resolves.toEqual(["Ready for Aigile", "In Progress"]);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.query).toContain("WorkflowStatesByTeam");
+    expect(calls[0]!.variables).toEqual({ teamKey: "ENG", first: 100 });
   });
 });
