@@ -7,6 +7,11 @@ export {
   translateSessionUpdate,
 } from "./session.js";
 
+export {
+  connectAcpRuntime,
+  createAcpProcess,
+} from "./process.js";
+
 export type {
   JsonRpcNotification,
   JsonRpcRequest,
@@ -24,3 +29,12 @@ export type {
   AcpSessionOptions,
   PermissionDecision,
 } from "./session.js";
+
+export type {
+  AcpChildProcess,
+  AcpProcess,
+  ConnectedAcpRuntime,
+  ConnectAcpRuntimeInput,
+  CreateAcpProcessOptions,
+  SpawnAcpProcess,
+} from "./process.js";
