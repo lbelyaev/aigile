@@ -71,4 +71,67 @@ describe("ACP role runner", () => {
     });
     expect(killed).toBe(true);
   });
+
+  it("parses artifact JSON from streamed ACP text events", async () => {
+    let eventHandler: ((event: { type: "text_delta"; sessionId: string; delta: string }) => void) | undefined;
+    const connector: AcpRuntimeConnector = async () => ({
+      session: {
+        sessionId: "role-session-1",
+        acpSessionId: "acp-session-1",
+        prompt: async () => {
+          eventHandler?.({
+            type: "text_delta",
+            sessionId: "role-session-1",
+            delta: JSON.stringify({
+              artifactKind: "checker.verdict",
+              payload: {
+                verdict: "pass",
+                summary: "Streamed verdict",
+                reasons: [],
+              },
+            }),
+          });
+          return undefined;
+        },
+        cancel: () => undefined,
+        onEvent: (handler) => {
+          eventHandler = handler as typeof eventHandler;
+          return () => {
+            eventHandler = undefined;
+          };
+        },
+      },
+      process: {
+        kill: async () => undefined,
+      },
+    });
+    const runner = createAcpRoleRunner({ connector });
+
+    const artifact = await runner.run({
+      roleId: "checker",
+      issueId: "LIN-123",
+      runtime: {
+        id: "runtime-checker",
+        transport: "stdio",
+        command: ["agent-acp"],
+      },
+      assignment: {
+        roleId: "checker",
+        runtimeProfileId: "runtime-checker",
+      },
+      inputArtifacts: [],
+    });
+
+    expect(artifact).toEqual({
+      id: "agent:LIN-123:checker:checker.verdict",
+      kind: "checker.verdict",
+      source: "agent",
+      producerRoleId: "checker",
+      payload: {
+        verdict: "pass",
+        summary: "Streamed verdict",
+        reasons: [],
+      },
+    });
+  });
 });

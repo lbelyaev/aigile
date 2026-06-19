@@ -60,8 +60,13 @@ export const createAcpRoleRunner = (
   return {
     run: async (input) => {
       const connection = await connector(input);
+      let streamedText = "";
+      const unsubscribe = connection.session.onEvent((event) => {
+        if (event.type === "text_delta") streamedText += event.delta;
+      });
       try {
-        const response = parseRoleArtifactResponse(await connection.session.prompt(buildPrompt(input)));
+        const promptResult = await connection.session.prompt(buildPrompt(input));
+        const response = parseRoleArtifactResponse(promptResult ?? streamedText);
         return {
           id: `agent:${input.issueId}:${input.roleId}:${response.artifactKind}`,
           kind: response.artifactKind,
@@ -70,8 +75,9 @@ export const createAcpRoleRunner = (
           payload: structuredClone(response.payload),
         } satisfies WorkflowArtifact;
       } finally {
+        unsubscribe();
         await connection.process.kill();
-}
+      }
     },
   };
 };
