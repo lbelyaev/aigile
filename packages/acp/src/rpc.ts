@@ -1,4 +1,4 @@
-import { Readable, Writable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 
 export interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -49,27 +49,24 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isJsonRpcRequest = (value: unknown): value is JsonRpcRequest =>
-  isRecord(value)
-  && value.jsonrpc === "2.0"
-  && (typeof value.id === "number" || typeof value.id === "string")
-  && typeof value.method === "string";
+  isRecord(value) &&
+  value.jsonrpc === "2.0" &&
+  (typeof value.id === "number" || typeof value.id === "string") &&
+  typeof value.method === "string";
 
 const isJsonRpcNotification = (value: unknown): value is JsonRpcNotification =>
-  isRecord(value)
-  && value.jsonrpc === "2.0"
-  && value.id === undefined
-  && typeof value.method === "string";
+  isRecord(value) &&
+  value.jsonrpc === "2.0" &&
+  value.id === undefined &&
+  typeof value.method === "string";
 
 const isJsonRpcResponse = (value: unknown): value is JsonRpcResponse =>
-  isRecord(value)
-  && value.jsonrpc === "2.0"
-  && (typeof value.id === "number" || typeof value.id === "string")
-  && value.method === undefined;
+  isRecord(value) &&
+  value.jsonrpc === "2.0" &&
+  (typeof value.id === "number" || typeof value.id === "string") &&
+  value.method === undefined;
 
-const parseNdjsonStream = (
-  input: Readable,
-  onValue: (value: unknown) => void,
-): void => {
+const parseNdjsonStream = (input: Readable, onValue: (value: unknown) => void): void => {
   let buffer = "";
 
   input.on("data", (chunk: Buffer | string) => {
@@ -147,15 +144,15 @@ export const createRpcClient = (
   const sendRequest: RpcClient["sendRequest"] = (method, params, requestOptions) => {
     const id = nextId;
     nextId += 1;
-    const request: JsonRpcRequest = params === undefined
-      ? { jsonrpc: "2.0", id, method }
-      : { jsonrpc: "2.0", id, method, params };
+    const request: JsonRpcRequest =
+      params === undefined
+        ? { jsonrpc: "2.0", id, method }
+        : { jsonrpc: "2.0", id, method, params };
     write(request);
 
     return new Promise((resolve, reject) => {
-      const effectiveTimeout = requestOptions?.timeoutMs === undefined
-        ? timeoutMs
-        : requestOptions.timeoutMs;
+      const effectiveTimeout =
+        requestOptions?.timeoutMs === undefined ? timeoutMs : requestOptions.timeoutMs;
       const entry: PendingRequest = {
         resolve,
         reject,
@@ -172,9 +169,8 @@ export const createRpcClient = (
   };
 
   const sendNotification: RpcClient["sendNotification"] = (method, params) => {
-    const notification: JsonRpcNotification = params === undefined
-      ? { jsonrpc: "2.0", method }
-      : { jsonrpc: "2.0", method, params };
+    const notification: JsonRpcNotification =
+      params === undefined ? { jsonrpc: "2.0", method } : { jsonrpc: "2.0", method, params };
     write(notification);
   };
 
@@ -188,7 +184,8 @@ export const createRpcClient = (
     sendRequest,
     sendNotification,
     sendResponse: (id, result) => write({ jsonrpc: "2.0", id, result }),
-    sendErrorResponse: (id, code, message) => write({ jsonrpc: "2.0", id, error: { code, message } }),
+    sendErrorResponse: (id, code, message) =>
+      write({ jsonrpc: "2.0", id, error: { code, message } }),
     onNotification: (handler) => {
       notificationHandlers.push(handler);
       return () => {

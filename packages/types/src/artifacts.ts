@@ -32,24 +32,26 @@ const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((entry) => typeof entry === "string");
 
 export const isArchitectPlanPayload = (value: unknown): value is ArchitectPlanPayload =>
-  isRecord(value)
-  && typeof value.summary === "string"
-  && isStringArray(value.scope)
-  && isStringArray(value.acceptanceCriteria)
-  && isStringArray(value.verificationCommands)
-  && isStringArray(value.risks);
+  isRecord(value) &&
+  typeof value.summary === "string" &&
+  isStringArray(value.scope) &&
+  isStringArray(value.acceptanceCriteria) &&
+  isStringArray(value.verificationCommands) &&
+  isStringArray(value.risks);
 
 export const isDeveloperAttemptPayload = (value: unknown): value is DeveloperAttemptPayload =>
-  isRecord(value)
-  && typeof value.summary === "string"
-  && isStringArray(value.changedFiles)
-  && typeof value.verificationNotes === "string";
+  isRecord(value) &&
+  typeof value.summary === "string" &&
+  isStringArray(value.changedFiles) &&
+  typeof value.verificationNotes === "string";
 
 export const isCheckerVerdictPayload = (value: unknown): value is CheckerVerdictPayload =>
-  isRecord(value)
-  && (value.verdict === "pass" || value.verdict === "changes_requested" || value.verdict === "escalate")
-  && typeof value.summary === "string"
-  && isStringArray(value.reasons);
+  isRecord(value) &&
+  (value.verdict === "pass" ||
+    value.verdict === "changes_requested" ||
+    value.verdict === "escalate") &&
+  typeof value.summary === "string" &&
+  isStringArray(value.reasons);
 
 const extractJsonObjectTexts = (value: string): string[] => {
   const direct = value.trim();
@@ -71,7 +73,7 @@ const extractJsonObjectTexts = (value: string): string[] => {
         escaped = true;
         continue;
       }
-      if (char === "\"") {
+      if (char === '"') {
         inString = !inString;
         continue;
       }
@@ -94,7 +96,9 @@ const parseJsonString = (value: string): unknown => {
   try {
     return JSON.parse(value.trim()) as unknown;
   } catch (error) {
-    throw new Error(`Role artifact response was not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Role artifact response was not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 };
 
@@ -102,7 +106,10 @@ const validateKnownPayload = (response: RoleArtifactResponse): RoleArtifactRespo
   if (response.artifactKind === "architect.plan" && !isArchitectPlanPayload(response.payload)) {
     throw new Error("Invalid architect plan payload");
   }
-  if (response.artifactKind === "developer.attempt" && !isDeveloperAttemptPayload(response.payload)) {
+  if (
+    response.artifactKind === "developer.attempt" &&
+    !isDeveloperAttemptPayload(response.payload)
+  ) {
     throw new Error("Invalid developer attempt payload");
   }
   if (response.artifactKind === "checker.verdict" && !isCheckerVerdictPayload(response.payload)) {
@@ -123,10 +130,10 @@ export const parseRoleArtifactResponse = (value: unknown): RoleArtifactResponse 
         continue;
       }
       if (
-        !isRecord(candidate)
-        || typeof candidate.artifactKind !== "string"
-        || candidate.artifactKind.trim().length === 0
-        || !("payload" in candidate)
+        !isRecord(candidate) ||
+        typeof candidate.artifactKind !== "string" ||
+        candidate.artifactKind.trim().length === 0 ||
+        !("payload" in candidate)
       ) {
         continue;
       }
@@ -145,10 +152,10 @@ export const parseRoleArtifactResponse = (value: unknown): RoleArtifactResponse 
 
   const candidate = value;
   if (
-    !isRecord(candidate)
-    || typeof candidate.artifactKind !== "string"
-    || candidate.artifactKind.trim().length === 0
-    || !("payload" in candidate)
+    !isRecord(candidate) ||
+    typeof candidate.artifactKind !== "string" ||
+    candidate.artifactKind.trim().length === 0 ||
+    !("payload" in candidate)
   ) {
     throw new Error("Role artifact response did not include artifactKind and payload");
   }

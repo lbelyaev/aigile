@@ -4,23 +4,26 @@ import { defaultClaimComment, watchLoop, watchOnce } from "./index.js";
 
 describe("watchOnce", () => {
   it("claims the first ready issue and posts an operator comment", async () => {
-    const seedIssues = [{
-      id: "issue-1",
-      key: "LIN-900",
-      title: "Watcher skeleton",
-      description: "Claim one ready issue.",
-      acceptanceCriteria: ["Ready issue is claimed"],
-      status: "ready",
-      comments: [],
-    }, {
-      id: "issue-2",
-      key: "LIN-901",
-      title: "Second ready issue",
-      description: "Waits for the next pass.",
-      acceptanceCriteria: [],
-      status: "ready",
-      comments: [],
-    }];
+    const seedIssues = [
+      {
+        id: "issue-1",
+        key: "LIN-900",
+        title: "Watcher skeleton",
+        description: "Claim one ready issue.",
+        acceptanceCriteria: ["Ready issue is claimed"],
+        status: "ready",
+        comments: [],
+      },
+      {
+        id: "issue-2",
+        key: "LIN-901",
+        title: "Second ready issue",
+        description: "Waits for the next pass.",
+        acceptanceCriteria: [],
+        status: "ready",
+        comments: [],
+      },
+    ];
     const tracker = createFakeIssueTrackerAdapter(seedIssues);
 
     const result = await watchOnce({
@@ -114,15 +117,17 @@ describe("watchOnce", () => {
   });
 
   it("polls repeatedly without claiming the same issue twice in one process", async () => {
-    const seedIssues = [{
-      id: "issue-1",
-      key: "LIN-900",
-      title: "Watcher loop",
-      description: "Claim once.",
-      acceptanceCriteria: [],
-      status: "ready",
-      comments: [],
-    }];
+    const seedIssues = [
+      {
+        id: "issue-1",
+        key: "LIN-900",
+        title: "Watcher loop",
+        description: "Claim once.",
+        acceptanceCriteria: [],
+        status: "ready",
+        comments: [],
+      },
+    ];
     const tracker = createFakeIssueTrackerAdapter(seedIssues);
     const events: string[] = [];
 
@@ -169,15 +174,17 @@ describe("watchOnce", () => {
   });
 
   it("runs a callback after a successful claim", async () => {
-    const seedIssues = [{
-      id: "issue-1",
-      key: "LIN-900",
-      title: "Watcher loop",
-      description: "Start work after claim.",
-      acceptanceCriteria: [],
-      status: "ready",
-      comments: [],
-    }];
+    const seedIssues = [
+      {
+        id: "issue-1",
+        key: "LIN-900",
+        title: "Watcher loop",
+        description: "Start work after claim.",
+        acceptanceCriteria: [],
+        status: "ready",
+        comments: [],
+      },
+    ];
     const claimedIssueKeys: string[] = [];
 
     await watchLoop({

@@ -7,7 +7,12 @@ import {
   type ConnectAcpRuntimeInput,
   type PermissionDecision,
 } from "@aigile/acp";
-import { parseRoleArtifactResponse, type RuntimeArtifactProvenance, type RuntimeTokenUsage, type WorkflowArtifact } from "@aigile/types";
+import {
+  parseRoleArtifactResponse,
+  type RuntimeArtifactProvenance,
+  type RuntimeTokenUsage,
+  type WorkflowArtifact,
+} from "@aigile/types";
 import type { RoleRunner, RoleRunInput } from "./runner.js";
 import { buildRolePrompt, getDefaultRoleInstruction } from "./prompts.js";
 
@@ -23,12 +28,25 @@ export type AcpRuntimeConnector = (input: RoleRunInput) => Promise<AcpRuntimeCon
 export type AcpRoleProgressEvent =
   | { type: "role_started"; roleId: string; issueId: string; runtimeId: string }
   | { type: "runtime_connecting"; roleId: string; issueId: string; runtimeId: string }
-  | { type: "runtime_connected"; roleId: string; issueId: string; runtimeId: string; model: string; acpSessionId: string }
+  | {
+      type: "runtime_connected";
+      roleId: string;
+      issueId: string;
+      runtimeId: string;
+      model: string;
+      acpSessionId: string;
+    }
   | { type: "runtime_stderr"; roleId: string; issueId: string; runtimeId: string; chunk: string }
   | { type: "prompt_started"; roleId: string; issueId: string; runtimeId: string }
   | { type: "text_delta"; roleId: string; issueId: string; runtimeId: string; delta: string }
   | { type: "thinking_delta"; roleId: string; issueId: string; runtimeId: string; delta: string }
-  | { type: "token_usage"; roleId: string; issueId: string; runtimeId: string; usage: RuntimeTokenUsage }
+  | {
+      type: "token_usage";
+      roleId: string;
+      issueId: string;
+      runtimeId: string;
+      usage: RuntimeTokenUsage;
+    }
   | { type: "tool_start"; roleId: string; issueId: string; runtimeId: string; tool: string }
   | { type: "tool_end"; roleId: string; issueId: string; runtimeId: string; tool: string }
   | {
@@ -48,8 +66,21 @@ export type AcpRoleProgressEvent =
       description: string;
       decision: PermissionDecision;
     }
-  | { type: "approval_request"; roleId: string; issueId: string; runtimeId: string; tool: string; description: string }
-  | { type: "artifact_parsed"; roleId: string; issueId: string; runtimeId: string; artifactKind: string }
+  | {
+      type: "approval_request";
+      roleId: string;
+      issueId: string;
+      runtimeId: string;
+      tool: string;
+      description: string;
+    }
+  | {
+      type: "artifact_parsed";
+      roleId: string;
+      issueId: string;
+      runtimeId: string;
+      artifactKind: string;
+    }
   | { type: "runtime_stopped"; roleId: string; issueId: string; runtimeId: string };
 
 export interface AcpRoleRunnerOptions {
@@ -59,7 +90,9 @@ export interface AcpRoleRunnerOptions {
 
 export const buildAcpRuntimeConnectInput = (input: RoleRunInput): ConnectAcpRuntimeInput => {
   if (input.runtime.transport !== "stdio" || !input.runtime.command) {
-    throw new Error(`ACP role runner currently supports stdio command runtimes only: ${input.runtime.id}`);
+    throw new Error(
+      `ACP role runner currently supports stdio command runtimes only: ${input.runtime.id}`,
+    );
   }
 
   const connectInput: ConnectAcpRuntimeInput = {
@@ -85,18 +118,20 @@ export const buildAcpRuntimeConnectInput = (input: RoleRunInput): ConnectAcpRunt
   return connectInput;
 };
 
-const defaultConnector: AcpRuntimeConnector = async (input) =>
-  connectAcpRuntime(buildAcpRuntimeConnectInput(input));
+const runtimeModel = (input: RoleRunInput): string =>
+  input.runtime.defaultModel ?? "runtime-default";
 
-const runtimeModel = (input: RoleRunInput): string => input.runtime.defaultModel ?? "runtime-default";
-
-const runtimeProvenance = (input: RoleRunInput, tokenUsage?: RuntimeTokenUsage): RuntimeArtifactProvenance => {
+const runtimeProvenance = (
+  input: RoleRunInput,
+  tokenUsage?: RuntimeTokenUsage,
+): RuntimeArtifactProvenance => {
   const provenance: RuntimeArtifactProvenance = {
     runtimeId: input.runtime.id,
     transport: input.runtime.transport,
     model: runtimeModel(input),
   };
-  if (input.runtime.displayName !== undefined) provenance.runtimeDisplayName = input.runtime.displayName;
+  if (input.runtime.displayName !== undefined)
+    provenance.runtimeDisplayName = input.runtime.displayName;
   if (input.runtime.command !== undefined) provenance.command = [...input.runtime.command];
   if (tokenUsage !== undefined) provenance.tokenUsage = tokenUsage;
   return provenance;
@@ -111,21 +146,30 @@ const mergeTokenUsage = (
   if (next.inputTokens !== undefined) merged.inputTokens = next.inputTokens;
   if (next.outputTokens !== undefined) merged.outputTokens = next.outputTokens;
   if (next.totalTokens !== undefined) merged.totalTokens = next.totalTokens;
-  if (merged.totalTokens === undefined && merged.inputTokens !== undefined && merged.outputTokens !== undefined) {
+  if (
+    merged.totalTokens === undefined &&
+    merged.inputTokens !== undefined &&
+    merged.outputTokens !== undefined
+  ) {
     merged.totalTokens = merged.inputTokens + merged.outputTokens;
   }
   return merged;
 };
 
-const buildPrompt = (input: RoleRunInput): string => buildRolePrompt({
-  roleId: input.roleId,
-  issueId: input.issueId,
-  instruction: [
-    getDefaultRoleInstruction(input.roleId),
-    input.assignment.instructionRef ? `Instruction reference: ${input.assignment.instructionRef}` : undefined,
-  ].filter((line): line is string => line !== undefined).join("\n"),
-  inputArtifacts: input.inputArtifacts,
-});
+const buildPrompt = (input: RoleRunInput): string =>
+  buildRolePrompt({
+    roleId: input.roleId,
+    issueId: input.issueId,
+    instruction: [
+      getDefaultRoleInstruction(input.roleId),
+      input.assignment.instructionRef
+        ? `Instruction reference: ${input.assignment.instructionRef}`
+        : undefined,
+    ]
+      .filter((line): line is string => line !== undefined)
+      .join("\n"),
+    inputArtifacts: input.inputArtifacts,
+  });
 
 const EXPECTED_ARTIFACT_KIND_BY_ROLE: Record<string, string> = {
   architect: "architect.plan",
@@ -176,27 +220,33 @@ const isWriteLikePermission = (request: AcpPermissionRequest): boolean => {
   const tool = request.tool.toLowerCase();
   const command = extractCommand(request).trim().toLowerCase();
   if (/(^|\s)(edit|write|multiedit|notebookedit)(\s|$)/.test(tool)) return true;
-  return commandSegments(command).some((segment) => [
-    gitSubcommandPattern("add|commit|push|merge|rebase|checkout|switch|reset|worktree\\s+add"),
-    /(^|\s)(rm|mv|cp|mkdir|touch|chmod|chown|tee)\b/,
-    />/,
-  ].some((pattern) => pattern.test(segment)));
+  return commandSegments(command).some((segment) =>
+    [
+      gitSubcommandPattern("add|commit|push|merge|rebase|checkout|switch|reset|worktree\\s+add"),
+      /(^|\s)(rm|mv|cp|mkdir|touch|chmod|chown|tee)\b/,
+      />/,
+    ].some((pattern) => pattern.test(segment)),
+  );
 };
 
 const isCommitLikePermission = (request: AcpPermissionRequest): boolean => {
   const command = extractCommand(request).trim().toLowerCase();
   return commandSegments(command).some((segment) =>
-    gitSubcommandPattern("add|commit|push|merge|rebase|reset").test(segment));
+    gitSubcommandPattern("add|commit|push|merge|rebase|reset").test(segment),
+  );
 };
 
 const isPrOpeningPermission = (request: AcpPermissionRequest): boolean => {
   const command = extractCommand(request).trim().toLowerCase();
-  return commandSegments(command).some((segment) =>
-    /^(gh|hub)\s+pr\s+create\b/.test(segment) || /^hub\s+pull-request\b/.test(segment));
+  return commandSegments(command).some(
+    (segment) => /^(gh|hub)\s+pr\s+create\b/.test(segment) || /^hub\s+pull-request\b/.test(segment),
+  );
 };
 
 const hasTargetedPathArgument = (command: string): boolean =>
-  /(^|\s)(\.?\/?[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+|[A-Za-z0-9_.-]+\.(ts|tsx|js|jsx|json|md|yml|yaml|toml|lock))(\s|$)/.test(command);
+  /(^|\s)(\.?\/?[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+|[A-Za-z0-9_.-]+\.(ts|tsx|js|jsx|json|md|yml|yaml|toml|lock))(\s|$)/.test(
+    command,
+  );
 
 const isBroadDiscoveryCommand = (command: string): boolean => {
   const trimmed = command.trim();
@@ -218,13 +268,9 @@ const isBroadDiscoveryPermission = (request: AcpPermissionRequest): boolean => {
 
 const isFileReadCommand = (command: string): boolean => {
   const lowered = command.trim().toLowerCase();
-  return [
-    /^read(\s+file)?\b/,
-    /^cat\b/,
-    /^sed\s+-n\b/,
-    /^head\b/,
-    /^tail\b/,
-  ].some((pattern) => pattern.test(lowered));
+  return [/^read(\s+file)?\b/, /^cat\b/, /^sed\s+-n\b/, /^head\b/, /^tail\b/].some((pattern) =>
+    pattern.test(lowered),
+  );
 };
 
 const isReadOnlyPermission = (request: AcpPermissionRequest): boolean => {
@@ -252,7 +298,8 @@ const buildExecutionPolicyPermissionDecision = (
     if (mode === "dry_run") {
       if (isBroadDiscoveryPermission(request)) return "reject_once";
       if (isWriteLikePermission(request)) return "reject_once";
-      if (request.tool.toLowerCase() === "bash" && isReadOnlyPermission(request)) return "allow_once";
+      if (request.tool.toLowerCase() === "bash" && isReadOnlyPermission(request))
+        return "allow_once";
       return "reject_once";
     }
     if (isCommitLikePermission(request) || isPrOpeningPermission(request)) return "reject_once";
@@ -286,23 +333,24 @@ const assertExpectedArtifactKind = (roleId: string, artifactKind: string): void 
   throw new Error(`Role "${roleId}" expected ${expected} but received ${artifactKind}`);
 };
 
-export const createAcpRoleRunner = (
-  options: AcpRoleRunnerOptions = {},
-): RoleRunner => {
+export const createAcpRoleRunner = (options: AcpRoleRunnerOptions = {}): RoleRunner => {
   const progressBase = (input: RoleRunInput) => ({
     roleId: input.roleId,
     issueId: input.issueId,
     runtimeId: input.runtime.id,
   });
-  const connector = options.connector ?? (async (input) => {
-    const connectInput = buildAcpRuntimeConnectInput(input);
-    connectInput.forwardStderr = (chunk) => options.onProgress?.({
-      type: "runtime_stderr",
-      ...progressBase(input),
-      chunk,
+  const connector =
+    options.connector ??
+    (async (input) => {
+      const connectInput = buildAcpRuntimeConnectInput(input);
+      connectInput.forwardStderr = (chunk) =>
+        options.onProgress?.({
+          type: "runtime_stderr",
+          ...progressBase(input),
+          chunk,
+        });
+      return connectAcpRuntime(connectInput);
     });
-    return connectAcpRuntime(connectInput);
-  });
 
   return {
     run: async (input) => {
@@ -318,7 +366,9 @@ export const createAcpRoleRunner = (
       let streamedText = "";
       let fileReadCount = 0;
       let tokenUsage: RuntimeTokenUsage | undefined;
-      let policyViolation: { reason: "broad_discovery" | "file_read_budget"; detail: string } | undefined;
+      let policyViolation:
+        | { reason: "broad_discovery" | "file_read_budget"; detail: string }
+        | undefined;
       const unsubscribe = connection.session.onEvent((event) => {
         if (event.type === "text_delta") {
           streamedText += event.delta;
@@ -328,13 +378,21 @@ export const createAcpRoleRunner = (
         }
         if (event.type === "thinking_delta") {
           tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
-          options.onProgress?.({ type: "thinking_delta", ...progressBase(input), delta: event.delta });
+          options.onProgress?.({
+            type: "thinking_delta",
+            ...progressBase(input),
+            delta: event.delta,
+          });
           return;
         }
         if (event.type === "token_usage") {
           tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
           if (tokenUsage !== undefined) {
-            options.onProgress?.({ type: "token_usage", ...progressBase(input), usage: tokenUsage });
+            options.onProgress?.({
+              type: "token_usage",
+              ...progressBase(input),
+              usage: tokenUsage,
+            });
           }
           return;
         }
@@ -355,7 +413,10 @@ export const createAcpRoleRunner = (
           if (mode === "dry_run" && isFileReadCommand(command)) {
             fileReadCount += 1;
             if (fileReadCount > 5 && policyViolation === undefined) {
-              policyViolation = { reason: "file_read_budget", detail: `${fileReadCount}/5 ${command}` };
+              policyViolation = {
+                reason: "file_read_budget",
+                detail: `${fileReadCount}/5 ${command}`,
+              };
               options.onProgress?.({
                 type: "policy_violation",
                 ...progressBase(input),

@@ -1,6 +1,4 @@
-export {
-  createLocalVerifier,
-} from "./local-verifier.js";
+export { createLocalVerifier } from "./local-verifier.js";
 
 export type {
   LocalVerifier,

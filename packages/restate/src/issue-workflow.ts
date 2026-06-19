@@ -26,10 +26,7 @@ export interface IssueWorkflowHandlers<TResult = unknown> {
     ctx: WorkflowRunContext,
     input: IssueWorkflowRunInput,
   ) => Promise<ExecuteWorkflowEventsResult<TResult>>;
-  approvePlan: (
-    ctx: WorkflowApprovalSignalContext,
-    input: PlanApprovalInput,
-  ) => Promise<void>;
+  approvePlan: (ctx: WorkflowApprovalSignalContext, input: PlanApprovalInput) => Promise<void>;
 }
 
 export interface IssueWorkflowHandlerOptions<TResult = unknown> {
@@ -61,10 +58,7 @@ export const createIssueWorkflowHandlers = <TResult = unknown>(
 
     return {
       snapshot: afterApproval.snapshot,
-      commandResults: [
-        ...beforeApproval.commandResults,
-        ...afterApproval.commandResults,
-      ],
+      commandResults: [...beforeApproval.commandResults, ...afterApproval.commandResults],
     };
   },
   approvePlan: async (ctx, input) => {

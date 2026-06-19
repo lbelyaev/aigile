@@ -206,16 +206,6 @@ const checkerEventForVerdict = (artifact: WorkflowArtifact): WorkflowEvent["type
   return "checker_escalated";
 };
 
-const checkerReviewForVerdict = (artifact: WorkflowArtifact): PullRequestReviewInput => {
-  if (!isCheckerVerdictPayload(artifact.payload)) {
-    throw new Error(`Checker artifact payload is invalid: ${artifact.id}`);
-  }
-  const body = artifact.payload.summary.trim() || `Checker verdict: ${artifact.payload.verdict}`;
-  if (artifact.payload.verdict === "pass") return { event: "approve", body };
-  if (artifact.payload.verdict === "changes_requested") return { event: "request_changes", body };
-  return { event: "comment", body };
-};
-
 const verificationEventForResult = (artifact: WorkflowArtifact): WorkflowEvent["type"] => {
   if (
     typeof artifact.payload !== "object" ||

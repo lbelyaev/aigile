@@ -9,21 +9,24 @@ describe("issue workflow handlers", () => {
       executeCommand: async (command) => ({ command: command.type }),
     });
 
-    const runPromise = workflow.run({
-      run: async (name, fn) => {
-        steps.push(name);
-        return fn();
+    const runPromise = workflow.run(
+      {
+        run: async (name, fn) => {
+          steps.push(name);
+          return fn();
+        },
+        promise: async (name) => {
+          expect(name).toBe("plan-approval");
+          return new Promise<boolean>((resolve) => {
+            approvalResolver = resolve;
+          }) as Promise<never>;
+        },
       },
-      promise: async (name) => {
-        expect(name).toBe("plan-approval");
-        return new Promise<boolean>((resolve) => {
-          approvalResolver = resolve;
-        }) as Promise<never>;
+      {
+        issueId: "LIN-123",
+        planArtifactId: "plan-1",
       },
-    }, {
-      issueId: "LIN-123",
-      planArtifactId: "plan-1",
-    });
+    );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(steps).toEqual(["start_architect_plan", "request_plan_approval"]);

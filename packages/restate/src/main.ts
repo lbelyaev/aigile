@@ -12,5 +12,7 @@ export const createAigileRestateServeOptions = (): { services: unknown[] } => {
 
 if (import.meta.path === Bun.main) {
   process.stdout.write("Aigile Restate service scaffold is ready.\n");
-  process.stdout.write("Register this service with a Restate server using the Restate CLI/runtime.\n");
+  process.stdout.write(
+    "Register this service with a Restate server using the Restate CLI/runtime.\n",
+  );
 }

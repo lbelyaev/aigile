@@ -81,11 +81,13 @@ describe("ACP process connector", () => {
       params: { client: "aigile" },
     });
 
-    mock.stdout.write(JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      result: { protocolVersion: 1 },
-    }) + "\n");
+    mock.stdout.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: { protocolVersion: 1 },
+      }) + "\n",
+    );
 
     await expect(initialized).resolves.toEqual({ protocolVersion: 1 });
     expect(process.isAlive()).toBe(true);
@@ -118,11 +120,13 @@ describe("ACP process connector", () => {
       method: "session/new",
       params: { cwd: "/repo", mcpServers: [] },
     });
-    mock.stdout.write(JSON.stringify({
-      jsonrpc: "2.0",
-      id: 2,
-      result: { sessionId: "acp-session-1" },
-    }) + "\n");
+    mock.stdout.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        result: { sessionId: "acp-session-1" },
+      }) + "\n",
+    );
 
     const connected = await connectedPromise;
     expect(connected.session.sessionId).toBe("role-session-1");

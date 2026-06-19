@@ -38,12 +38,14 @@ describe("ACP JSON-RPC client", () => {
       return { outcome: { outcome: "selected", optionId: "allow_once" } };
     });
 
-    input.write(JSON.stringify({
-      jsonrpc: "2.0",
-      id: 9,
-      method: "session/request_permission",
-      params: { sessionId: "s1" },
-    }) + "\n");
+    input.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 9,
+        method: "session/request_permission",
+        params: { sessionId: "s1" },
+      }) + "\n",
+    );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(JSON.parse(written[0]!.trim())).toEqual({
@@ -62,11 +64,13 @@ describe("ACP JSON-RPC client", () => {
     rpc.onNotification((notification) => calls.push(`a:${notification.method}`));
     rpc.onNotification((notification) => calls.push(`b:${notification.method}`));
 
-    input.write(JSON.stringify({
-      jsonrpc: "2.0",
-      method: "session/update",
-      params: { sessionId: "s1" },
-    }) + "\n");
+    input.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "s1" },
+      }) + "\n",
+    );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(calls).toEqual(["a:session/update", "b:session/update"]);

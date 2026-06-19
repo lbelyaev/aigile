@@ -1,18 +1,8 @@
-export {
-  createRoleRuntimeRegistry,
-  createScriptedRoleRunner,
-  runAssignedRole,
-} from "./runner.js";
+export { createRoleRuntimeRegistry, createScriptedRoleRunner, runAssignedRole } from "./runner.js";
 
-export {
-  buildAcpRuntimeConnectInput,
-  createAcpRoleRunner,
-} from "./acp-runner.js";
+export { buildAcpRuntimeConnectInput, createAcpRoleRunner } from "./acp-runner.js";
 
-export {
-  buildRolePrompt,
-  getDefaultRoleInstruction,
-} from "./prompts.js";
+export { buildRolePrompt, getDefaultRoleInstruction } from "./prompts.js";
 
 export type {
   RoleRunInput,
@@ -30,6 +20,4 @@ export type {
   AcpRuntimeConnector,
 } from "./acp-runner.js";
 
-export type {
-  BuildRolePromptInput,
-} from "./prompts.js";
+export type { BuildRolePromptInput } from "./prompts.js";

@@ -94,8 +94,9 @@ const defaultFetchGraphql: LinearFetchGraphql = async (query, variables, options
   if (!response.ok) {
     throw new Error(`Linear GraphQL request failed (${response.status}): ${await response.text()}`);
   }
-  const json = await response.json() as { data?: unknown; errors?: unknown };
-  if (json.errors) throw new Error(`Linear GraphQL returned errors: ${JSON.stringify(json.errors)}`);
+  const json = (await response.json()) as { data?: unknown; errors?: unknown };
+  if (json.errors)
+    throw new Error(`Linear GraphQL returned errors: ${JSON.stringify(json.errors)}`);
   return json.data;
 };
 
@@ -112,7 +113,8 @@ const extractAcceptanceCriteria = (description: string): string[] => {
 };
 
 const asString = (value: unknown, field: string): string => {
-  if (typeof value !== "string" || value.length === 0) throw new Error(`Linear issue missing ${field}`);
+  if (typeof value !== "string" || value.length === 0)
+    throw new Error(`Linear issue missing ${field}`);
   return value;
 };
 
@@ -142,10 +144,9 @@ const toIssueRecord = (value: unknown, key: string): IssueRecord => {
 
 const toIssueRecords = (value: unknown): IssueRecord[] => {
   const response = value as LinearIssuesResponse;
-  return (response.issues?.nodes ?? []).map((issue) => toIssueRecordFromIssue(
-    issue as LinearIssueResponse["issue"],
-    "ready issue",
-  ));
+  return (response.issues?.nodes ?? []).map((issue) =>
+    toIssueRecordFromIssue(issue as LinearIssueResponse["issue"], "ready issue"),
+  );
 };
 
 const looksLikeUuid = (value: string): boolean =>
@@ -156,17 +157,25 @@ export const listLinearTeams = async (
 ): Promise<LinearTeam[]> => {
   const endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
   const fetchGraphql = options.fetchGraphql ?? defaultFetchGraphql;
-  const response = await fetchGraphql(`
+  const response = await fetchGraphql(
+    `
     query LinearTeams($first: Int!) {
       teams(first: $first) {
         nodes { key name }
       }
     }
-  `, { first: options.first ?? 100 }, { apiKey: options.apiKey, endpoint });
+  `,
+    { first: options.first ?? 100 },
+    { apiKey: options.apiKey, endpoint },
+  );
   return ((response as LinearTeamsResponse).teams?.nodes ?? [])
-    .filter((team): team is { key: string; name: string } =>
-      typeof team.key === "string" && team.key.length > 0 &&
-      typeof team.name === "string" && team.name.length > 0)
+    .filter(
+      (team): team is { key: string; name: string } =>
+        typeof team.key === "string" &&
+        team.key.length > 0 &&
+        typeof team.name === "string" &&
+        team.name.length > 0,
+    )
     .map((team) => ({ key: team.key, name: team.name }));
 };
 
@@ -175,16 +184,20 @@ export const listLinearWorkflowStateNames = async (
 ): Promise<string[]> => {
   const endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
   const fetchGraphql = options.fetchGraphql ?? defaultFetchGraphql;
-  const response = await fetchGraphql(`
+  const response = await fetchGraphql(
+    `
     query WorkflowStatesByTeam($teamKey: String!, $first: Int!) {
       workflowStates(filter: { team: { key: { eq: $teamKey } } }, first: $first) {
         nodes { name }
       }
     }
-  `, {
-    teamKey: options.teamKey,
-    first: options.first ?? 100,
-  }, { apiKey: options.apiKey, endpoint });
+  `,
+    {
+      teamKey: options.teamKey,
+      first: options.first ?? 100,
+    },
+    { apiKey: options.apiKey, endpoint },
+  );
   return ((response as LinearWorkflowStatesResponse).workflowStates?.nodes ?? [])
     .map((state) => state.name)
     .filter((name): name is string => typeof name === "string" && name.length > 0);
@@ -199,11 +212,14 @@ export const createLinearGraphqlIssueTrackerAdapter = (
     fetchGraphql(query, variables, { apiKey: options.apiKey, endpoint });
   const resolveIssueId = async (key: string): Promise<string> => {
     if (options.teamKey === undefined || looksLikeUuid(key)) return key;
-    const response = await request(`
+    const response = await request(
+      `
       query IssueIdByKey($key: String!) {
         issue(id: $key) { id }
       }
-    `, { key });
+    `,
+      { key },
+    );
     const issueId = (response as LinearIssueIdResponse).issue?.id;
     if (typeof issueId !== "string" || issueId.length === 0) {
       throw new Error(`Linear issue not found: ${key}`);
@@ -212,13 +228,16 @@ export const createLinearGraphqlIssueTrackerAdapter = (
   };
   const resolveWorkflowStateId = async (status: string): Promise<string> => {
     if (options.teamKey === undefined || looksLikeUuid(status)) return status;
-    const response = await request(`
+    const response = await request(
+      `
       query WorkflowStateByName($teamKey: String!, $name: String!) {
         workflowStates(filter: { team: { key: { eq: $teamKey } }, name: { eq: $name } }, first: 1) {
           nodes { id name }
         }
       }
-    `, { teamKey: options.teamKey, name: status });
+    `,
+      { teamKey: options.teamKey, name: status },
+    );
     const nodes = (response as LinearWorkflowStatesResponse).workflowStates?.nodes ?? [];
     const stateId = nodes[0]?.id;
     if (typeof stateId !== "string" || stateId.length === 0) {
@@ -228,7 +247,10 @@ export const createLinearGraphqlIssueTrackerAdapter = (
   };
 
   return {
-    getIssue: async (key) => toIssueRecord(await request(`
+    getIssue: async (key) =>
+      toIssueRecord(
+        await request(
+          `
       query IssueByKey($key: String!) {
         issue(id: $key) {
           id
@@ -241,23 +263,33 @@ export const createLinearGraphqlIssueTrackerAdapter = (
           comments { nodes { body } }
         }
       }
-    `, { key }), key),
+    `,
+          { key },
+        ),
+        key,
+      ),
     updateIssueStatus: async (key, status) => {
       const stateId = await resolveWorkflowStateId(status);
       const issueId = await resolveIssueId(key);
-      await request(`
+      await request(
+        `
         mutation UpdateIssueStatus($key: String!, $status: String!) {
           issueUpdate(id: $key, input: { stateId: $status }) { success }
         }
-      `, { key: issueId, status: stateId });
+      `,
+        { key: issueId, status: stateId },
+      );
     },
     appendIssueComment: async (key, body) => {
       const issueId = await resolveIssueId(key);
-      await request(`
+      await request(
+        `
         mutation CreateIssueComment($key: String!, $body: String!) {
           commentCreate(input: { issueId: $key, body: $body }) { success }
         }
-      `, { key: issueId, body });
+      `,
+        { key: issueId, body },
+      );
     },
   };
 };
@@ -272,31 +304,38 @@ export const createLinearGraphqlReadyIssueSource = (
 
   return {
     listReadyIssues: async () =>
-      sortReadyIssues(toIssueRecords(await request(`
-        query ReadyIssues($teamKey: String!, $readyStatus: String!, $first: Int!) {
-          issues(
-            filter: {
-              team: { key: { eq: $teamKey } }
-              state: { name: { eq: $readyStatus } }
+      sortReadyIssues(
+        toIssueRecords(
+          await request(
+            `
+            query ReadyIssues($teamKey: String!, $readyStatus: String!, $first: Int!) {
+              issues(
+                filter: {
+                  team: { key: { eq: $teamKey } }
+                  state: { name: { eq: $readyStatus } }
+                }
+                first: $first
+              ) {
+                nodes {
+                  id
+                  identifier
+                  title
+                  description
+                  priority
+                  createdAt
+                  state { name }
+                  comments { nodes { body } }
+                }
+              }
             }
-            first: $first
-          ) {
-            nodes {
-              id
-              identifier
-              title
-              description
-              priority
-              createdAt
-              state { name }
-              comments { nodes { body } }
-            }
-          }
-        }
-      `, {
-        teamKey: options.teamKey,
-        readyStatus: options.readyStatus,
-        first: options.first ?? 25,
-      }))),
+          `,
+            {
+              teamKey: options.teamKey,
+              readyStatus: options.readyStatus,
+              first: options.first ?? 25,
+            },
+          ),
+        ),
+      ),
   };
 };

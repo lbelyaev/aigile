@@ -21,23 +21,20 @@ const assertSuccess = (result: ExecResult, operation: string): void => {
   }
 };
 
-export const createGitPublisher = (
-  options: GitPublisherOptions = {},
-): GitPublisher => {
+export const createGitPublisher = (options: GitPublisherOptions = {}): GitPublisher => {
   const exec = options.exec ?? defaultExecCommand;
 
   return {
     publish: async (input) => {
-      assertSuccess(
-        await exec("git", ["add", "-A"], { cwd: input.worktreePath }),
-        "git add",
-      );
+      assertSuccess(await exec("git", ["add", "-A"], { cwd: input.worktreePath }), "git add");
       assertSuccess(
         await exec("git", ["commit", "-m", input.commitMessage], { cwd: input.worktreePath }),
         "git commit",
       );
       assertSuccess(
-        await exec("git", ["push", "-u", input.remote, input.branchName], { cwd: input.worktreePath }),
+        await exec("git", ["push", "-u", input.remote, input.branchName], {
+          cwd: input.worktreePath,
+        }),
         "git push",
       );
     },

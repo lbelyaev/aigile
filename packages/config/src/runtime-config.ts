@@ -18,7 +18,9 @@ const parseJson = (json: string): unknown => {
   try {
     return JSON.parse(json) as unknown;
   } catch (error) {
-    throw new Error(`Runtime config was not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Runtime config was not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 };
 
@@ -26,7 +28,8 @@ export const loadRuntimeConfigFromJson = (json: string): RuntimeConfig => {
   const value = parseJson(json);
   if (!isRecord(value)) throw new Error("Runtime config must be an object");
   if (!Array.isArray(value.runtimes)) throw new Error("Runtime config runtimes must be an array");
-  if (!Array.isArray(value.assignments)) throw new Error("Runtime config assignments must be an array");
+  if (!Array.isArray(value.assignments))
+    throw new Error("Runtime config assignments must be an array");
 
   const runtimes = value.runtimes.map((runtime, index) => {
     if (!isAcpRuntimeProfile(runtime)) throw new Error(`Invalid runtime at index ${index}`);

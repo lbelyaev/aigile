@@ -824,7 +824,7 @@ describe("cli formatting", () => {
     expect(output).toContain("Status: In Progress");
     expect(output).toContain("Agents: not started");
     expect(calls.map((call) => call.variables)).toEqual([
-      { teamKey: "ENG", readyStatus: "Ready for Aigile", first: 1 },
+      { teamKey: "ENG", readyStatus: "Ready for Aigile", first: 25 },
       { teamKey: "ENG", name: "In Progress" },
       { key: "LIN-900" },
       { key: "issue-id", status: "state-in-progress" },

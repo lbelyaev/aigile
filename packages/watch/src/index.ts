@@ -37,10 +37,14 @@ const defaultSleep = async (durationMs: number, signal?: AbortSignal): Promise<v
   if (signal?.aborted) return;
   await new Promise<void>((resolve) => {
     const timeout = setTimeout(resolve, durationMs);
-    signal?.addEventListener("abort", () => {
-      clearTimeout(timeout);
-      resolve();
-    }, { once: true });
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timeout);
+        resolve();
+      },
+      { once: true },
+    );
   });
 };
 
@@ -68,9 +72,9 @@ export const watchOnce = async (input: WatchOnceInput): Promise<WatchOnceResult>
     actions: hasClaimComment
       ? [`status:${issue.key}:${claimStatus}`]
       : [
-        `status:${issue.key}:${claimStatus}`,
-        `comment:${issue.key}`,
-      ],
+          `status:${issue.key}:${claimStatus}`,
+          `comment:${issue.key}`,
+        ],
   };
 };
 

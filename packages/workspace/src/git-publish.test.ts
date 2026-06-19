@@ -30,11 +30,13 @@ describe("git publisher", () => {
       exec: async () => ({ stdout: "", stderr: "nothing to commit", exitCode: 1 }),
     });
 
-    await expect(publisher.publish({
-      worktreePath: "/repo/.worktrees/LIN-123",
-      branchName: "aigile/LIN-123",
-      remote: "origin",
-      commitMessage: "feat: implement LIN-123",
-    })).rejects.toThrow(/git add failed/i);
+    await expect(
+      publisher.publish({
+        worktreePath: "/repo/.worktrees/LIN-123",
+        branchName: "aigile/LIN-123",
+        remote: "origin",
+        commitMessage: "feat: implement LIN-123",
+      }),
+    ).rejects.toThrow(/git add failed/i);
   });
 });

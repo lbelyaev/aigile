@@ -1,23 +1,23 @@
 import { describe, expect, it } from "bun:test";
-import {
-  createRoleRuntimeRegistry,
-  createScriptedRoleRunner,
-  runAssignedRole,
-} from "./index.js";
+import { createRoleRuntimeRegistry, createScriptedRoleRunner, runAssignedRole } from "./index.js";
 
 describe("role runner", () => {
   it("resolves role assignments to generic ACP runtime profiles", () => {
     const registry = createRoleRuntimeRegistry({
-      runtimes: [{
-        id: "runtime-architect",
-        transport: "stdio",
-        command: ["agent-acp", "--profile", "architect"],
-      }],
-      assignments: [{
-        roleId: "architect",
-        runtimeProfileId: "runtime-architect",
-        instructionRef: "roles/architect.md",
-      }],
+      runtimes: [
+        {
+          id: "runtime-architect",
+          transport: "stdio",
+          command: ["agent-acp", "--profile", "architect"],
+        },
+      ],
+      assignments: [
+        {
+          roleId: "architect",
+          runtimeProfileId: "runtime-architect",
+          instructionRef: "roles/architect.md",
+        },
+      ],
     });
 
     expect(registry.getAssignment("architect")).toEqual({
@@ -34,11 +34,13 @@ describe("role runner", () => {
 
   it("runs a scripted role and returns a workflow artifact", async () => {
     const registry = createRoleRuntimeRegistry({
-      runtimes: [{
-        id: "runtime-architect",
-        transport: "stdio",
-        command: ["agent-acp"],
-      }],
+      runtimes: [
+        {
+          id: "runtime-architect",
+          transport: "stdio",
+          command: ["agent-acp"],
+        },
+      ],
       assignments: [{ roleId: "architect", runtimeProfileId: "runtime-architect" }],
     });
     const runner = createScriptedRoleRunner({

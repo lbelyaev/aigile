@@ -4,8 +4,7 @@ import { join } from "node:path";
 
 const root = process.cwd();
 
-const readJson = <T>(path: string): T =>
-  JSON.parse(readFileSync(join(root, path), "utf8")) as T;
+const readJson = <T>(path: string): T => JSON.parse(readFileSync(join(root, path), "utf8")) as T;
 
 describe("project scaffold", () => {
   it("declares a private Bun TypeScript monorepo", () => {

@@ -1,8 +1,4 @@
-import {
-  transitionWorkflow,
-  type WorkflowCommand,
-  type WorkflowSnapshot,
-} from "@aigile/workflow";
+import { transitionWorkflow, type WorkflowCommand, type WorkflowSnapshot } from "@aigile/workflow";
 import type { WorkflowEvent } from "@aigile/types";
 
 export interface DurableStepContext {

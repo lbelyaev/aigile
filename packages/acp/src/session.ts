@@ -5,7 +5,14 @@ export type AcpEvent =
   | { type: "thinking_delta"; sessionId: string; delta: string; usage?: AcpTokenUsage }
   | { type: "token_usage"; sessionId: string; usage: AcpTokenUsage }
   | { type: "tool_start"; sessionId: string; tool: string; toolCallId?: string; params?: unknown }
-  | { type: "tool_end"; sessionId: string; tool: string; toolCallId?: string; result?: string; usage?: AcpTokenUsage }
+  | {
+      type: "tool_end";
+      sessionId: string;
+      tool: string;
+      toolCallId?: string;
+      result?: string;
+      usage?: AcpTokenUsage;
+    }
   | {
       type: "permission_decision";
       sessionId: string;
@@ -122,7 +129,10 @@ const tokenCount = (value: unknown): number | undefined => {
   return value;
 };
 
-const tokenField = (source: Record<string, unknown>, keys: readonly string[]): number | undefined => {
+const tokenField = (
+  source: Record<string, unknown>,
+  keys: readonly string[],
+): number | undefined => {
   for (const key of keys) {
     const value = tokenCount(source[key]);
     if (value !== undefined) return value;
@@ -132,13 +142,26 @@ const tokenField = (source: Record<string, unknown>, keys: readonly string[]): n
 
 const normalizeTokenUsage = (value: unknown): AcpTokenUsage | undefined => {
   if (!isRecord(value)) return undefined;
-  const inputTokens = tokenField(value, ["inputTokens", "input_tokens", "promptTokens", "prompt_tokens"]);
-  const outputTokens = tokenField(value, ["outputTokens", "output_tokens", "completionTokens", "completion_tokens"]);
+  const inputTokens = tokenField(value, [
+    "inputTokens",
+    "input_tokens",
+    "promptTokens",
+    "prompt_tokens",
+  ]);
+  const outputTokens = tokenField(value, [
+    "outputTokens",
+    "output_tokens",
+    "completionTokens",
+    "completion_tokens",
+  ]);
   const explicitTotalTokens = tokenField(value, ["totalTokens", "total_tokens"]);
-  const totalTokens = explicitTotalTokens ?? (
-    inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined
-  );
-  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) return undefined;
+  const totalTokens =
+    explicitTotalTokens ??
+    (inputTokens !== undefined && outputTokens !== undefined
+      ? inputTokens + outputTokens
+      : undefined);
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined)
+    return undefined;
   const usage: AcpTokenUsage = {};
   if (inputTokens !== undefined) usage.inputTokens = inputTokens;
   if (outputTokens !== undefined) usage.outputTokens = outputTokens;
@@ -148,10 +171,12 @@ const normalizeTokenUsage = (value: unknown): AcpTokenUsage | undefined => {
 
 export const extractTokenUsage = (value: unknown): AcpTokenUsage | undefined => {
   if (!isRecord(value)) return undefined;
-  return normalizeTokenUsage(value.usage)
-    ?? normalizeTokenUsage(value.tokenUsage)
-    ?? normalizeTokenUsage(isRecord(value._meta) ? value._meta.usage : undefined)
-    ?? normalizeTokenUsage(isRecord(value._meta) ? value._meta.tokenUsage : undefined);
+  return (
+    normalizeTokenUsage(value.usage) ??
+    normalizeTokenUsage(value.tokenUsage) ??
+    normalizeTokenUsage(isRecord(value._meta) ? value._meta.usage : undefined) ??
+    normalizeTokenUsage(isRecord(value._meta) ? value._meta.tokenUsage : undefined)
+  );
 };
 
 export const translateSessionUpdate = (
@@ -173,7 +198,11 @@ export const translateSessionUpdate = (
     return event;
   }
   if (update.sessionUpdate === "agent_thought_chunk") {
-    const event: AcpEvent = { type: "thinking_delta", sessionId, delta: extractText(update.content) };
+    const event: AcpEvent = {
+      type: "thinking_delta",
+      sessionId,
+      delta: extractText(update.content),
+    };
     if (usage !== undefined) event.usage = usage;
     return event;
   }
@@ -188,8 +217,8 @@ export const translateSessionUpdate = (
     return event;
   }
   if (
-    update.sessionUpdate === "tool_call_update"
-    && (update.status === "completed" || update.status === "failed")
+    update.sessionUpdate === "tool_call_update" &&
+    (update.status === "completed" || update.status === "failed")
   ) {
     const event: AcpEvent = {
       type: "tool_end",
@@ -217,10 +246,7 @@ const permissionDescription = (rawInput: unknown, fallback: string): string => {
   return JSON.stringify(rawInput);
 };
 
-export const createAcpSession = (
-  rpc: RpcClient,
-  options: AcpSessionOptions,
-): AcpSession => {
+export const createAcpSession = (rpc: RpcClient, options: AcpSessionOptions): AcpSession => {
   const handlers: Array<(event: AcpEvent) => void> = [];
 
   rpc.onNotification((notification) => {
@@ -271,10 +297,15 @@ export const createAcpSession = (
   return {
     sessionId: options.sessionId,
     acpSessionId: options.acpSessionId,
-    prompt: (text) => rpc.sendRequest("session/prompt", {
-      sessionId: options.acpSessionId,
-      prompt: [{ type: "text", text }],
-    }, { timeoutMs: null }),
+    prompt: (text) =>
+      rpc.sendRequest(
+        "session/prompt",
+        {
+          sessionId: options.acpSessionId,
+          prompt: [{ type: "text", text }],
+        },
+        { timeoutMs: null },
+      ),
     cancel: () => rpc.sendNotification("session/cancel", { sessionId: options.acpSessionId }),
     onEvent: (handler) => {
       handlers.push(handler);

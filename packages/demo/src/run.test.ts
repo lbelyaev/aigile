@@ -75,10 +75,12 @@ describe("demo orchestration", () => {
       "checker.verdict",
       "github.pull_request",
     ]);
-    expect(result.pullRequest?.reviews).toEqual([{
-      event: "approve",
-      body: "Scripted checker accepts the verified demo change.",
-    }]);
+    expect(result.pullRequest?.reviews).toEqual([
+      {
+        event: "approve",
+        body: expect.stringContaining("## Aigile checker review"),
+      },
+    ]);
     expect(result.timeline).toEqual([
       { label: "issue_received -> planning", elapsedMs: 0 },
       { label: "plan_drafted -> awaiting_plan_approval", elapsedMs: 42_100 },
@@ -208,23 +210,28 @@ describe("demo orchestration", () => {
     expect(result.timeline.map((entry) => entry.label)).not.toContain("merge_completed -> merged");
   });
 
-  it("propagates checker review publication failures", async () => {
-    await expect(runDemoIssueWithRoles({
+  it("returns an escalated result when checker review publication fails", async () => {
+    let pullRequest: PullRequestRecord | undefined;
+    const result = await runDemoIssueWithRoles({
       issue,
       registry,
       runner: runnerWithCheckerVerdict("pass"),
       codeHost: {
-        createPullRequest: async (input) => ({
-          id: "aigile/aigile#12",
-          number: 12,
-          url: "https://github.local/aigile/aigile/pull/12",
-          ...input,
-          comments: [],
-          checks: [],
-          reviews: [],
-        }),
+        createPullRequest: async (input) => {
+          pullRequest = {
+            id: "aigile/aigile#12",
+            number: 12,
+            url: "https://github.local/aigile/aigile/pull/12",
+            ...input,
+            comments: [],
+            checks: [],
+            reviews: [],
+          };
+          return structuredClone(pullRequest);
+        },
         getPullRequest: async () => {
-          throw new Error("getPullRequest should not run after review failure");
+          if (pullRequest === undefined) throw new Error("pull request missing");
+          return structuredClone(pullRequest);
         },
         appendPullRequestComment: async () => undefined,
         submitPullRequestReview: async () => {
@@ -232,7 +239,14 @@ describe("demo orchestration", () => {
         },
         recordCheckResult: async () => undefined,
       },
-    })).rejects.toThrow(/review failed/);
+    });
+
+    expect(result.finalState).toBe("escalated");
+    expect(result.publicationFailure).toEqual({
+      operation: "publish_pull_request_evidence",
+      message: "review failed",
+      pullRequestUrl: "https://github.local/aigile/aigile/pull/12",
+    });
   });
 
   it("marks verified no-op work as satisfied without creating a pull request", async () => {

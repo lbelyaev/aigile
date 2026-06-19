@@ -25,7 +25,12 @@ export interface IssueWorkspace {
   baseBranch: string;
 }
 
-export type IssueWorkspaceStatusState = "missing" | "clean" | "dirty" | "branch_mismatch" | "invalid";
+export type IssueWorkspaceStatusState =
+  | "missing"
+  | "clean"
+  | "dirty"
+  | "branch_mismatch"
+  | "invalid";
 
 export interface IssueWorkspaceStatus {
   workspace: IssueWorkspace;
@@ -68,7 +73,10 @@ export const defaultExecCommand: ExecCommand = async (command, args, options) =>
   });
 
 const safeIssueSlug = (issueKey: string): string => {
-  const slug = issueKey.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const slug = issueKey
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   if (slug.length === 0) throw new Error("Issue key cannot produce an empty workspace slug");
   return slug;
 };
@@ -88,9 +96,13 @@ const inspectWorkspaceTarget = async (
 ): Promise<WorkspaceTargetState> => {
   const pathResult = await exec("test", ["-e", workspace.worktreePath], { cwd: repoPath });
   if (pathResult.exitCode === 0) {
-    const branchResult = await exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: workspace.worktreePath });
+    const branchResult = await exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: workspace.worktreePath,
+    });
     if (branchResult.exitCode !== 0) {
-      throw new Error(`Issue worktree path already exists but is not a git worktree: ${workspace.worktreePath}`);
+      throw new Error(
+        `Issue worktree path already exists but is not a git worktree: ${workspace.worktreePath}`,
+      );
     }
     const existingBranch = branchResult.stdout.trim();
     if (existingBranch !== workspace.branchName) {
@@ -101,12 +113,11 @@ const inspectWorkspaceTarget = async (
     return "existing_worktree";
   }
 
-  const branchResult = await exec("git", [
-    "show-ref",
-    "--verify",
-    "--quiet",
-    `refs/heads/${workspace.branchName}`,
-  ], { cwd: repoPath });
+  const branchResult = await exec(
+    "git",
+    ["show-ref", "--verify", "--quiet", `refs/heads/${workspace.branchName}`],
+    { cwd: repoPath },
+  );
   if (branchResult.exitCode === 0) {
     return "existing_branch";
   }
@@ -131,7 +142,9 @@ export const createGitWorkspaceAdapter = (
     };
   };
 
-  const checkIssueWorkspaceAvailability = async (input: IssueWorkspaceInput): Promise<IssueWorkspace> => {
+  const checkIssueWorkspaceAvailability = async (
+    input: IssueWorkspaceInput,
+  ): Promise<IssueWorkspace> => {
     const workspace = buildWorkspace(input);
     await inspectWorkspaceTarget(exec, options.repoPath, workspace);
     return workspace;
@@ -143,27 +156,31 @@ export const createGitWorkspaceAdapter = (
       const workspace = buildWorkspace(input);
       const targetState = await inspectWorkspaceTarget(exec, options.repoPath, workspace);
       if (targetState === "existing_worktree") return workspace;
-      const result = targetState === "existing_branch"
-        ? await exec("git", [
-          "worktree",
-          "add",
-          workspace.worktreePath,
-          workspace.branchName,
-        ], { cwd: options.repoPath })
-        : await exec("git", [
-          "worktree",
-          "add",
-          "-b",
-          workspace.branchName,
-          workspace.worktreePath,
-          input.baseBranch,
-        ], { cwd: options.repoPath });
+      const result =
+        targetState === "existing_branch"
+          ? await exec("git", ["worktree", "add", workspace.worktreePath, workspace.branchName], {
+              cwd: options.repoPath,
+            })
+          : await exec(
+              "git",
+              [
+                "worktree",
+                "add",
+                "-b",
+                workspace.branchName,
+                workspace.worktreePath,
+                input.baseBranch,
+              ],
+              { cwd: options.repoPath },
+            );
       assertSuccess(result, "git worktree add");
       return workspace;
     },
     getIssueWorkspaceStatus: async (input) => {
       const workspace = buildWorkspace(input);
-      const pathResult = await exec("test", ["-e", workspace.worktreePath], { cwd: options.repoPath });
+      const pathResult = await exec("test", ["-e", workspace.worktreePath], {
+        cwd: options.repoPath,
+      });
       if (pathResult.exitCode !== 0) {
         return {
           workspace,
@@ -172,13 +189,18 @@ export const createGitWorkspaceAdapter = (
         };
       }
 
-      const branchResult = await exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: workspace.worktreePath });
+      const branchResult = await exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+        cwd: workspace.worktreePath,
+      });
       if (branchResult.exitCode !== 0) {
         return {
           workspace,
           state: "invalid",
           changedFiles: [],
-          message: branchResult.stderr || branchResult.stdout || "worktree path is not a valid git worktree",
+          message:
+            branchResult.stderr ||
+            branchResult.stdout ||
+            "worktree path is not a valid git worktree",
         };
       }
 
@@ -192,7 +214,9 @@ export const createGitWorkspaceAdapter = (
         };
       }
 
-      const statusResult = await exec("git", ["status", "--short"], { cwd: workspace.worktreePath });
+      const statusResult = await exec("git", ["status", "--short"], {
+        cwd: workspace.worktreePath,
+      });
       assertSuccess(statusResult, "git status --short");
       const changedFiles = statusResult.stdout
         .split(/\r?\n/)

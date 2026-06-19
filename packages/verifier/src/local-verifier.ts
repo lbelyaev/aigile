@@ -32,9 +32,7 @@ export interface LocalVerifierOptions {
   exec?: ExecCommand;
 }
 
-export const createLocalVerifier = (
-  options: LocalVerifierOptions = {},
-): LocalVerifier => {
+export const createLocalVerifier = (options: LocalVerifierOptions = {}): LocalVerifier => {
   const exec = options.exec ?? defaultExecCommand;
 
   return {

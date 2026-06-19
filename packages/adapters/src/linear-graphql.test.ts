@@ -129,45 +129,50 @@ describe("Linear GraphQL issue tracker adapter", () => {
       },
     });
 
-    await expect(source.listReadyIssues()).resolves.toEqual([{
-      id: "issue-high",
-      key: "LIN-900",
-      title: "Watcher skeleton",
-      description: "Acceptance:\n- Claim it",
-      acceptanceCriteria: ["Claim it"],
-      priority: 1,
-      createdAt: "2024-02-01T00:00:00.000Z",
-      status: "Ready for Aigile",
-      comments: [],
-    }, {
-      id: "issue-low",
-      key: "LIN-901",
-      title: "Lower priority",
-      description: "",
-      acceptanceCriteria: [],
-      priority: 2,
-      createdAt: "2024-01-01T00:00:00.000Z",
-      status: "Ready for Aigile",
-      comments: [],
-    }]);
+    await expect(source.listReadyIssues()).resolves.toEqual([
+      {
+        id: "issue-high",
+        key: "LIN-900",
+        title: "Watcher skeleton",
+        description: "Acceptance:\n- Claim it",
+        acceptanceCriteria: ["Claim it"],
+        priority: 1,
+        createdAt: "2024-02-01T00:00:00.000Z",
+        status: "Ready for Aigile",
+        comments: [],
+      },
+      {
+        id: "issue-low",
+        key: "LIN-901",
+        title: "Lower priority",
+        description: "",
+        acceptanceCriteria: [],
+        priority: 2,
+        createdAt: "2024-01-01T00:00:00.000Z",
+        status: "Ready for Aigile",
+        comments: [],
+      },
+    ]);
   });
 
   it("lists Linear team keys and names", async () => {
-    await expect(listLinearTeams({
-      apiKey: "test-key",
-      fetchGraphql: async (query, variables) => {
-        expect(query).toContain("LinearTeams");
-        expect(variables).toEqual({ first: 100 });
-        return {
-          teams: {
-            nodes: [
-              { key: "ENG", name: "Engineering" },
-              { key: "OPS", name: "Operations" },
-            ],
-          },
-        };
-      },
-    })).resolves.toEqual([
+    await expect(
+      listLinearTeams({
+        apiKey: "test-key",
+        fetchGraphql: async (query, variables) => {
+          expect(query).toContain("LinearTeams");
+          expect(variables).toEqual({ first: 100 });
+          return {
+            teams: {
+              nodes: [
+                { key: "ENG", name: "Engineering" },
+                { key: "OPS", name: "Operations" },
+              ],
+            },
+          };
+        },
+      }),
+    ).resolves.toEqual([
       { key: "ENG", name: "Engineering" },
       { key: "OPS", name: "Operations" },
     ]);
@@ -176,21 +181,20 @@ describe("Linear GraphQL issue tracker adapter", () => {
   it("lists Linear workflow state names for a team key", async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
 
-    await expect(listLinearWorkflowStateNames({
-      apiKey: "test-key",
-      teamKey: "ENG",
-      fetchGraphql: async (query, variables) => {
-        calls.push({ query, variables });
-        return {
-          workflowStates: {
-            nodes: [
-              { name: "Ready for Aigile" },
-              { name: "In Progress" },
-            ],
-          },
-        };
-      },
-    })).resolves.toEqual(["Ready for Aigile", "In Progress"]);
+    await expect(
+      listLinearWorkflowStateNames({
+        apiKey: "test-key",
+        teamKey: "ENG",
+        fetchGraphql: async (query, variables) => {
+          calls.push({ query, variables });
+          return {
+            workflowStates: {
+              nodes: [{ name: "Ready for Aigile" }, { name: "In Progress" }],
+            },
+          };
+        },
+      }),
+    ).resolves.toEqual(["Ready for Aigile", "In Progress"]);
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.query).toContain("WorkflowStatesByTeam");

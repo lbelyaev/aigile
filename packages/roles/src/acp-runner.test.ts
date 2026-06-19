@@ -8,17 +8,20 @@ import {
 describe("ACP role runner", () => {
   it("emits progress while connecting, prompting, streaming, and stopping", async () => {
     const progress: string[] = [];
-    let eventHandler: ((event:
-      | { type: "text_delta"; sessionId: string; delta: string }
-      | {
-        type: "permission_decision";
-        sessionId: string;
-        requestId: string;
-        tool: string;
-        description: string;
-        decision: "allow_once" | "reject_once" | "cancelled";
-      }
-    ) => void) | undefined;
+    let eventHandler:
+      | ((
+          event:
+            | { type: "text_delta"; sessionId: string; delta: string }
+            | {
+                type: "permission_decision";
+                sessionId: string;
+                requestId: string;
+                tool: string;
+                description: string;
+                decision: "allow_once" | "reject_once" | "cancelled";
+              },
+        ) => void)
+      | undefined;
     const connector: AcpRuntimeConnector = async () => ({
       session: {
         sessionId: "role-session-1",
@@ -136,61 +139,75 @@ describe("ACP role runner", () => {
         roleId: "developer",
         runtimeProfileId: "runtime-developer",
       },
-      inputArtifacts: [{
-        id: "policy:LIN-123:dry-run",
-        kind: "execution.policy",
-        source: "system",
-        payload: {
-          mode: "dry_run",
-          fileWrites: "forbidden",
-          commits: "forbidden",
-          shellCommands: "read_only",
+      inputArtifacts: [
+        {
+          id: "policy:LIN-123:dry-run",
+          kind: "execution.policy",
+          source: "system",
+          payload: {
+            mode: "dry_run",
+            fileWrites: "forbidden",
+            commits: "forbidden",
+            shellCommands: "read_only",
+          },
         },
-      }],
+      ],
     });
 
-    expect(connectInput.decidePermission?.({
-      sessionId: "LIN-123:developer",
-      requestId: "tool-1",
-      tool: "Bash",
-      description: JSON.stringify({ command: "git commit -m test" }),
-      options: [],
-    })).toBe("reject_once");
-    expect(connectInput.decidePermission?.({
-      sessionId: "LIN-123:developer",
-      requestId: "tool-2",
-      tool: "Edit",
-      description: "/repo/README.md",
-      options: [],
-    })).toBe("reject_once");
-    expect(connectInput.decidePermission?.({
-      sessionId: "LIN-123:developer",
-      requestId: "tool-3",
-      tool: "Bash",
-      description: JSON.stringify({ command: "git status --short" }),
-      options: [],
-    })).toBe("allow_once");
-    expect(connectInput.decidePermission?.({
-      sessionId: "LIN-123:developer",
-      requestId: "tool-4",
-      tool: "Bash",
-      description: JSON.stringify({ command: "find . -type f" }),
-      options: [],
-    })).toBe("reject_once");
-    expect(connectInput.decidePermission?.({
-      sessionId: "LIN-123:developer",
-      requestId: "tool-5",
-      tool: "Bash",
-      description: JSON.stringify({ command: "rg TODO" }),
-      options: [],
-    })).toBe("reject_once");
-    expect(connectInput.decidePermission?.({
-      sessionId: "LIN-123:developer",
-      requestId: "tool-6",
-      tool: "Bash",
-      description: JSON.stringify({ command: "rg TODO packages/roles/src/acp-runner.ts" }),
-      options: [],
-    })).toBe("allow_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "tool-1",
+        tool: "Bash",
+        description: JSON.stringify({ command: "git commit -m test" }),
+        options: [],
+      }),
+    ).toBe("reject_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "tool-2",
+        tool: "Edit",
+        description: "/repo/README.md",
+        options: [],
+      }),
+    ).toBe("reject_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "tool-3",
+        tool: "Bash",
+        description: JSON.stringify({ command: "git status --short" }),
+        options: [],
+      }),
+    ).toBe("allow_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "tool-4",
+        tool: "Bash",
+        description: JSON.stringify({ command: "find . -type f" }),
+        options: [],
+      }),
+    ).toBe("reject_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "tool-5",
+        tool: "Bash",
+        description: JSON.stringify({ command: "rg TODO" }),
+        options: [],
+      }),
+    ).toBe("reject_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "tool-6",
+        tool: "Bash",
+        description: JSON.stringify({ command: "rg TODO packages/roles/src/acp-runner.ts" }),
+        options: [],
+      }),
+    ).toBe("allow_once");
   });
 
   it("allows edits but blocks commits for agent-write execution policy", () => {
@@ -206,49 +223,59 @@ describe("ACP role runner", () => {
         roleId: "developer",
         runtimeProfileId: "runtime-developer",
       },
-      inputArtifacts: [{
-        id: "policy:LIN-123:agent-write",
-        kind: "execution.policy",
-        source: "system",
-        payload: {
-          mode: "agent_write",
-          fileWrites: "allowed",
-          commits: "forbidden",
-          shellCommands: "workspace",
+      inputArtifacts: [
+        {
+          id: "policy:LIN-123:agent-write",
+          kind: "execution.policy",
+          source: "system",
+          payload: {
+            mode: "agent_write",
+            fileWrites: "allowed",
+            commits: "forbidden",
+            shellCommands: "workspace",
+          },
         },
-      }],
+      ],
     });
 
-    expect(connectInput.decidePermission?.({
-      sessionId: "LIN-123:developer",
-      requestId: "tool-1",
-      tool: "Edit",
-      description: "/repo/README.md",
-      options: [],
-    })).toBe("allow_once");
-    for (const tool of ["Write", "MultiEdit", "NotebookEdit"] as const) {
-      expect(connectInput.decidePermission?.({
+    expect(
+      connectInput.decidePermission?.({
         sessionId: "LIN-123:developer",
-        requestId: `tool-${tool}`,
-        tool,
+        requestId: "tool-1",
+        tool: "Edit",
         description: "/repo/README.md",
         options: [],
-      })).toBe("allow_once");
+      }),
+    ).toBe("allow_once");
+    for (const tool of ["Write", "MultiEdit", "NotebookEdit"] as const) {
+      expect(
+        connectInput.decidePermission?.({
+          sessionId: "LIN-123:developer",
+          requestId: `tool-${tool}`,
+          tool,
+          description: "/repo/README.md",
+          options: [],
+        }),
+      ).toBe("allow_once");
     }
-    expect(connectInput.decidePermission?.({
-      sessionId: "LIN-123:developer",
-      requestId: "tool-2",
-      tool: "Bash",
-      description: JSON.stringify({ command: "git commit -m test" }),
-      options: [],
-    })).toBe("reject_once");
-    expect(connectInput.decidePermission?.({
-      sessionId: "LIN-123:developer",
-      requestId: "tool-3",
-      tool: "Bash",
-      description: JSON.stringify({ command: "ls -R ." }),
-      options: [],
-    })).toBe("reject_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "tool-2",
+        tool: "Bash",
+        description: JSON.stringify({ command: "git commit -m test" }),
+        options: [],
+      }),
+    ).toBe("reject_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "tool-3",
+        tool: "Bash",
+        description: JSON.stringify({ command: "ls -R ." }),
+        options: [],
+      }),
+    ).toBe("reject_once");
     for (const [requestId, command] of [
       ["tool-4", "git add packages/demo/src/run.ts"],
       ["tool-5", "git -C /repo/aigile commit -m test"],
@@ -260,53 +287,58 @@ describe("ACP role runner", () => {
       ["tool-9-pr", "gh pr create --fill"],
       ["tool-9-hub-pr", "echo ready\nhub pull-request"],
     ] as const) {
-      expect(connectInput.decidePermission?.({
-        sessionId: "LIN-123:developer",
-        requestId,
-        tool: "Bash",
-        description: JSON.stringify({ command }),
-        options: [],
-      })).toBe("reject_once");
+      expect(
+        connectInput.decidePermission?.({
+          sessionId: "LIN-123:developer",
+          requestId,
+          tool: "Bash",
+          description: JSON.stringify({ command }),
+          options: [],
+        }),
+      ).toBe("reject_once");
     }
-    expect(connectInput.decidePermission?.({
-      sessionId: "LIN-123:developer",
-      requestId: "tool-10",
-      tool: "Bash",
-      description: JSON.stringify({ command: "cd /repo/aigile && find . -type f" }),
-      options: [],
-    })).toBe("reject_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "tool-10",
+        tool: "Bash",
+        description: JSON.stringify({ command: "cd /repo/aigile && find . -type f" }),
+        options: [],
+      }),
+    ).toBe("reject_once");
     for (const [requestId, command] of [
       ["tool-10-git-ls-files", "git ls-files"],
       ["tool-10-git-grep", "git grep TODO"],
       ["tool-10-grep-r", "grep -R TODO ."],
       ["tool-10-rg", "rg TODO"],
     ] as const) {
-      expect(connectInput.decidePermission?.({
-        sessionId: "LIN-123:developer",
-        requestId,
-        tool: "Bash",
-        description: JSON.stringify({ command }),
-        options: [],
-      })).toBe("reject_once");
+      expect(
+        connectInput.decidePermission?.({
+          sessionId: "LIN-123:developer",
+          requestId,
+          tool: "Bash",
+          description: JSON.stringify({ command }),
+          options: [],
+        }),
+      ).toBe("reject_once");
     }
-    expect(connectInput.decidePermission?.({
-      sessionId: "LIN-123:developer",
-      requestId: "tool-11",
-      tool: "Bash",
-      description: JSON.stringify({ command: "bun test packages/roles/src/acp-runner.test.ts" }),
-      options: [],
-    })).toBe("allow_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "tool-11",
+        tool: "Bash",
+        description: JSON.stringify({ command: "bun test packages/roles/src/acp-runner.test.ts" }),
+        options: [],
+      }),
+    ).toBe("allow_once");
   });
 
   it("rejects observed broad-discovery tool starts for agent-write policy", async () => {
     const progress: string[] = [];
     let killed = false;
-    let eventHandler: ((event: {
-      type: "tool_start";
-      sessionId: string;
-      tool: string;
-      params?: unknown;
-    }) => void) | undefined;
+    let eventHandler:
+      | ((event: { type: "tool_start"; sessionId: string; tool: string; params?: unknown }) => void)
+      | undefined;
     const connector: AcpRuntimeConnector = async () => ({
       session: {
         sessionId: "role-session-1",
@@ -346,31 +378,35 @@ describe("ACP role runner", () => {
       onProgress: (event) => progress.push(event.type),
     });
 
-    await expect(runner.run({
-      roleId: "developer",
-      issueId: "LIN-123",
-      runtime: {
-        id: "runtime-developer",
-        transport: "stdio",
-        command: ["agent-acp"],
-      },
-      assignment: {
+    await expect(
+      runner.run({
         roleId: "developer",
-        runtimeProfileId: "runtime-developer",
-      },
-      inputArtifacts: [{
-        id: "policy:LIN-123:agent-write",
-        kind: "execution.policy",
-        source: "system",
-        payload: {
-          mode: "agent_write",
-          fileWrites: "allowed",
-          commits: "forbidden",
-          pushes: "forbidden",
-          shellCommands: "workspace",
+        issueId: "LIN-123",
+        runtime: {
+          id: "runtime-developer",
+          transport: "stdio",
+          command: ["agent-acp"],
         },
-      }],
-    })).rejects.toThrow(/Policy violation broad_discovery/);
+        assignment: {
+          roleId: "developer",
+          runtimeProfileId: "runtime-developer",
+        },
+        inputArtifacts: [
+          {
+            id: "policy:LIN-123:agent-write",
+            kind: "execution.policy",
+            source: "system",
+            payload: {
+              mode: "agent_write",
+              fileWrites: "allowed",
+              commits: "forbidden",
+              pushes: "forbidden",
+              shellCommands: "workspace",
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow(/Policy violation broad_discovery/);
     expect(progress).toContain("policy_violation");
     expect(progress).not.toContain("artifact_parsed");
     expect(killed).toBe(true);
@@ -422,12 +458,14 @@ describe("ACP role runner", () => {
         runtimeProfileId: "runtime-architect",
         instructionRef: "roles/architect.md",
       },
-      inputArtifacts: [{
-        id: "linear:LIN-123",
-        kind: "linear.issue",
-        source: "linear",
-        payload: { title: "Build the runner" },
-      }],
+      inputArtifacts: [
+        {
+          id: "linear:LIN-123",
+          kind: "linear.issue",
+          source: "linear",
+          payload: { title: "Build the runner" },
+        },
+      ],
     });
 
     expect(prompts[0]).toContain("Role: architect");
@@ -458,11 +496,13 @@ describe("ACP role runner", () => {
   });
 
   it("records runtime token usage in artifact provenance", async () => {
-    let eventHandler: ((event: {
-      type: "token_usage";
-      sessionId: string;
-      usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
-    }) => void) | undefined;
+    let eventHandler:
+      | ((event: {
+          type: "token_usage";
+          sessionId: string;
+          usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+        }) => void)
+      | undefined;
     const connector: AcpRuntimeConnector = async () => ({
       session: {
         sessionId: "role-session-1",
@@ -527,12 +567,9 @@ describe("ACP role runner", () => {
   it("rejects observed broad-discovery tool starts under execution policy", async () => {
     const progress: string[] = [];
     let killed = false;
-    let eventHandler: ((event: {
-      type: "tool_start";
-      sessionId: string;
-      tool: string;
-      params?: unknown;
-    }) => void) | undefined;
+    let eventHandler:
+      | ((event: { type: "tool_start"; sessionId: string; tool: string; params?: unknown }) => void)
+      | undefined;
     const connector: AcpRuntimeConnector = async () => ({
       session: {
         sessionId: "role-session-1",
@@ -541,7 +578,7 @@ describe("ACP role runner", () => {
           eventHandler?.({
             type: "tool_start",
             sessionId: "role-session-1",
-            tool: "find /repo/aigile -type f -name \"*.ts\"",
+            tool: 'find /repo/aigile -type f -name "*.ts"',
           });
           return {
             artifactKind: "architect.plan",
@@ -573,30 +610,34 @@ describe("ACP role runner", () => {
       onProgress: (event) => progress.push(event.type),
     });
 
-    await expect(runner.run({
-      roleId: "architect",
-      issueId: "LIN-123",
-      runtime: {
-        id: "runtime-architect",
-        transport: "stdio",
-        command: ["agent-acp"],
-      },
-      assignment: {
+    await expect(
+      runner.run({
         roleId: "architect",
-        runtimeProfileId: "runtime-architect",
-      },
-      inputArtifacts: [{
-        id: "policy:LIN-123:dry-run",
-        kind: "execution.policy",
-        source: "system",
-        payload: {
-          mode: "dry_run",
-          fileWrites: "forbidden",
-          commits: "forbidden",
-          shellCommands: "read_only",
+        issueId: "LIN-123",
+        runtime: {
+          id: "runtime-architect",
+          transport: "stdio",
+          command: ["agent-acp"],
         },
-      }],
-    })).rejects.toThrow(/Policy violation broad_discovery/);
+        assignment: {
+          roleId: "architect",
+          runtimeProfileId: "runtime-architect",
+        },
+        inputArtifacts: [
+          {
+            id: "policy:LIN-123:dry-run",
+            kind: "execution.policy",
+            source: "system",
+            payload: {
+              mode: "dry_run",
+              fileWrites: "forbidden",
+              commits: "forbidden",
+              shellCommands: "read_only",
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow(/Policy violation broad_discovery/);
     expect(progress).toContain("policy_violation");
     expect(progress).not.toContain("artifact_parsed");
     expect(killed).toBe(true);
@@ -605,12 +646,9 @@ describe("ACP role runner", () => {
   it("rejects observed file reads above the execution budget", async () => {
     const progress: string[] = [];
     let killed = false;
-    let eventHandler: ((event: {
-      type: "tool_start";
-      sessionId: string;
-      tool: string;
-      params?: unknown;
-    }) => void) | undefined;
+    let eventHandler:
+      | ((event: { type: "tool_start"; sessionId: string; tool: string; params?: unknown }) => void)
+      | undefined;
     const connector: AcpRuntimeConnector = async () => ({
       session: {
         sessionId: "role-session-1",
@@ -654,30 +692,34 @@ describe("ACP role runner", () => {
       onProgress: (event) => progress.push(event.type),
     });
 
-    await expect(runner.run({
-      roleId: "architect",
-      issueId: "LIN-123",
-      runtime: {
-        id: "runtime-architect",
-        transport: "stdio",
-        command: ["agent-acp"],
-      },
-      assignment: {
+    await expect(
+      runner.run({
         roleId: "architect",
-        runtimeProfileId: "runtime-architect",
-      },
-      inputArtifacts: [{
-        id: "policy:LIN-123:dry-run",
-        kind: "execution.policy",
-        source: "system",
-        payload: {
-          mode: "dry_run",
-          fileWrites: "forbidden",
-          commits: "forbidden",
-          shellCommands: "read_only",
+        issueId: "LIN-123",
+        runtime: {
+          id: "runtime-architect",
+          transport: "stdio",
+          command: ["agent-acp"],
         },
-      }],
-    })).rejects.toThrow(/Policy violation file_read_budget/);
+        assignment: {
+          roleId: "architect",
+          runtimeProfileId: "runtime-architect",
+        },
+        inputArtifacts: [
+          {
+            id: "policy:LIN-123:dry-run",
+            kind: "execution.policy",
+            source: "system",
+            payload: {
+              mode: "dry_run",
+              fileWrites: "forbidden",
+              commits: "forbidden",
+              shellCommands: "read_only",
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow(/Policy violation file_read_budget/);
     expect(progress).toContain("policy_violation");
     expect(progress).not.toContain("artifact_parsed");
     expect(killed).toBe(true);
@@ -685,12 +727,9 @@ describe("ACP role runner", () => {
 
   it("allows focused file reads above the dry-run budget for agent-write runs", async () => {
     const progress: string[] = [];
-    let eventHandler: ((event: {
-      type: "tool_start";
-      sessionId: string;
-      tool: string;
-      params?: unknown;
-    }) => void) | undefined;
+    let eventHandler:
+      | ((event: { type: "tool_start"; sessionId: string; tool: string; params?: unknown }) => void)
+      | undefined;
     const connector: AcpRuntimeConnector = async () => ({
       session: {
         sessionId: "role-session-1",
@@ -730,30 +769,34 @@ describe("ACP role runner", () => {
       onProgress: (event) => progress.push(event.type),
     });
 
-    await expect(runner.run({
-      roleId: "developer",
-      issueId: "LIN-123",
-      runtime: {
-        id: "runtime-developer",
-        transport: "stdio",
-        command: ["agent-acp"],
-      },
-      assignment: {
+    await expect(
+      runner.run({
         roleId: "developer",
-        runtimeProfileId: "runtime-developer",
-      },
-      inputArtifacts: [{
-        id: "policy:LIN-123:agent-write",
-        kind: "execution.policy",
-        source: "system",
-        payload: {
-          mode: "agent_write",
-          fileWrites: "allowed",
-          commits: "forbidden",
-          shellCommands: "workspace",
+        issueId: "LIN-123",
+        runtime: {
+          id: "runtime-developer",
+          transport: "stdio",
+          command: ["agent-acp"],
         },
-      }],
-    })).resolves.toMatchObject({
+        assignment: {
+          roleId: "developer",
+          runtimeProfileId: "runtime-developer",
+        },
+        inputArtifacts: [
+          {
+            id: "policy:LIN-123:agent-write",
+            kind: "execution.policy",
+            source: "system",
+            payload: {
+              mode: "agent_write",
+              fileWrites: "allowed",
+              commits: "forbidden",
+              shellCommands: "workspace",
+            },
+          },
+        ],
+      }),
+    ).resolves.toMatchObject({
       kind: "developer.attempt",
     });
     expect(progress).not.toContain("policy_violation");
@@ -761,7 +804,9 @@ describe("ACP role runner", () => {
   });
 
   it("parses artifact JSON from streamed ACP text events", async () => {
-    let eventHandler: ((event: { type: "text_delta"; sessionId: string; delta: string }) => void) | undefined;
+    let eventHandler:
+      | ((event: { type: "text_delta"; sessionId: string; delta: string }) => void)
+      | undefined;
     const connector: AcpRuntimeConnector = async () => ({
       session: {
         sessionId: "role-session-1",
@@ -832,7 +877,9 @@ describe("ACP role runner", () => {
   });
 
   it("falls back to streamed artifact JSON when prompt result is not an artifact", async () => {
-    let eventHandler: ((event: { type: "text_delta"; sessionId: string; delta: string }) => void) | undefined;
+    let eventHandler:
+      | ((event: { type: "text_delta"; sessionId: string; delta: string }) => void)
+      | undefined;
     const connector: AcpRuntimeConnector = async () => ({
       session: {
         sessionId: "role-session-1",
@@ -911,20 +958,22 @@ describe("ACP role runner", () => {
     });
     const runner = createAcpRoleRunner({ connector });
 
-    await expect(runner.run({
-      roleId: "architect",
-      issueId: "LIN-123",
-      runtime: {
-        id: "runtime-architect",
-        transport: "stdio",
-        command: ["agent-acp"],
-      },
-      assignment: {
+    await expect(
+      runner.run({
         roleId: "architect",
-        runtimeProfileId: "runtime-architect",
-      },
-      inputArtifacts: [],
-    })).rejects.toThrow(/expected architect\.plan/i);
+        issueId: "LIN-123",
+        runtime: {
+          id: "runtime-architect",
+          transport: "stdio",
+          command: ["agent-acp"],
+        },
+        assignment: {
+          roleId: "architect",
+          runtimeProfileId: "runtime-architect",
+        },
+        inputArtifacts: [],
+      }),
+    ).rejects.toThrow(/expected architect\.plan/i);
     expect(killed).toBe(true);
   });
 });

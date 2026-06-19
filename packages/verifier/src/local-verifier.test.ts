@@ -23,13 +23,15 @@ describe("local verifier", () => {
       source: "verifier",
       payload: {
         status: "passed",
-        commands: [{
-          command: "bun",
-          args: ["run", "check"],
-          exitCode: 0,
-          stdout: "bun run check in /repo/.worktrees/LIN-123",
-          stderr: "",
-        }],
+        commands: [
+          {
+            command: "bun",
+            args: ["run", "check"],
+            exitCode: 0,
+            stdout: "bun run check in /repo/.worktrees/LIN-123",
+            stderr: "",
+          },
+        ],
       },
     });
   });
@@ -46,7 +48,10 @@ describe("local verifier", () => {
     const artifact = await verifier.verify({
       issueKey: "LIN-123",
       workspacePath: "/repo/.worktrees/LIN-123",
-      commands: [["bun", "test"], ["bun", "run", "typecheck"]],
+      commands: [
+        ["bun", "test"],
+        ["bun", "run", "typecheck"],
+      ],
     });
 
     expect(artifact.payload.status).toBe("failed");

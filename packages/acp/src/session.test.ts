@@ -43,17 +43,23 @@ const mockRpc = (): RpcClient & {
 
 describe("ACP session translation", () => {
   it("translates nested agent message chunks", () => {
-    expect(translateSessionUpdate({
-      jsonrpc: "2.0",
-      method: "session/update",
-      params: {
-        sessionId: "acp-1",
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "hello" },
+    expect(
+      translateSessionUpdate(
+        {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "acp-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "hello" },
+            },
+          },
         },
-      },
-    }, "role-session-1", "acp-1")).toEqual({
+        "role-session-1",
+        "acp-1",
+      ),
+    ).toEqual({
       type: "text_delta",
       sessionId: "role-session-1",
       delta: "hello",
@@ -61,19 +67,25 @@ describe("ACP session translation", () => {
   });
 
   it("translates tool start and completion updates", () => {
-    expect(translateSessionUpdate({
-      jsonrpc: "2.0",
-      method: "session/update",
-      params: {
-        sessionId: "acp-1",
-        update: {
-          sessionUpdate: "tool_call",
-          toolCallId: "tool-1",
-          title: "Bash",
-          rawInput: { command: "bun test" },
+    expect(
+      translateSessionUpdate(
+        {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "acp-1",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "tool-1",
+              title: "Bash",
+              rawInput: { command: "bun test" },
+            },
+          },
         },
-      },
-    }, "role-session-1", "acp-1")).toEqual({
+        "role-session-1",
+        "acp-1",
+      ),
+    ).toEqual({
       type: "tool_start",
       sessionId: "role-session-1",
       tool: "Bash",
@@ -81,20 +93,26 @@ describe("ACP session translation", () => {
       params: { command: "bun test" },
     });
 
-    expect(translateSessionUpdate({
-      jsonrpc: "2.0",
-      method: "session/update",
-      params: {
-        sessionId: "acp-1",
-        update: {
-          sessionUpdate: "tool_call_update",
-          toolCallId: "tool-1",
-          title: "Bash",
-          status: "completed",
-          rawOutput: "ok",
+    expect(
+      translateSessionUpdate(
+        {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "acp-1",
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "tool-1",
+              title: "Bash",
+              status: "completed",
+              rawOutput: "ok",
+            },
+          },
         },
-      },
-    }, "role-session-1", "acp-1")).toEqual({
+        "role-session-1",
+        "acp-1",
+      ),
+    ).toEqual({
       type: "tool_end",
       sessionId: "role-session-1",
       tool: "Bash",
@@ -104,20 +122,26 @@ describe("ACP session translation", () => {
   });
 
   it("translates token usage from session updates", () => {
-    expect(translateSessionUpdate({
-      jsonrpc: "2.0",
-      method: "session/update",
-      params: {
-        sessionId: "acp-1",
-        update: {
-          sessionUpdate: "agent_message",
-          usage: {
-            inputTokens: 1200,
-            outputTokens: 500,
+    expect(
+      translateSessionUpdate(
+        {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "acp-1",
+            update: {
+              sessionUpdate: "agent_message",
+              usage: {
+                inputTokens: 1200,
+                outputTokens: 500,
+              },
+            },
           },
         },
-      },
-    }, "role-session-1", "acp-1")).toEqual({
+        "role-session-1",
+        "acp-1",
+      ),
+    ).toEqual({
       type: "token_usage",
       sessionId: "role-session-1",
       usage: {
@@ -127,24 +151,30 @@ describe("ACP session translation", () => {
       },
     });
 
-    expect(translateSessionUpdate({
-      jsonrpc: "2.0",
-      method: "session/update",
-      params: {
-        sessionId: "acp-1",
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "hello" },
-          _meta: {
-            usage: {
-              prompt_tokens: 10,
-              completion_tokens: 4,
-              total_tokens: 14,
+    expect(
+      translateSessionUpdate(
+        {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "acp-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "hello" },
+              _meta: {
+                usage: {
+                  prompt_tokens: 10,
+                  completion_tokens: 4,
+                  total_tokens: 14,
+                },
+              },
             },
           },
         },
-      },
-    }, "role-session-1", "acp-1")).toEqual({
+        "role-session-1",
+        "acp-1",
+      ),
+    ).toEqual({
       type: "text_delta",
       sessionId: "role-session-1",
       delta: "hello",
@@ -155,21 +185,27 @@ describe("ACP session translation", () => {
       },
     });
 
-    expect(translateSessionUpdate({
-      jsonrpc: "2.0",
-      method: "session/update",
-      params: {
-        sessionId: "acp-1",
-        update: {
-          sessionUpdate: "agent_message",
-          usage: {
-            tokens: 999_999,
-            inputTokens: 12,
-            outputTokens: 3,
+    expect(
+      translateSessionUpdate(
+        {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "acp-1",
+            update: {
+              sessionUpdate: "agent_message",
+              usage: {
+                tokens: 999_999,
+                inputTokens: 12,
+                outputTokens: 3,
+              },
+            },
           },
         },
-      },
-    }, "role-session-1", "acp-1")).toEqual({
+        "role-session-1",
+        "acp-1",
+      ),
+    ).toEqual({
       type: "token_usage",
       sessionId: "role-session-1",
       usage: {
@@ -190,24 +226,28 @@ describe("ACP session translation", () => {
     });
     session.onEvent((event) => events.push(event));
 
-    await expect(rpc.emitRequest("session/request_permission", {
-      sessionId: "acp-1",
-      toolCall: {
-        toolCallId: "tool-1",
-        title: "Bash",
-        rawInput: { command: "bun test" },
-      },
-      options: [{ optionId: "allow_once", name: "Allow", kind: "allow_once" }],
-    })).resolves.toEqual({
+    await expect(
+      rpc.emitRequest("session/request_permission", {
+        sessionId: "acp-1",
+        toolCall: {
+          toolCallId: "tool-1",
+          title: "Bash",
+          rawInput: { command: "bun test" },
+        },
+        options: [{ optionId: "allow_once", name: "Allow", kind: "allow_once" }],
+      }),
+    ).resolves.toEqual({
       outcome: { outcome: "selected", optionId: "allow_once" },
     });
-    expect(events).toEqual([{
-      type: "permission_decision",
-      sessionId: "role-session-1",
-      requestId: "tool-1",
-      tool: "Bash",
-      description: JSON.stringify({ command: "bun test" }),
-      decision: "allow_once",
-    }]);
+    expect(events).toEqual([
+      {
+        type: "permission_decision",
+        sessionId: "role-session-1",
+        requestId: "tool-1",
+        tool: "Bash",
+        description: JSON.stringify({ command: "bun test" }),
+        decision: "allow_once",
+      },
+    ]);
   });
 });

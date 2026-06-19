@@ -1,12 +1,5 @@
-import type {
-  AcpRuntimeProfile,
-  RoleAssignment,
-  WorkflowArtifact,
-} from "@aigile/types";
-import {
-  isAcpRuntimeProfile,
-  isRoleAssignment,
-} from "@aigile/types";
+import type { AcpRuntimeProfile, RoleAssignment, WorkflowArtifact } from "@aigile/types";
+import { isAcpRuntimeProfile, isRoleAssignment } from "@aigile/types";
 
 export interface RoleRuntimeRegistryConfig {
   runtimes: readonly AcpRuntimeProfile[];
@@ -61,16 +54,10 @@ export const createRoleRuntimeRegistry = (
   config: RoleRuntimeRegistryConfig,
 ): RoleRuntimeRegistry => {
   const runtimes = new Map(
-    config.runtimes.map((runtime) => [
-      runtime.id,
-      requireValidRuntime(runtime),
-    ]),
+    config.runtimes.map((runtime) => [runtime.id, requireValidRuntime(runtime)]),
   );
   const assignments = new Map(
-    config.assignments.map((assignment) => [
-      assignment.roleId,
-      requireValidAssignment(assignment),
-    ]),
+    config.assignments.map((assignment) => [assignment.roleId, requireValidAssignment(assignment)]),
   );
 
   const getAssignment = (roleId: string): RoleAssignment => {
@@ -83,7 +70,9 @@ export const createRoleRuntimeRegistry = (
     const assignment = getAssignment(roleId);
     const runtime = runtimes.get(assignment.runtimeProfileId);
     if (!runtime) {
-      throw new Error(`Runtime profile not found for role "${roleId}": ${assignment.runtimeProfileId}`);
+      throw new Error(
+        `Runtime profile not found for role "${roleId}": ${assignment.runtimeProfileId}`,
+      );
     }
     return runtime;
   };
@@ -91,9 +80,7 @@ export const createRoleRuntimeRegistry = (
   return { getAssignment, getRuntimeForRole };
 };
 
-export const runAssignedRole = async (
-  input: RunAssignedRoleInput,
-): Promise<WorkflowArtifact> => {
+export const runAssignedRole = async (input: RunAssignedRoleInput): Promise<WorkflowArtifact> => {
   const assignment = input.registry.getAssignment(input.roleId);
   const runtime = input.registry.getRuntimeForRole(input.roleId);
   return input.runner.run({

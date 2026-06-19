@@ -26,7 +26,9 @@ describe("ACP agent demo orchestration", () => {
       "checker.verdict",
       "github.pull_request",
     ]);
-    expect(result.artifacts.find((artifact) => artifact.kind === "architect.plan")?.payload).toMatchObject({
+    expect(
+      result.artifacts.find((artifact) => artifact.kind === "architect.plan")?.payload,
+    ).toMatchObject({
       summary: "Mock ACP architect plan",
     });
   });

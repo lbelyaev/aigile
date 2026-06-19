@@ -91,7 +91,11 @@ export const createAcpProcess = (
 
   const rpcOptions: { timeoutMs?: number } = {};
   if (options.timeoutMs !== undefined) rpcOptions.timeoutMs = options.timeoutMs;
-  const rpc = createRpcClient(requirePipe(child.stdout, "stdout"), requirePipe(child.stdin, "stdin"), rpcOptions);
+  const rpc = createRpcClient(
+    requirePipe(child.stdout, "stdout"),
+    requirePipe(child.stdin, "stdin"),
+    rpcOptions,
+  );
 
   const kill = async (): Promise<void> => {
     if (!alive) return;
@@ -146,7 +150,8 @@ export const connectAcpRuntime = async (
     sessionId: input.sessionId,
     acpSessionId: extractSessionId(sessionResult),
   };
-  if (input.decidePermission !== undefined) sessionOptions.decidePermission = input.decidePermission;
+  if (input.decidePermission !== undefined)
+    sessionOptions.decidePermission = input.decidePermission;
   const session = createAcpSession(processHandle.rpc, sessionOptions);
 
   return {

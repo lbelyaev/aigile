@@ -1,11 +1,6 @@
-export {
-  createGitWorkspaceAdapter,
-  defaultExecCommand,
-} from "./git-workspace.js";
+export { createGitWorkspaceAdapter, defaultExecCommand } from "./git-workspace.js";
 
-export {
-  createGitPublisher,
-} from "./git-publish.js";
+export { createGitPublisher } from "./git-publish.js";
 
 export type {
   ExecCommand,
@@ -18,8 +13,4 @@ export type {
   IssueWorkspaceStatusState,
 } from "./git-workspace.js";
 
-export type {
-  GitPublisher,
-  GitPublisherOptions,
-  GitPublishInput,
-} from "./git-publish.js";
+export type { GitPublisher, GitPublisherOptions, GitPublishInput } from "./git-publish.js";
