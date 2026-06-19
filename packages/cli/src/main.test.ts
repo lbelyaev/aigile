@@ -30,6 +30,41 @@ describe("cli formatting", () => {
     })).toContain("Final state: merged");
   });
 
+  it("labels dry-run demo output as simulated", () => {
+    const output = formatDemoResult({
+      issueKey: "LIN-456",
+      finalState: "merged",
+      pullRequest: {
+        id: "aigile/aigile#1",
+        number: 1,
+        url: "https://github.local/aigile/aigile/pull/1",
+        owner: "aigile",
+        repo: "aigile",
+        branch: "aigile/LIN-456",
+        baseBranch: "main",
+        title: "LIN-456 Dry run",
+        body: "Demo PR",
+        comments: [],
+        checks: [],
+      },
+      artifacts: [{
+        id: "policy:LIN-456:dry-run",
+        kind: "execution.policy",
+        source: "system",
+        payload: {
+          mode: "dry_run",
+          fileWrites: "forbidden",
+          commits: "forbidden",
+          shellCommands: "read_only",
+        },
+      }],
+      timeline: ["issue_received -> planning", "merge_completed -> merged"],
+    });
+
+    expect(output).toContain("Mode: dry_run (simulated)");
+    expect(output).toContain("Pull request: simulated https://github.local/aigile/aigile/pull/1");
+  });
+
   it("formats ACP role progress for hand testing", () => {
     expect(formatAcpRoleProgress({
       type: "runtime_connected",

@@ -33,17 +33,31 @@ const defaultIssue: IssueRecord = {
   comments: [],
 };
 
-export const formatDemoResult = (result: DemoResult): string => [
-  `Aigile demo run: ${result.issueKey}`,
-  `Final state: ${result.finalState}`,
-  `Pull request: ${result.pullRequest.url}`,
-  "",
-  "Timeline:",
-  ...result.timeline.map((entry) => `- ${entry}`),
-  "",
-  "Artifacts:",
-  ...result.artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.id}`),
-].join("\n");
+const executionPolicyMode = (result: DemoResult): string | undefined => {
+  const policy = result.artifacts.find((artifact) => artifact.kind === "execution.policy");
+  if (!policy || typeof policy.payload !== "object" || policy.payload === null || Array.isArray(policy.payload)) {
+    return undefined;
+  }
+  const mode = (policy.payload as { mode?: unknown }).mode;
+  return typeof mode === "string" && mode.length > 0 ? mode : undefined;
+};
+
+export const formatDemoResult = (result: DemoResult): string => {
+  const mode = executionPolicyMode(result);
+  const isDryRun = mode === "dry_run";
+  return [
+    `Aigile demo run: ${result.issueKey}`,
+    ...(mode === undefined ? [] : [`Mode: ${isDryRun ? "dry_run (simulated)" : mode}`]),
+    `Final state: ${result.finalState}`,
+    `Pull request: ${isDryRun ? "simulated " : ""}${result.pullRequest.url}`,
+    "",
+    "Timeline:",
+    ...result.timeline.map((entry) => `- ${entry}`),
+    "",
+    "Artifacts:",
+    ...result.artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.id}`),
+  ].join("\n");
+};
 
 export const formatAcpRoleProgress = (event: AcpRoleProgressEvent): string => {
   const prefix = `[${event.issueId} ${event.roleId}]`;
