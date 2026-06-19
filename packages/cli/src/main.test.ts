@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { formatAcpRoleProgress, formatDemoResult, parseCliArgs, selectDemoMode } from "./main.js";
+import {
+  formatAcpRoleProgress,
+  formatDemoResult,
+  parseCliArgs,
+  runPublishPreflight,
+  selectDemoMode,
+} from "./main.js";
 
 describe("cli formatting", () => {
   it("formats demo output for hand testing", () => {
@@ -129,5 +135,42 @@ describe("cli formatting", () => {
       remote: "upstream",
       baseBranch: "develop",
     });
+  });
+
+  it("preflights real publish dependencies before live role work", async () => {
+    const calls: Array<{ command: string; args: string[]; cwd: string }> = [];
+
+    await runPublishPreflight({
+      repoPath: "/repo/aigile",
+      githubRepo: "acme/project",
+      remote: "upstream",
+      baseBranch: "develop",
+      exec: async (command, args, options) => {
+        calls.push({ command, args: [...args], cwd: options.cwd });
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    });
+
+    expect(calls).toEqual([
+      { command: "gh", args: ["auth", "status"], cwd: "/repo/aigile" },
+      { command: "gh", args: ["repo", "view", "acme/project", "--json", "name"], cwd: "/repo/aigile" },
+      { command: "git", args: ["remote", "get-url", "upstream"], cwd: "/repo/aigile" },
+      { command: "git", args: ["rev-parse", "--verify", "develop"], cwd: "/repo/aigile" },
+    ]);
+  });
+
+  it("fails publish preflight with the failing command context", async () => {
+    await expect(runPublishPreflight({
+      repoPath: "/repo/aigile",
+      githubRepo: "acme/project",
+      remote: "origin",
+      baseBranch: "main",
+      exec: async (command, args) => {
+        if (command === "gh" && args[0] === "auth") {
+          return { stdout: "", stderr: "not logged in", exitCode: 1 };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    })).rejects.toThrow(/publish preflight gh auth status failed \(1\): not logged in/i);
   });
 });

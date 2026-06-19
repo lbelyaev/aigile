@@ -14,7 +14,7 @@ import {
 } from "@aigile/demo";
 import type { IssueRecord } from "@aigile/adapters";
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
-import { defaultExecCommand } from "@aigile/workspace";
+import { defaultExecCommand, type ExecCommand, type ExecResult } from "@aigile/workspace";
 
 const defaultIssue: IssueRecord = {
   id: "issue-demo-1",
@@ -95,6 +95,40 @@ export interface CliArgs {
   dryRun?: boolean;
 }
 
+export interface PublishPreflightInput {
+  repoPath: string;
+  githubRepo: string;
+  remote: string;
+  baseBranch: string;
+  exec?: ExecCommand;
+}
+
+const assertPreflightSuccess = (result: ExecResult, operation: string): void => {
+  if (result.exitCode !== 0) {
+    throw new Error(`publish preflight ${operation} failed (${result.exitCode}): ${result.stderr || result.stdout}`);
+  }
+};
+
+export const runPublishPreflight = async (input: PublishPreflightInput): Promise<void> => {
+  const exec = input.exec ?? defaultExecCommand;
+  assertPreflightSuccess(
+    await exec("gh", ["auth", "status"], { cwd: input.repoPath }),
+    "gh auth status",
+  );
+  assertPreflightSuccess(
+    await exec("gh", ["repo", "view", input.githubRepo, "--json", "name"], { cwd: input.repoPath }),
+    `gh repo view ${input.githubRepo}`,
+  );
+  assertPreflightSuccess(
+    await exec("git", ["remote", "get-url", input.remote], { cwd: input.repoPath }),
+    `git remote get-url ${input.remote}`,
+  );
+  assertPreflightSuccess(
+    await exec("git", ["rev-parse", "--verify", input.baseBranch], { cwd: input.repoPath }),
+    `git rev-parse --verify ${input.baseBranch}`,
+  );
+};
+
 const optionValue = (args: readonly string[], name: string): string | undefined => {
   const index = args.indexOf(name);
   if (index < 0) return undefined;
@@ -174,12 +208,20 @@ const main = async (): Promise<void> => {
     if (!args.githubRepo) throw new Error("--publish requires --github-repo owner/repo");
     const [owner, repo] = args.githubRepo.split("/");
     if (!owner || !repo) throw new Error("--github-repo must be in owner/repo format");
+    const remote = args.remote ?? "origin";
+    const baseBranch = args.baseBranch ?? "main";
+    await runPublishPreflight({
+      repoPath: args.repoPath ?? process.cwd(),
+      githubRepo: args.githubRepo,
+      remote,
+      baseBranch,
+    });
     runInput.publish = true;
-    runInput.remote = args.remote ?? "origin";
+    runInput.remote = remote;
     runInput.pullRequestTarget = {
       owner,
       repo,
-      baseBranch: args.baseBranch ?? "main",
+      baseBranch,
     };
     runInput.codeHost = createGitHubCliCodeHostAdapter({
       cwd: args.repoPath ?? process.cwd(),
