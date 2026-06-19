@@ -7,9 +7,13 @@ import {
   type PullRequestRecord,
 } from "@aigile/adapters";
 import {
+  createAcpRoleRunner,
   createRoleRuntimeRegistry,
   createScriptedRoleRunner,
   runAssignedRole,
+  type AcpRuntimeConnector,
+  type RoleRunner,
+  type RoleRuntimeRegistry,
 } from "@aigile/roles";
 import type { WorkflowArtifact, WorkflowEvent, WorkflowState } from "@aigile/types";
 import {
@@ -20,6 +24,15 @@ import {
 
 export interface DemoIssueInput {
   issue: IssueRecord;
+}
+
+export interface DemoWithRolesInput extends DemoIssueInput {
+  registry: RoleRuntimeRegistry;
+  runner: RoleRunner;
+}
+
+export interface DemoWithAcpRolesInput extends DemoIssueInput {
+  connector?: AcpRuntimeConnector;
 }
 
 export interface DemoResult {
@@ -49,49 +62,26 @@ const artifactByKind = (
   return artifact;
 };
 
-export const runDemoIssue = async (input: DemoIssueInput): Promise<DemoResult> => {
+const createDemoRegistry = (): RoleRuntimeRegistry => createRoleRuntimeRegistry({
+  runtimes: [
+    { id: "demo-architect", transport: "stdio", command: ["aigile-demo-acp"] },
+    { id: "demo-developer", transport: "stdio", command: ["aigile-demo-acp"] },
+    { id: "demo-checker", transport: "stdio", command: ["aigile-demo-acp"] },
+  ],
+  assignments: [
+    { roleId: "architect", runtimeProfileId: "demo-architect" },
+    { roleId: "developer", runtimeProfileId: "demo-developer" },
+    { roleId: "checker", runtimeProfileId: "demo-checker" },
+  ],
+});
+
+export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<DemoResult> => {
   const issueTracker = createFakeIssueTrackerAdapter([input.issue]);
   const codeHost = createFakeCodeHostAdapter();
   const issue = await issueTracker.getIssue(input.issue.key);
   const artifacts: WorkflowArtifact[] = [issueToArtifact(issue)];
   const timeline: string[] = [];
   let snapshot = initialWorkflowSnapshot(issue.key);
-
-  const registry = createRoleRuntimeRegistry({
-    runtimes: [
-      { id: "scripted-architect", transport: "stdio", command: ["scripted-acp"] },
-      { id: "scripted-developer", transport: "stdio", command: ["scripted-acp"] },
-      { id: "scripted-checker", transport: "stdio", command: ["scripted-acp"] },
-    ],
-    assignments: [
-      { roleId: "architect", runtimeProfileId: "scripted-architect" },
-      { roleId: "developer", runtimeProfileId: "scripted-developer" },
-      { roleId: "checker", runtimeProfileId: "scripted-checker" },
-    ],
-  });
-  const runner = createScriptedRoleRunner({
-    architect: {
-      artifactKind: "architect.plan",
-      payload: {
-        summary: `Plan for ${issue.key}: ${issue.title}`,
-        verificationCommands: ["bun run check"],
-      },
-    },
-    developer: {
-      artifactKind: "developer.attempt",
-      payload: {
-        branch: `aigile/${issue.key}`,
-        summary: "Scripted implementation completed for local demo.",
-      },
-    },
-    checker: {
-      artifactKind: "checker.verdict",
-      payload: {
-        verdict: "pass",
-        summary: "Scripted checker accepts the verified demo change.",
-      },
-    },
-  });
 
   snapshot = pushTransition(snapshot, {
     type: "issue_received",
@@ -104,8 +94,8 @@ export const runDemoIssue = async (input: DemoIssueInput): Promise<DemoResult> =
     roleId: "architect",
     issueId: issue.key,
     inputArtifacts: artifacts,
-    registry,
-    runner,
+    registry: input.registry,
+    runner: input.runner,
   });
   artifacts.push(plan);
   snapshot = pushTransition(snapshot, {
@@ -124,8 +114,8 @@ export const runDemoIssue = async (input: DemoIssueInput): Promise<DemoResult> =
     roleId: "developer",
     issueId: issue.key,
     inputArtifacts: artifacts,
-    registry,
-    runner,
+    registry: input.registry,
+    runner: input.runner,
   });
   artifacts.push(attempt);
   snapshot = pushTransition(snapshot, {
@@ -155,8 +145,8 @@ export const runDemoIssue = async (input: DemoIssueInput): Promise<DemoResult> =
     roleId: "checker",
     issueId: issue.key,
     inputArtifacts: artifacts,
-    registry,
-    runner,
+    registry: input.registry,
+    runner: input.runner,
   });
   artifacts.push(verdict);
   snapshot = pushTransition(snapshot, {
@@ -165,11 +155,11 @@ export const runDemoIssue = async (input: DemoIssueInput): Promise<DemoResult> =
     artifactId: verdict.id,
   }, timeline);
 
-  const attemptPayload = artifactByKind(artifacts, "developer.attempt").payload as { branch: string };
+  artifactByKind(artifacts, "developer.attempt");
   const pullRequest = await codeHost.createPullRequest({
     owner: "aigile",
     repo: "aigile",
-    branch: attemptPayload.branch,
+    branch: `aigile/${issue.key}`,
     baseBranch: "main",
     title: `${issue.key} ${issue.title}`,
     body: [
@@ -200,3 +190,91 @@ export const runDemoIssue = async (input: DemoIssueInput): Promise<DemoResult> =
     timeline,
   };
 };
+
+export const createMockAcpConnector = (): AcpRuntimeConnector => async (input) => ({
+  session: {
+    sessionId: `${input.issueId}:${input.roleId}`,
+    acpSessionId: `mock-acp:${input.issueId}:${input.roleId}`,
+    prompt: async () => {
+      if (input.roleId === "architect") {
+        return {
+          artifactKind: "architect.plan",
+          payload: {
+            summary: "Mock ACP architect plan",
+            scope: ["local demo"],
+            acceptanceCriteria: ["ACP runner is used"],
+            verificationCommands: ["bun run check"],
+            risks: [],
+          },
+        };
+      }
+      if (input.roleId === "developer") {
+        return {
+          artifactKind: "developer.attempt",
+          payload: {
+            summary: "Mock ACP developer attempt",
+            changedFiles: ["packages/demo/src/run.ts"],
+            verificationNotes: "Local scripted verifier will run.",
+          },
+        };
+      }
+      if (input.roleId === "checker") {
+        return {
+          artifactKind: "checker.verdict",
+          payload: {
+            verdict: "pass",
+            summary: "Mock ACP checker passed the change.",
+            reasons: [],
+          },
+        };
+      }
+      throw new Error(`No mock ACP response for role: ${input.roleId}`);
+    },
+    cancel: () => undefined,
+    onEvent: () => () => undefined,
+  },
+  process: {
+    kill: async () => undefined,
+  },
+});
+
+export const runDemoIssue = async (input: DemoIssueInput): Promise<DemoResult> => {
+  const registry = createDemoRegistry();
+  const runner = createScriptedRoleRunner({
+    architect: {
+      artifactKind: "architect.plan",
+      payload: {
+        summary: `Plan for ${input.issue.key}: ${input.issue.title}`,
+        scope: ["local demo"],
+        acceptanceCriteria: input.issue.acceptanceCriteria,
+        verificationCommands: ["bun run check"],
+        risks: [],
+      },
+    },
+    developer: {
+      artifactKind: "developer.attempt",
+      payload: {
+        summary: "Scripted implementation completed for local demo.",
+        changedFiles: ["packages/demo/src/run.ts"],
+        verificationNotes: "Local scripted verifier will run.",
+      },
+    },
+    checker: {
+      artifactKind: "checker.verdict",
+      payload: {
+        verdict: "pass",
+        summary: "Scripted checker accepts the verified demo change.",
+        reasons: [],
+      },
+    },
+  });
+  return runDemoIssueWithRoles({ ...input, registry, runner });
+};
+
+export const runDemoIssueWithAcpRoles = async (
+  input: DemoWithAcpRolesInput,
+): Promise<DemoResult> => runDemoIssueWithRoles({
+  issue: input.issue,
+  registry: createDemoRegistry(),
+  runner: createAcpRoleRunner({ connector: input.connector ?? createMockAcpConnector() }),
+});

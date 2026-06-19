@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { formatDemoResult } from "./main.js";
+import { formatDemoResult, selectDemoMode } from "./main.js";
 
 describe("cli formatting", () => {
   it("formats demo output for hand testing", () => {
@@ -22,5 +22,10 @@ describe("cli formatting", () => {
       artifacts: [],
       timeline: ["issue_received -> planning", "merge_completed -> merged"],
     })).toContain("Final state: merged");
+  });
+
+  it("selects the ACP-agent demo mode from argv", () => {
+    expect(selectDemoMode(["demo:agents"])).toBe("agents");
+    expect(selectDemoMode([])).toBe("scripted");
   });
 });

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { runDemoIssue, type DemoResult } from "@aigile/demo";
+import { runDemoIssue, runDemoIssueWithAcpRoles, type DemoResult } from "@aigile/demo";
 import type { IssueRecord } from "@aigile/adapters";
 
 const defaultIssue: IssueRecord = {
@@ -31,8 +31,16 @@ export const formatDemoResult = (result: DemoResult): string => [
   ...result.artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.id}`),
 ].join("\n");
 
+export type DemoMode = "scripted" | "agents";
+
+export const selectDemoMode = (args: readonly string[]): DemoMode =>
+  args.includes("demo:agents") || args.includes("--agents") ? "agents" : "scripted";
+
 const main = async (): Promise<void> => {
-  const result = await runDemoIssue({ issue: defaultIssue });
+  const mode = selectDemoMode(process.argv.slice(2));
+  const result = mode === "agents"
+    ? await runDemoIssueWithAcpRoles({ issue: defaultIssue })
+    : await runDemoIssue({ issue: defaultIssue });
   process.stdout.write(`${formatDemoResult(result)}\n`);
 };
 

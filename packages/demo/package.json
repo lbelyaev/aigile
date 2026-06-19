@@ -10,6 +10,7 @@
     "@aigile/adapters": "workspace:*",
     "@aigile/roles": "workspace:*",
     "@aigile/types": "workspace:*",
-    "@aigile/workflow": "workspace:*"
+    "@aigile/workflow": "workspace:*",
+    "@aigile/acp": "workspace:*"
   }
 }
