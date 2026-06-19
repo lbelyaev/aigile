@@ -971,16 +971,23 @@ describe("cli formatting", () => {
       remote: "origin",
       pullRequestTarget: { owner: "lbelyaev", repo: "aigile", baseBranch: "main" },
       codeHost,
-      fetchGraphql: async () => ({
-        issue: {
-          id: "issue-id",
-          identifier: "LBE-6",
-          title: "Start Linear-claimed issues automatically",
-          description: "Acceptance:\n- Starts run",
-          state: { name: "In Progress" },
-          comments: { nodes: [] },
-        },
-      }),
+      fetchGraphql: async (query) => {
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-done", name: "Done" }] } };
+        }
+        if (query.includes("issueUpdate")) return {};
+        if (query.includes("commentCreate")) return {};
+        return {
+          issue: {
+            id: "issue-id",
+            identifier: "LBE-6",
+            title: "Start Linear-claimed issues automatically",
+            description: "Acceptance:\n- Starts run",
+            state: { name: "In Progress" },
+            comments: { nodes: [] },
+          },
+        };
+      },
       runWorkspace: async (input) => {
         capturedInput = input;
         return {
@@ -1085,6 +1092,134 @@ describe("cli formatting", () => {
         ].join("\n"),
       },
     ]);
+  });
+
+  it("syncs published Linear runs to Done with pull request evidence", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+
+    const output = await runLinearIssueWorkflowCli({
+      apiKey: "test-key",
+      issueKey: "LBE-7",
+      teamKey: "LBE",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      agentWrite: true,
+      publish: true,
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("IssueByKey")) {
+          return {
+            issue: {
+              id: "issue-id",
+              identifier: "LBE-7",
+              title: "Avoid duplicate Linear claim comments",
+              description: "Acceptance:\n- Avoid duplicate comments",
+              state: { name: "In Progress" },
+              comments: { nodes: [] },
+            },
+          };
+        }
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-done", name: "Done" }] } };
+        }
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("issueUpdate")) return {};
+        if (query.includes("commentCreate")) return {};
+        throw new Error(`unexpected query: ${query}`);
+      },
+      runWorkspace: async (input) => ({
+        issueKey: input.issue.key,
+        finalState: "merged",
+        pullRequest: {
+          id: "lbelyaev/aigile#2",
+          number: 2,
+          url: "https://github.com/lbelyaev/aigile/pull/2",
+          owner: "lbelyaev",
+          repo: "aigile",
+          branch: "aigile/LBE-7",
+          baseBranch: "main",
+          title: "LBE-7 Avoid duplicate Linear claim comments",
+          body: "Demo PR",
+          comments: [],
+          checks: [],
+        },
+        artifacts: [{
+          id: "verifier:LBE-7:local",
+          kind: "verification.result",
+          source: "verifier",
+          payload: { status: "passed", commands: [] },
+        }, {
+          id: "agent:LBE-7:checker:checker.verdict",
+          kind: "checker.verdict",
+          source: "agent",
+          payload: {
+            verdict: "pass",
+            summary: "Change is verified.",
+            reasons: ["Tests pass"],
+          },
+        }],
+        timeline: [{ label: "merge_completed -> merged", elapsedMs: 1 }],
+        durationMs: 1,
+      }),
+    });
+
+    expect(output).toContain("Final state: merged");
+    expect(output).toContain("Pull request: https://github.com/lbelyaev/aigile/pull/2");
+    expect(calls.map((call) => call.variables)).toEqual([
+      { key: "LBE-7" },
+      { teamKey: "LBE", name: "Done" },
+      { key: "LBE-7" },
+      { key: "issue-id", status: "state-done" },
+      { key: "LBE-7" },
+      {
+        key: "issue-id",
+        body: [
+          "Aigile completed this issue and published the result to GitHub.",
+          "",
+          "Final state: merged",
+          "Pull request: https://github.com/lbelyaev/aigile/pull/2",
+          "Verification: verifier:LBE-7:local",
+          "Checker: agent:LBE-7:checker:checker.verdict",
+        ].join("\n"),
+      },
+    ]);
+  });
+
+  it("does not sync dry-run terminal results to Linear", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+
+    await runLinearIssueWorkflowCli({
+      apiKey: "test-key",
+      issueKey: "LBE-8",
+      teamKey: "LBE",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      dryRun: true,
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        return {
+          issue: {
+            id: "issue-id",
+            identifier: "LBE-8",
+            title: "Dry run",
+            description: "Acceptance:\n- Simulate",
+            state: { name: "In Progress" },
+            comments: { nodes: [] },
+          },
+        };
+      },
+      runWorkspace: async (input) => ({
+        issueKey: input.issue.key,
+        finalState: "satisfied",
+        artifacts: [],
+        timeline: [],
+        durationMs: 0,
+      }),
+    });
+
+    expect(calls.map((call) => call.variables)).toEqual([{ key: "LBE-8" }]);
   });
 
   it("fetches run issue metadata from Linear", async () => {

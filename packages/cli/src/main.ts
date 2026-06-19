@@ -519,11 +519,23 @@ const alreadySatisfiedComment = (result: DemoResult): string => [
   `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
 ].join("\n");
 
+const publishedComment = (result: DemoResult): string => [
+  "Aigile completed this issue and published the result to GitHub.",
+  "",
+  `Final state: ${result.finalState}`,
+  `Pull request: ${result.pullRequest?.url ?? "unavailable"}`,
+  `Verification: ${artifactIdByKind(result, "verification.result")}`,
+  `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
+].join("\n");
+
 const syncLinearIssueWorkflowResult = async (
   input: LinearIssueWorkflowCliInput,
   result: DemoResult,
 ): Promise<void> => {
-  if (result.finalState !== "satisfied") return;
+  if (input.dryRun === true) return;
+  const shouldSyncSatisfied = result.finalState === "satisfied";
+  const shouldSyncPublished = input.publish === true && result.finalState === "merged";
+  if (!shouldSyncSatisfied && !shouldSyncPublished) return;
 
   const tracker = createLinearGraphqlIssueTrackerAdapter(input.fetchGraphql === undefined
     ? {
@@ -538,7 +550,10 @@ const syncLinearIssueWorkflowResult = async (
   if (input.teamKey !== undefined) {
     await tracker.updateIssueStatus(input.issueKey, "Done");
   }
-  await tracker.appendIssueComment(input.issueKey, alreadySatisfiedComment(result));
+  await tracker.appendIssueComment(
+    input.issueKey,
+    shouldSyncSatisfied ? alreadySatisfiedComment(result) : publishedComment(result),
+  );
 };
 
 export const fetchLinearIssueForRun = async (input: LinearRunIssueInput): Promise<IssueRecord> => {
