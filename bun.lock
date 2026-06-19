@@ -60,6 +60,14 @@
       "name": "@aigile/types",
       "version": "0.0.0",
     },
+    "packages/verifier": {
+      "name": "@aigile/verifier",
+      "version": "0.0.0",
+      "dependencies": {
+        "@aigile/types": "workspace:*",
+        "@aigile/workspace": "workspace:*",
+      },
+    },
     "packages/workflow": {
       "name": "@aigile/workflow",
       "version": "0.0.0",
@@ -86,6 +94,8 @@
     "@aigile/roles": ["@aigile/roles@workspace:packages/roles"],
 
     "@aigile/types": ["@aigile/types@workspace:packages/types"],
+
+    "@aigile/verifier": ["@aigile/verifier@workspace:packages/verifier"],
 
     "@aigile/workflow": ["@aigile/workflow@workspace:packages/workflow"],
 

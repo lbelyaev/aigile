@@ -1,0 +1,13 @@
+{
+  "name": "@aigile/verifier",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@aigile/types": "workspace:*",
+    "@aigile/workspace": "workspace:*"
+  }
+}
