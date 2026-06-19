@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  createDryRunExec,
   formatAcpRoleProgress,
   formatDemoResult,
   parseCliArgs,
@@ -127,6 +128,17 @@ describe("cli formatting", () => {
       worktreesPath: "/repo/aigile/.worktrees",
       dryRun: true,
     });
+  });
+
+  it("dry-run exec treats workspace collision probes as absent", async () => {
+    const exec = createDryRunExec();
+
+    await expect(exec("test", ["-e", "/repo/aigile/.worktrees/LIN-456"], { cwd: "/repo/aigile" }))
+      .resolves.toMatchObject({ exitCode: 1 });
+    await expect(exec("git", ["show-ref", "--verify", "--quiet", "refs/heads/aigile/LIN-456"], { cwd: "/repo/aigile" }))
+      .resolves.toMatchObject({ exitCode: 1 });
+    await expect(exec("git", ["worktree", "add", "-b", "aigile/LIN-456", "/repo/aigile/.worktrees/LIN-456", "main"], { cwd: "/repo/aigile" }))
+      .resolves.toMatchObject({ exitCode: 0 });
   });
 
   it("parses concrete task fields for real runs", () => {

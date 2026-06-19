@@ -190,6 +190,19 @@ export const runRunModePreflight = async (input: RunModePreflightInput): Promise
   ].join("\n");
 };
 
+export const createDryRunExec = (): ExecCommand => async (command, commandArgs, options) => {
+  if (command === "test" && commandArgs[0] === "-e") {
+    return { stdout: "", stderr: "", exitCode: 1 };
+  }
+  if (command === "git" && commandArgs[0] === "show-ref") {
+    return { stdout: "", stderr: "", exitCode: 1 };
+  }
+  if (command === "git" && commandArgs[0] === "diff") {
+    return { stdout: "dry-run diff | 1 +", stderr: "", exitCode: 0 };
+  }
+  return { stdout: `${command} ${commandArgs.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+};
+
 const optionValue = (args: readonly string[], name: string): string | undefined => {
   const index = args.indexOf(name);
   if (index < 0) return undefined;
@@ -273,12 +286,7 @@ const main = async (): Promise<void> => {
   }
   if (args.dryRun) {
     runInput.dryRun = true;
-    runInput.exec = async (command, commandArgs, options) => {
-      if (command === "git" && commandArgs[0] === "diff") {
-        return { stdout: "dry-run diff | 1 +", stderr: "", exitCode: 0 };
-      }
-      return { stdout: `${command} ${commandArgs.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
-    };
+    runInput.exec = createDryRunExec();
   }
   if (args.mode === "run" && args.publish && !args.dryRun) {
     if (!args.githubRepo) throw new Error("--publish requires --github-repo owner/repo");
