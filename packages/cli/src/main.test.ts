@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  createAcpRoleProgressFormatter,
   createDryRunExec,
   formatAcpRoleProgress,
   formatDemoResult,
@@ -162,6 +163,40 @@ describe("cli formatting", () => {
       reason: "file_read_budget",
       detail: "6/5 Read File",
     })).toBe("[LIN-123 architect] policy violation file_read_budget: 6/5 Read File");
+  });
+
+  it("coalesces small ACP text deltas before printing progress", () => {
+    const formatter = createAcpRoleProgressFormatter({ textFlushThreshold: 80 });
+    const base = {
+      roleId: "developer",
+      issueId: "LIN-123",
+      runtimeId: "codex-acp",
+    };
+
+    expect(formatter.format({ type: "text_delta", ...base, delta: "{\"artifact" })).toEqual([]);
+    expect(formatter.format({ type: "text_delta", ...base, delta: "Kind\":\"developer" })).toEqual([]);
+    expect(formatter.format({ type: "text_delta", ...base, delta: ".attempt\"" })).toEqual([]);
+    expect(formatter.format({ type: "tool_start", ...base, tool: "Read File" })).toEqual([
+      "[LIN-123 developer] text: {\"artifactKind\":\"developer.attempt\"",
+      "[LIN-123 developer] tool started: Read File",
+    ]);
+  });
+
+  it("flushes ACP text deltas at newlines and on final flush", () => {
+    const formatter = createAcpRoleProgressFormatter({ textFlushThreshold: 80 });
+    const base = {
+      roleId: "architect",
+      issueId: "LIN-123",
+      runtimeId: "claude-acp",
+    };
+
+    expect(formatter.format({ type: "text_delta", ...base, delta: "line one\nline two" })).toEqual([
+      "[LIN-123 architect] text: line one",
+    ]);
+    expect(formatter.flush()).toEqual([
+      "[LIN-123 architect] text: line two",
+    ]);
+    expect(formatter.flush()).toEqual([]);
   });
 
   it("selects the ACP-agent demo mode from argv", () => {

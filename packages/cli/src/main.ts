@@ -92,6 +92,83 @@ export const formatAcpRoleProgress = (event: AcpRoleProgressEvent): string => {
   return `${prefix} stopped ${event.runtimeId}`;
 };
 
+export interface AcpRoleProgressFormatter {
+  format: (event: AcpRoleProgressEvent) => string[];
+  flush: () => string[];
+}
+
+export interface AcpRoleProgressFormatterOptions {
+  textFlushThreshold?: number;
+}
+
+const progressKey = (event: Pick<AcpRoleProgressEvent, "issueId" | "roleId" | "runtimeId">): string =>
+  `${event.issueId}\0${event.roleId}\0${event.runtimeId}`;
+
+const formatBufferedText = (
+  event: Pick<AcpRoleProgressEvent, "issueId" | "roleId">,
+  text: string,
+): string | undefined => {
+  const trimmed = text.trimEnd();
+  if (trimmed.length === 0) return undefined;
+  return `[${event.issueId} ${event.roleId}] text: ${trimmed}`;
+};
+
+export const createAcpRoleProgressFormatter = (
+  options: AcpRoleProgressFormatterOptions = {},
+): AcpRoleProgressFormatter => {
+  const textFlushThreshold = options.textFlushThreshold ?? 160;
+  const buffers = new Map<string, { issueId: string; roleId: string; text: string }>();
+
+  const flushKey = (key: string): string[] => {
+    const buffer = buffers.get(key);
+    if (!buffer) return [];
+    buffers.delete(key);
+    const line = formatBufferedText(buffer, buffer.text);
+    return line === undefined ? [] : [line];
+  };
+
+  return {
+    format: (event) => {
+      const key = progressKey(event);
+      if (event.type !== "text_delta") {
+        return [
+          ...flushKey(key),
+          formatAcpRoleProgress(event),
+        ].filter((line) => line.trim().length > 0);
+      }
+
+      const existing = buffers.get(key)?.text ?? "";
+      const combined = `${existing}${event.delta}`;
+      const newlineIndex = combined.indexOf("\n");
+      if (newlineIndex >= 0) {
+        const head = combined.slice(0, newlineIndex);
+        const tail = combined.slice(newlineIndex + 1);
+        if (tail.length > 0) {
+          buffers.set(key, { issueId: event.issueId, roleId: event.roleId, text: tail });
+        } else {
+          buffers.delete(key);
+        }
+        const line = formatBufferedText(event, head);
+        return line === undefined ? [] : [line];
+      }
+      if (combined.length >= textFlushThreshold) {
+        buffers.delete(key);
+        const line = formatBufferedText(event, combined);
+        return line === undefined ? [] : [line];
+      }
+      buffers.set(key, { issueId: event.issueId, roleId: event.roleId, text: combined });
+      return [];
+    },
+    flush: () => {
+      const lines: string[] = [];
+      for (const key of [...buffers.keys()]) {
+        lines.push(...flushKey(key));
+      }
+      return lines;
+    },
+  };
+};
+
 export type DemoMode = "scripted" | "agents" | "workspace" | "github" | "linear" | "run";
 
 export const selectDemoMode = (args: readonly string[]): DemoMode =>
@@ -353,10 +430,12 @@ const main = async (): Promise<void> => {
   }
   if (args.mode === "run" && args.runtimeConfigPath) {
     runInput.registry = runtimeConfigToRegistry(loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8")));
+    const progressFormatter = createAcpRoleProgressFormatter();
     runInput.runner = createAcpRoleRunner({
       onProgress: (event) => {
-        const line = formatAcpRoleProgress(event);
-        if (line.trim().length > 0) process.stderr.write(`${line}\n`);
+        for (const line of progressFormatter.format(event)) {
+          if (line.trim().length > 0) process.stderr.write(`${line}\n`);
+        }
       },
     });
   }
