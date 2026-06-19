@@ -12,8 +12,23 @@ export interface AcpRuntimeConnection {
 
 export type AcpRuntimeConnector = (input: RoleRunInput) => Promise<AcpRuntimeConnection>;
 
+export type AcpRoleProgressEvent =
+  | { type: "role_started"; roleId: string; issueId: string; runtimeId: string }
+  | { type: "runtime_connecting"; roleId: string; issueId: string; runtimeId: string }
+  | { type: "runtime_connected"; roleId: string; issueId: string; runtimeId: string; acpSessionId: string }
+  | { type: "runtime_stderr"; roleId: string; issueId: string; runtimeId: string; chunk: string }
+  | { type: "prompt_started"; roleId: string; issueId: string; runtimeId: string }
+  | { type: "text_delta"; roleId: string; issueId: string; runtimeId: string; delta: string }
+  | { type: "thinking_delta"; roleId: string; issueId: string; runtimeId: string; delta: string }
+  | { type: "tool_start"; roleId: string; issueId: string; runtimeId: string; tool: string }
+  | { type: "tool_end"; roleId: string; issueId: string; runtimeId: string; tool: string }
+  | { type: "approval_request"; roleId: string; issueId: string; runtimeId: string; tool: string; description: string }
+  | { type: "artifact_parsed"; roleId: string; issueId: string; runtimeId: string; artifactKind: string }
+  | { type: "runtime_stopped"; roleId: string; issueId: string; runtimeId: string };
+
 export interface AcpRoleRunnerOptions {
   connector?: AcpRuntimeConnector;
+  onProgress?: (event: AcpRoleProgressEvent) => void;
 }
 
 export const buildAcpRuntimeConnectInput = (input: RoleRunInput): ConnectAcpRuntimeInput => {
@@ -58,18 +73,68 @@ const buildPrompt = (input: RoleRunInput): string => buildRolePrompt({
 export const createAcpRoleRunner = (
   options: AcpRoleRunnerOptions = {},
 ): RoleRunner => {
-  const connector = options.connector ?? defaultConnector;
+  const progressBase = (input: RoleRunInput) => ({
+    roleId: input.roleId,
+    issueId: input.issueId,
+    runtimeId: input.runtime.id,
+  });
+  const connector = options.connector ?? (async (input) => {
+    const connectInput = buildAcpRuntimeConnectInput(input);
+    connectInput.forwardStderr = (chunk) => options.onProgress?.({
+      type: "runtime_stderr",
+      ...progressBase(input),
+      chunk,
+    });
+    return connectAcpRuntime(connectInput);
+  });
 
   return {
     run: async (input) => {
+      options.onProgress?.({ type: "role_started", ...progressBase(input) });
+      options.onProgress?.({ type: "runtime_connecting", ...progressBase(input) });
       const connection = await connector(input);
+      options.onProgress?.({
+        type: "runtime_connected",
+        ...progressBase(input),
+        acpSessionId: connection.session.acpSessionId,
+      });
       let streamedText = "";
       const unsubscribe = connection.session.onEvent((event) => {
-        if (event.type === "text_delta") streamedText += event.delta;
+        if (event.type === "text_delta") {
+          streamedText += event.delta;
+          options.onProgress?.({ type: "text_delta", ...progressBase(input), delta: event.delta });
+          return;
+        }
+        if (event.type === "thinking_delta") {
+          options.onProgress?.({ type: "thinking_delta", ...progressBase(input), delta: event.delta });
+          return;
+        }
+        if (event.type === "tool_start") {
+          options.onProgress?.({ type: "tool_start", ...progressBase(input), tool: event.tool });
+          return;
+        }
+        if (event.type === "tool_end") {
+          options.onProgress?.({ type: "tool_end", ...progressBase(input), tool: event.tool });
+          return;
+        }
+        if (event.type === "approval_request") {
+          options.onProgress?.({
+            type: "approval_request",
+            ...progressBase(input),
+            tool: event.tool,
+            description: event.description,
+          });
+        }
       });
       try {
+        options.onProgress?.({ type: "prompt_started", ...progressBase(input) });
         const promptResult = await connection.session.prompt(buildPrompt(input));
         const response = parseRoleArtifactResponse(promptResult ?? streamedText);
+        options.onProgress?.({
+          type: "artifact_parsed",
+          ...progressBase(input),
+          artifactKind: response.artifactKind,
+        });
         return {
           id: `agent:${input.issueId}:${input.roleId}:${response.artifactKind}`,
           kind: response.artifactKind,
@@ -80,6 +145,7 @@ export const createAcpRoleRunner = (
       } finally {
         unsubscribe();
         await connection.process.kill();
+        options.onProgress?.({ type: "runtime_stopped", ...progressBase(input) });
       }
     },
   };

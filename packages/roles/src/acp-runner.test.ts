@@ -6,6 +6,69 @@ import {
 } from "./index.js";
 
 describe("ACP role runner", () => {
+  it("emits progress while connecting, prompting, streaming, and stopping", async () => {
+    const progress: string[] = [];
+    let eventHandler: ((event: { type: "text_delta"; sessionId: string; delta: string }) => void) | undefined;
+    const connector: AcpRuntimeConnector = async () => ({
+      session: {
+        sessionId: "role-session-1",
+        acpSessionId: "acp-session-1",
+        prompt: async () => {
+          eventHandler?.({ type: "text_delta", sessionId: "role-session-1", delta: "working" });
+          return {
+            artifactKind: "architect.plan",
+            payload: {
+              summary: "Plan from ACP",
+              scope: ["role runner"],
+              acceptanceCriteria: ["artifact is parsed"],
+              verificationCommands: ["bun run check"],
+              risks: [],
+            },
+          };
+        },
+        cancel: () => undefined,
+        onEvent: (handler) => {
+          eventHandler = handler as typeof eventHandler;
+          return () => {
+            eventHandler = undefined;
+          };
+        },
+      },
+      process: {
+        kill: async () => undefined,
+      },
+    });
+    const runner = createAcpRoleRunner({
+      connector,
+      onProgress: (event) => progress.push(event.type),
+    });
+
+    await runner.run({
+      roleId: "architect",
+      issueId: "LIN-123",
+      runtime: {
+        id: "runtime-architect",
+        transport: "stdio",
+        command: ["agent-acp"],
+      },
+      assignment: {
+        roleId: "architect",
+        runtimeProfileId: "runtime-architect",
+      },
+      inputArtifacts: [],
+    });
+
+    expect(progress).toEqual([
+      "role_started",
+      "runtime_connecting",
+      "runtime_connected",
+      "prompt_started",
+      "text_delta",
+      "artifact_parsed",
+      "runtime_stopped",
+    ]);
+  });
+
   it("builds ACP-standard initialize and session params for stdio runtimes", () => {
     const connectInput = buildAcpRuntimeConnectInput({
       roleId: "architect",

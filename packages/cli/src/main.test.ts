@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { formatDemoResult, parseCliArgs, selectDemoMode } from "./main.js";
+import { formatAcpRoleProgress, formatDemoResult, parseCliArgs, selectDemoMode } from "./main.js";
 
 describe("cli formatting", () => {
   it("formats demo output for hand testing", () => {
@@ -22,6 +22,23 @@ describe("cli formatting", () => {
       artifacts: [],
       timeline: ["issue_received -> planning", "merge_completed -> merged"],
     })).toContain("Final state: merged");
+  });
+
+  it("formats ACP role progress for hand testing", () => {
+    expect(formatAcpRoleProgress({
+      type: "runtime_connected",
+      roleId: "architect",
+      issueId: "LIN-123",
+      runtimeId: "claude-acp",
+      acpSessionId: "acp-1",
+    })).toBe("[LIN-123 architect] connected claude-acp session acp-1");
+    expect(formatAcpRoleProgress({
+      type: "tool_start",
+      roleId: "developer",
+      issueId: "LIN-123",
+      runtimeId: "codex-acp",
+      tool: "Bash",
+    })).toBe("[LIN-123 developer] tool started: Bash");
   });
 
   it("selects the ACP-agent demo mode from argv", () => {

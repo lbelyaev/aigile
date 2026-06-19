@@ -24,6 +24,7 @@ export type {
 } from "./runner.js";
 
 export type {
+  AcpRoleProgressEvent,
   AcpRoleRunnerOptions,
   AcpRuntimeConnection,
   AcpRuntimeConnector,

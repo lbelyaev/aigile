@@ -12,7 +12,7 @@ import {
   type DemoResult,
 } from "@aigile/demo";
 import type { IssueRecord } from "@aigile/adapters";
-import { createAcpRoleRunner } from "@aigile/roles";
+import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
 
 const defaultIssue: IssueRecord = {
   id: "issue-demo-1",
@@ -42,6 +42,24 @@ export const formatDemoResult = (result: DemoResult): string => [
   "Artifacts:",
   ...result.artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.id}`),
 ].join("\n");
+
+export const formatAcpRoleProgress = (event: AcpRoleProgressEvent): string => {
+  const prefix = `[${event.issueId} ${event.roleId}]`;
+  if (event.type === "role_started") return `${prefix} starting ${event.runtimeId}`;
+  if (event.type === "runtime_connecting") return `${prefix} connecting ${event.runtimeId}`;
+  if (event.type === "runtime_connected") {
+    return `${prefix} connected ${event.runtimeId} session ${event.acpSessionId}`;
+  }
+  if (event.type === "runtime_stderr") return `${prefix} stderr: ${event.chunk.trimEnd()}`;
+  if (event.type === "prompt_started") return `${prefix} prompt sent`;
+  if (event.type === "text_delta") return `${prefix} text: ${event.delta.trimEnd()}`;
+  if (event.type === "thinking_delta") return `${prefix} thinking`;
+  if (event.type === "tool_start") return `${prefix} tool started: ${event.tool}`;
+  if (event.type === "tool_end") return `${prefix} tool finished: ${event.tool}`;
+  if (event.type === "approval_request") return `${prefix} approval requested: ${event.tool}`;
+  if (event.type === "artifact_parsed") return `${prefix} artifact parsed: ${event.artifactKind}`;
+  return `${prefix} stopped ${event.runtimeId}`;
+};
 
 export type DemoMode = "scripted" | "agents" | "workspace" | "github" | "linear" | "run";
 
@@ -113,7 +131,12 @@ const main = async (): Promise<void> => {
   }
   if (args.mode === "run" && args.runtimeConfigPath) {
     runInput.registry = runtimeConfigToRegistry(loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8")));
-    runInput.runner = createAcpRoleRunner();
+    runInput.runner = createAcpRoleRunner({
+      onProgress: (event) => {
+        const line = formatAcpRoleProgress(event);
+        if (line.trim().length > 0) process.stderr.write(`${line}\n`);
+      },
+    });
   }
   const result = args.mode === "run"
     ? await runDemoIssueWithWorkspace(runInput)
