@@ -50,6 +50,13 @@
         "@aigile/workspace": "workspace:*",
       },
     },
+    "packages/restate": {
+      "name": "@aigile/restate",
+      "version": "0.0.0",
+      "dependencies": {
+        "@aigile/workflow": "workspace:*",
+      },
+    },
     "packages/roles": {
       "name": "@aigile/roles",
       "version": "0.0.0",
@@ -92,6 +99,8 @@
     "@aigile/config": ["@aigile/config@workspace:packages/config"],
 
     "@aigile/demo": ["@aigile/demo@workspace:packages/demo"],
+
+    "@aigile/restate": ["@aigile/restate@workspace:packages/restate"],
 
     "@aigile/roles": ["@aigile/roles@workspace:packages/roles"],
 
