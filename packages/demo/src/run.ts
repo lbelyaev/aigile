@@ -20,7 +20,7 @@ import {
   type RoleRunner,
   type RoleRuntimeRegistry,
 } from "@aigile/roles";
-import type { WorkflowArtifact, WorkflowEvent, WorkflowState } from "@aigile/types";
+import { isCheckerVerdictPayload, type WorkflowArtifact, type WorkflowEvent, type WorkflowState } from "@aigile/types";
 import { createLocalVerifier } from "@aigile/verifier";
 import {
   createGitPublisher,
@@ -89,7 +89,7 @@ export interface PullRequestTarget {
 export interface DemoResult {
   issueKey: string;
   finalState: WorkflowState;
-  pullRequest: PullRequestRecord;
+  pullRequest?: PullRequestRecord;
   artifacts: WorkflowArtifact[];
   timeline: DemoTimelineEntry[];
   durationMs: number;
@@ -179,6 +179,15 @@ const executionPolicyToArtifact = (issueKey: string, dryRun: boolean): WorkflowA
     ],
   },
 });
+
+const checkerEventForVerdict = (artifact: WorkflowArtifact): WorkflowEvent["type"] => {
+  if (!isCheckerVerdictPayload(artifact.payload)) {
+    throw new Error(`Checker artifact payload is invalid: ${artifact.id}`);
+  }
+  if (artifact.payload.verdict === "pass") return "checker_passed";
+  if (artifact.payload.verdict === "changes_requested") return "checker_requested_changes";
+  return "checker_escalated";
+};
 
 const createDemoRegistry = (): RoleRuntimeRegistry => createRoleRuntimeRegistry({
   runtimes: [
@@ -280,11 +289,24 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     runner: input.runner,
   });
   artifacts.push(verdict);
-  snapshot = pushTransition(snapshot, {
-    type: "checker_passed",
+  const checkerEvent = checkerEventForVerdict(verdict);
+  const checkerWorkflowEvent: WorkflowEvent = {
+    type: checkerEvent,
     issueId: issue.key,
     artifactId: verdict.id,
-  }, timeline, elapsedSinceLast);
+  };
+  if (isCheckerVerdictPayload(verdict.payload)) checkerWorkflowEvent.reason = verdict.payload.summary;
+  snapshot = pushTransition(snapshot, checkerWorkflowEvent, timeline, elapsedSinceLast);
+  if (checkerEvent !== "checker_passed") {
+    await issueTracker.updateIssueStatus(issue.key, snapshot.state);
+    return {
+      issueKey: issue.key,
+      finalState: snapshot.state,
+      artifacts,
+      timeline,
+      durationMs: timeline.reduce((total, entry) => total + entry.elapsedMs, 0),
+    };
+  }
 
   artifactByKind(artifacts, "developer.attempt");
   await input.beforePullRequest?.(artifacts);

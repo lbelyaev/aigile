@@ -385,7 +385,7 @@ describe("workspace-aware demo orchestration", () => {
       },
     });
 
-    expect(result.pullRequest.url).toBe("https://github.local/aigile/aigile/pull/7");
+    expect(result.pullRequest?.url).toBe("https://github.local/aigile/aigile/pull/7");
     expect(steps).toEqual([
       "publish:aigile/LIN-123:origin:LIN-123 Publish branch",
       "pr:aigile/LIN-123",

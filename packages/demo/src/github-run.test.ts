@@ -24,7 +24,7 @@ describe("GitHub demo orchestration", () => {
       },
     });
 
-    expect(result.pullRequest.url).toBe("https://github.com/aigile/aigile/pull/99");
+    expect(result.pullRequest?.url).toBe("https://github.com/aigile/aigile/pull/99");
     expect(result.artifacts.at(-1)).toMatchObject({
       id: "github-pr:aigile/aigile#99",
       kind: "github.pull_request",

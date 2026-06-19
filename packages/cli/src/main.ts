@@ -79,7 +79,7 @@ export const formatDemoResult = (result: DemoResult): string => {
     ...(mode === undefined ? [] : [`Mode: ${isDryRun ? "dry_run (simulated)" : mode}`]),
     `${isDryRun ? "Workflow state" : "Final state"}: ${result.finalState}`,
     ...(isDryRun ? ["External side effects: none (workspace, GitHub, and source-of-truth updates simulated)"] : []),
-    `Pull request: ${isDryRun ? "simulated " : ""}${result.pullRequest.url}`,
+    `Pull request: ${result.pullRequest === undefined ? "none" : `${isDryRun ? "simulated " : ""}${result.pullRequest.url}`}`,
     `Duration: ${formatDuration(result.durationMs)}`,
     `Token usage: ${formatTokenUsage(result)}`,
     "",

@@ -39,6 +39,21 @@ describe("cli formatting", () => {
     })).toContain("Final state: merged");
   });
 
+  it("formats runs that stop before pull request creation", () => {
+    const output = formatDemoResult({
+      issueKey: "LIN-123",
+      finalState: "escalated",
+      artifacts: [],
+      timeline: [
+        { label: "checker_escalated -> escalated", elapsedMs: 1_000 },
+      ],
+      durationMs: 1_000,
+    });
+
+    expect(output).toContain("Final state: escalated");
+    expect(output).toContain("Pull request: none");
+  });
+
   it("labels dry-run demo output as simulated", () => {
     const output = formatDemoResult({
       issueKey: "LIN-456",
