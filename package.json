@@ -11,7 +11,8 @@
     "typecheck": "tsc -b",
     "check": "bun run typecheck && bun test",
     "demo": "bun run packages/cli/src/main.ts",
-    "demo:agents": "bun run packages/cli/src/main.ts demo:agents"
+    "demo:agents": "bun run packages/cli/src/main.ts demo:agents",
+    "demo:workspace": "bun run packages/cli/src/main.ts demo:workspace"
   },
   "devDependencies": {
     "@types/bun": "^1.2.21",
