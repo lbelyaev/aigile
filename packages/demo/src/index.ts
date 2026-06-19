@@ -16,4 +16,5 @@ export type {
   DemoWithAcpRolesInput,
   DemoWithRolesInput,
   DemoWorkspaceInput,
+  PullRequestTarget,
 } from "./run.js";

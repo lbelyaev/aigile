@@ -42,6 +42,7 @@ export interface DemoWithRolesInput extends DemoIssueInput {
   registry: RoleRuntimeRegistry;
   runner: RoleRunner;
   codeHost?: CodeHostAdapter;
+  pullRequestTarget?: PullRequestTarget;
   initialArtifacts?: WorkflowArtifact[];
   verificationArtifact?: WorkflowArtifact;
   beforeVerification?: (artifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact[]>;
@@ -64,6 +65,7 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   publisher?: GitPublisher;
   remote?: string;
   codeHost?: CodeHostAdapter;
+  pullRequestTarget?: PullRequestTarget;
 }
 
 export interface DemoGitHubInput extends DemoIssueInput {
@@ -75,6 +77,12 @@ export interface DemoLinearInput {
   issueKey: string;
   linearApiKey: string;
   fetchGraphql?: LinearFetchGraphql;
+}
+
+export interface PullRequestTarget {
+  owner: string;
+  repo: string;
+  baseBranch?: string;
 }
 
 export interface DemoResult {
@@ -235,11 +243,16 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
 
   artifactByKind(artifacts, "developer.attempt");
   await input.beforePullRequest?.(artifacts);
-  const pullRequest = await codeHost.createPullRequest({
+  const pullRequestTarget = input.pullRequestTarget ?? {
     owner: "aigile",
     repo: "aigile",
-    branch: `aigile/${issue.key}`,
     baseBranch: "main",
+  };
+  const pullRequest = await codeHost.createPullRequest({
+    owner: pullRequestTarget.owner,
+    repo: pullRequestTarget.repo,
+    branch: `aigile/${issue.key}`,
+    baseBranch: pullRequestTarget.baseBranch ?? "main",
     title: `${issue.key} ${issue.title}`,
     body: [
       `Plan: ${plan.id}`,
@@ -421,6 +434,7 @@ export const runDemoIssueWithWorkspace = async (
     ],
   };
   if (input.codeHost !== undefined) roleInput.codeHost = input.codeHost;
+  if (input.pullRequestTarget !== undefined) roleInput.pullRequestTarget = input.pullRequestTarget;
   if (input.publish) {
     roleInput.beforePullRequest = async () => {
       const publisher = input.publisher ?? createGitPublisher(input.exec === undefined ? {} : { exec: input.exec });

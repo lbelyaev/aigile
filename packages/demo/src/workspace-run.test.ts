@@ -280,4 +280,68 @@ describe("workspace-aware demo orchestration", () => {
       "pr:aigile/LIN-123",
     ]);
   });
+
+  it("uses a configured pull request target for workspace publishing", async () => {
+    const prInputs: Array<{ owner: string; repo: string; baseBranch: string }> = [];
+
+    await runDemoIssueWithWorkspace({
+      issue: {
+        id: "issue-1",
+        key: "LIN-123",
+        title: "Target repo",
+        description: "Exercise PR target config.",
+        acceptanceCriteria: ["target is used"],
+        status: "todo",
+        priority: 1,
+        comments: [],
+      },
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      baseBranch: "develop",
+      pullRequestTarget: {
+        owner: "acme",
+        repo: "project",
+        baseBranch: "develop",
+      },
+      codeHost: {
+        createPullRequest: async (input) => {
+          prInputs.push({ owner: input.owner, repo: input.repo, baseBranch: input.baseBranch });
+          return {
+            id: "acme/project#9",
+            number: 9,
+            url: "https://github.local/acme/project/pull/9",
+            ...input,
+            comments: [],
+            checks: [],
+          };
+        },
+        getPullRequest: async () => ({
+          id: "acme/project#9",
+          number: 9,
+          url: "https://github.local/acme/project/pull/9",
+          owner: "acme",
+          repo: "project",
+          branch: "aigile/LIN-123",
+          baseBranch: "develop",
+          title: "LIN-123 Target repo",
+          body: "body",
+          comments: [],
+          checks: [],
+        }),
+        appendPullRequestComment: async () => undefined,
+        recordCheckResult: async () => undefined,
+      },
+      exec: async (command, args, options) => {
+        if (command === "git" && args[0] === "worktree") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (command === "git" && args[0] === "diff") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+      },
+    });
+
+    expect(prInputs).toEqual([{ owner: "acme", repo: "project", baseBranch: "develop" }]);
+  });
 });
