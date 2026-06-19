@@ -33,7 +33,7 @@ export type AcpRoleProgressEvent =
       roleId: string;
       issueId: string;
       runtimeId: string;
-      reason: "broad_discovery";
+      reason: "broad_discovery" | "file_read_budget";
       detail: string;
     }
   | {
@@ -179,6 +179,17 @@ const isBroadDiscoveryPermission = (request: AcpPermissionRequest): boolean => {
   return isBroadDiscoveryCommand(extractCommand(request));
 };
 
+const isFileReadCommand = (command: string): boolean => {
+  const lowered = command.trim().toLowerCase();
+  return [
+    /^read(\s+file)?\b/,
+    /^cat\b/,
+    /^sed\s+-n\b/,
+    /^head\b/,
+    /^tail\b/,
+  ].some((pattern) => pattern.test(lowered));
+};
+
 const isReadOnlyPermission = (request: AcpPermissionRequest): boolean => {
   const command = extractCommand(request).trim().toLowerCase();
   return [
@@ -268,7 +279,8 @@ export const createAcpRoleRunner = (
         acpSessionId: connection.session.acpSessionId,
       });
       let streamedText = "";
-      let policyViolation: { reason: "broad_discovery"; detail: string } | undefined;
+      let fileReadCount = 0;
+      let policyViolation: { reason: "broad_discovery" | "file_read_budget"; detail: string } | undefined;
       const unsubscribe = connection.session.onEvent((event) => {
         if (event.type === "text_delta") {
           streamedText += event.delta;
@@ -290,6 +302,19 @@ export const createAcpRoleRunner = (
               reason: policyViolation.reason,
               detail: policyViolation.detail,
             });
+            return;
+          }
+          if (executionPolicyMode(input) !== undefined && isFileReadCommand(command)) {
+            fileReadCount += 1;
+            if (fileReadCount > 5 && policyViolation === undefined) {
+              policyViolation = { reason: "file_read_budget", detail: `${fileReadCount}/5 ${command}` };
+              options.onProgress?.({
+                type: "policy_violation",
+                ...progressBase(input),
+                reason: policyViolation.reason,
+                detail: policyViolation.detail,
+              });
+            }
           }
           return;
         }

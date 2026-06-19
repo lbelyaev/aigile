@@ -100,6 +100,14 @@ describe("cli formatting", () => {
       reason: "broad_discovery",
       detail: "find /repo/aigile -type f",
     })).toBe("[LIN-123 architect] policy violation broad_discovery: find /repo/aigile -type f");
+    expect(formatAcpRoleProgress({
+      type: "policy_violation",
+      roleId: "architect",
+      issueId: "LIN-123",
+      runtimeId: "claude-acp",
+      reason: "file_read_budget",
+      detail: "6/5 Read File",
+    })).toBe("[LIN-123 architect] policy violation file_read_budget: 6/5 Read File");
   });
 
   it("selects the ACP-agent demo mode from argv", () => {
