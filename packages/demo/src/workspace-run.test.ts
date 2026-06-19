@@ -212,4 +212,72 @@ describe("workspace-aware demo orchestration", () => {
     expect(seenArtifactKinds.developer).toContain("execution.policy");
     expect(seenArtifactKinds.checker).toContain("execution.policy");
   });
+
+  it("can publish a workspace branch before creating the pull request", async () => {
+    const steps: string[] = [];
+
+    const result = await runDemoIssueWithWorkspace({
+      issue: {
+        id: "issue-1",
+        key: "LIN-123",
+        title: "Publish branch",
+        description: "Exercise workspace publish flow.",
+        acceptanceCriteria: ["branch is pushed before PR"],
+        status: "todo",
+        priority: 1,
+        comments: [],
+      },
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      publish: true,
+      publisher: {
+        publish: async (input) => {
+          steps.push(`publish:${input.branchName}:${input.remote}:${input.commitMessage}`);
+        },
+      },
+      codeHost: {
+        createPullRequest: async (input) => {
+          steps.push(`pr:${input.branch}`);
+          return {
+            id: "aigile/aigile#7",
+            number: 7,
+            url: "https://github.local/aigile/aigile/pull/7",
+            ...input,
+            comments: [],
+            checks: [],
+          };
+        },
+        getPullRequest: async () => ({
+          id: "aigile/aigile#7",
+          number: 7,
+          url: "https://github.local/aigile/aigile/pull/7",
+          owner: "aigile",
+          repo: "aigile",
+          branch: "aigile/LIN-123",
+          baseBranch: "main",
+          title: "LIN-123 Publish branch",
+          body: "body",
+          comments: [],
+          checks: [],
+        }),
+        appendPullRequestComment: async () => undefined,
+        recordCheckResult: async () => undefined,
+      },
+      exec: async (command, args, options) => {
+        if (command === "git" && args[0] === "worktree") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (command === "git" && args[0] === "diff") {
+          return { stdout: "packages/demo/src/run.ts | 1 +", stderr: "", exitCode: 0 };
+        }
+        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+      },
+    });
+
+    expect(result.pullRequest.url).toBe("https://github.local/aigile/aigile/pull/7");
+    expect(steps).toEqual([
+      "publish:aigile/LIN-123:origin:LIN-123 Publish branch",
+      "pr:aigile/LIN-123",
+    ]);
+  });
 });

@@ -22,7 +22,12 @@ import {
 } from "@aigile/roles";
 import type { WorkflowArtifact, WorkflowEvent, WorkflowState } from "@aigile/types";
 import { createLocalVerifier } from "@aigile/verifier";
-import { createGitWorkspaceAdapter, type ExecCommand } from "@aigile/workspace";
+import {
+  createGitPublisher,
+  createGitWorkspaceAdapter,
+  type ExecCommand,
+  type GitPublisher,
+} from "@aigile/workspace";
 import {
   initialWorkflowSnapshot,
   transitionWorkflow,
@@ -40,6 +45,7 @@ export interface DemoWithRolesInput extends DemoIssueInput {
   initialArtifacts?: WorkflowArtifact[];
   verificationArtifact?: WorkflowArtifact;
   beforeVerification?: (artifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact[]>;
+  beforePullRequest?: (artifacts: readonly WorkflowArtifact[]) => Promise<void>;
 }
 
 export interface DemoWithAcpRolesInput extends DemoIssueInput {
@@ -54,6 +60,10 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   registry?: RoleRuntimeRegistry;
   runner?: RoleRunner;
   dryRun?: boolean;
+  publish?: boolean;
+  publisher?: GitPublisher;
+  remote?: string;
+  codeHost?: CodeHostAdapter;
 }
 
 export interface DemoGitHubInput extends DemoIssueInput {
@@ -224,6 +234,7 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
   }, timeline);
 
   artifactByKind(artifacts, "developer.attempt");
+  await input.beforePullRequest?.(artifacts);
   const pullRequest = await codeHost.createPullRequest({
     owner: "aigile",
     repo: "aigile",
@@ -369,7 +380,7 @@ export const runDemoIssueWithWorkspace = async (
     commands: [["bun", "run", "check"]],
   });
 
-  return runDemoIssueWithRoles({
+  const roleInput: DemoWithRolesInput = {
     issue: input.issue,
     registry: input.registry ?? createDemoRegistry(),
     runner: input.runner ?? createScriptedRoleRunner({
@@ -408,7 +419,20 @@ export const runDemoIssueWithWorkspace = async (
     beforeVerification: async () => [
       diffToArtifact(await workspaceAdapter.diffSummary(workspace), input.issue.key),
     ],
-  });
+  };
+  if (input.codeHost !== undefined) roleInput.codeHost = input.codeHost;
+  if (input.publish) {
+    roleInput.beforePullRequest = async () => {
+      const publisher = input.publisher ?? createGitPublisher(input.exec === undefined ? {} : { exec: input.exec });
+      await publisher.publish({
+        worktreePath: workspace.worktreePath,
+        branchName: workspace.branchName,
+        remote: input.remote ?? "origin",
+        commitMessage: `${input.issue.key} ${input.issue.title}`,
+      });
+    };
+  }
+  return runDemoIssueWithRoles(roleInput);
 };
 
 export const runDemoIssueWithGitHub = async (
