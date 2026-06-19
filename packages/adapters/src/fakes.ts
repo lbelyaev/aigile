@@ -5,6 +5,7 @@ import type {
   IssueTrackerAdapter,
   PullRequestInput,
   PullRequestRecord,
+  PullRequestReviewInput,
   ReadyIssueSource,
 } from "./contracts.js";
 
@@ -77,6 +78,7 @@ export const createFakeCodeHostAdapter = (): CodeHostAdapter => {
         url: `https://github.local/${input.owner}/${input.repo}/pull/${number}`,
         comments: [],
         checks: [],
+        reviews: [],
       };
       pullRequests.set(id, pullRequest);
       return clonePullRequest(pullRequest);
@@ -85,6 +87,10 @@ export const createFakeCodeHostAdapter = (): CodeHostAdapter => {
     appendPullRequestComment: async (id, comment) => {
       const pullRequest = requirePullRequest(pullRequests, id);
       pullRequest.comments.push(comment);
+    },
+    submitPullRequestReview: async (id, input: PullRequestReviewInput) => {
+      const pullRequest = requirePullRequest(pullRequests, id);
+      pullRequest.reviews.push(structuredClone(input));
     },
     recordCheckResult: async (id, result: CheckResult) => {
       const pullRequest = requirePullRequest(pullRequests, id);

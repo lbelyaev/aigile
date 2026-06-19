@@ -29,6 +29,7 @@ export type {
   PullRequestArtifact,
   PullRequestInput,
   PullRequestRecord,
+  PullRequestReviewInput,
   ReadyIssueSource,
 } from "./contracts.js";
 

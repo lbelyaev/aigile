@@ -74,6 +74,10 @@ describe("demo orchestration", () => {
       "checker.verdict",
       "github.pull_request",
     ]);
+    expect(result.pullRequest?.reviews).toEqual([{
+      event: "approve",
+      body: "Scripted checker accepts the verified demo change.",
+    }]);
     expect(result.timeline).toEqual([
       { label: "issue_received -> planning", elapsedMs: 0 },
       { label: "plan_drafted -> awaiting_plan_approval", elapsedMs: 42_100 },
@@ -86,7 +90,7 @@ describe("demo orchestration", () => {
     expect(result.durationMs).toBe(74_100);
   });
 
-  it("routes checker escalation to escalated without creating a pull request", async () => {
+  it("routes checker escalation to escalated and publishes a comment review", async () => {
     const result = await runDemoIssueWithRoles({
       issue,
       registry,
@@ -94,13 +98,16 @@ describe("demo orchestration", () => {
     });
 
     expect(result.finalState).toBe("escalated");
-    expect(result.pullRequest).toBeUndefined();
-    expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("github.pull_request");
+    expect(result.pullRequest?.reviews).toEqual([{
+      event: "comment",
+      body: "Checker escalate",
+    }]);
+    expect(result.artifacts.map((artifact) => artifact.kind)).toContain("github.pull_request");
     expect(result.timeline.map((entry) => entry.label)).toContain("checker_escalated -> escalated");
     expect(result.timeline.map((entry) => entry.label)).not.toContain("merge_completed -> merged");
   });
 
-  it("routes checker change requests back to development without creating a pull request", async () => {
+  it("routes checker change requests back to development and publishes a request-changes review", async () => {
     const result = await runDemoIssueWithRoles({
       issue,
       registry,
@@ -108,10 +115,40 @@ describe("demo orchestration", () => {
     });
 
     expect(result.finalState).toBe("developing");
-    expect(result.pullRequest).toBeUndefined();
-    expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("github.pull_request");
+    expect(result.pullRequest?.reviews).toEqual([{
+      event: "request_changes",
+      body: "Checker changes_requested",
+    }]);
+    expect(result.artifacts.map((artifact) => artifact.kind)).toContain("github.pull_request");
     expect(result.timeline.map((entry) => entry.label)).toContain("checker_requested_changes -> developing");
     expect(result.timeline.map((entry) => entry.label)).not.toContain("merge_completed -> merged");
+  });
+
+  it("propagates checker review publication failures", async () => {
+    await expect(runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner: runnerWithCheckerVerdict("pass"),
+      codeHost: {
+        createPullRequest: async (input) => ({
+          id: "aigile/aigile#12",
+          number: 12,
+          url: "https://github.local/aigile/aigile/pull/12",
+          ...input,
+          comments: [],
+          checks: [],
+          reviews: [],
+        }),
+        getPullRequest: async () => {
+          throw new Error("getPullRequest should not run after review failure");
+        },
+        appendPullRequestComment: async () => undefined,
+        submitPullRequestReview: async () => {
+          throw new Error("review failed");
+        },
+        recordCheckResult: async () => undefined,
+      },
+    })).rejects.toThrow(/review failed/);
   });
 
   it("marks verified no-op work as satisfied without creating a pull request", async () => {

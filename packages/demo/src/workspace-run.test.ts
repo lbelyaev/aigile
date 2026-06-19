@@ -442,6 +442,7 @@ describe("workspace-aware demo orchestration", () => {
             ...input,
             comments: [],
             checks: [],
+            reviews: [],
           };
         },
         getPullRequest: async () => ({
@@ -456,8 +457,10 @@ describe("workspace-aware demo orchestration", () => {
           body: "body",
           comments: [],
           checks: [],
+          reviews: [],
         }),
         appendPullRequestComment: async () => undefined,
+        submitPullRequestReview: async () => undefined,
         recordCheckResult: async () => undefined,
       },
       exec: async (command, args, options) => {
@@ -547,6 +550,7 @@ describe("workspace-aware demo orchestration", () => {
             ...input,
             comments: [],
             checks: [],
+            reviews: [],
           };
         },
         getPullRequest: async () => ({
@@ -561,8 +565,10 @@ describe("workspace-aware demo orchestration", () => {
           body: "body",
           comments: [],
           checks: [],
+          reviews: [],
         }),
         appendPullRequestComment: async () => undefined,
+        submitPullRequestReview: async () => undefined,
         recordCheckResult: async () => undefined,
       },
       exec: async (command, args, options) => {

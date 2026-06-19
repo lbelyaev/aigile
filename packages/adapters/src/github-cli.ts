@@ -3,6 +3,7 @@ import type {
   CodeHostAdapter,
   PullRequestInput,
   PullRequestRecord,
+  PullRequestReviewInput,
 } from "./contracts.js";
 
 export interface GitHubCliExecResult {
@@ -54,6 +55,12 @@ const repoFromRecord = (record: PullRequestRecord): string => `${record.owner}/$
 const execOptions = (cwd: string | undefined): { cwd?: string } =>
   cwd === undefined ? {} : { cwd };
 
+const reviewEventFlag = (event: PullRequestReviewInput["event"]): string => {
+  if (event === "approve") return "--approve";
+  if (event === "request_changes") return "--request-changes";
+  return "--comment";
+};
+
 export const createGitHubCliCodeHostAdapter = (
   options: GitHubCliCodeHostAdapterOptions,
 ): CodeHostAdapter => {
@@ -83,6 +90,7 @@ export const createGitHubCliCodeHostAdapter = (
         ...parsed,
         comments: [],
         checks: [],
+        reviews: [],
       };
       pullRequests.set(record.id, record);
       return structuredClone(record);
@@ -106,6 +114,22 @@ export const createGitHubCliCodeHostAdapter = (
       ], execOptions(options.cwd));
       assertSuccess(result, "gh pr comment");
       record.comments.push(comment);
+    },
+    submitPullRequestReview: async (id, input) => {
+      const record = pullRequests.get(id);
+      if (!record) throw new Error(`Pull request not found: ${id}`);
+      const result = await options.exec("gh", [
+        "pr",
+        "review",
+        prNumberFromId(id),
+        "--repo",
+        repoFromRecord(record),
+        reviewEventFlag(input.event),
+        "--body",
+        input.body,
+      ], execOptions(options.cwd));
+      assertSuccess(result, "gh pr review");
+      record.reviews.push(structuredClone(input));
     },
     recordCheckResult: async (id, check: CheckResult) => {
       const record = pullRequests.get(id);
