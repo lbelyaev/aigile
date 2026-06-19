@@ -51,9 +51,44 @@ export const isCheckerVerdictPayload = (value: unknown): value is CheckerVerdict
   && typeof value.summary === "string"
   && isStringArray(value.reasons);
 
+const extractJsonObjectText = (value: string): string => {
+  const direct = value.trim();
+  if (direct.startsWith("{") && direct.endsWith("}")) return direct;
+
+  const start = value.indexOf("{");
+  if (start < 0) return direct;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < value.length; index += 1) {
+    const char = value[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return value.slice(start, index + 1);
+    }
+  }
+
+  return direct;
+};
+
 const parseJsonString = (value: string): unknown => {
   try {
-    return JSON.parse(value) as unknown;
+    return JSON.parse(extractJsonObjectText(value)) as unknown;
   } catch (error) {
     throw new Error(`Role artifact response was not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
