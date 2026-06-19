@@ -2,11 +2,13 @@ import {
   createGitHubCliCodeHostAdapter,
   createFakeCodeHostAdapter,
   createFakeIssueTrackerAdapter,
+  createLinearGraphqlIssueTrackerAdapter,
   issueToArtifact,
   pullRequestToArtifact,
   type CodeHostAdapter,
   type GitHubCliExec,
   type IssueRecord,
+  type LinearFetchGraphql,
   type PullRequestRecord,
 } from "@aigile/adapters";
 import {
@@ -54,6 +56,12 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
 export interface DemoGitHubInput extends DemoIssueInput {
   ghExec: GitHubCliExec;
   cwd?: string;
+}
+
+export interface DemoLinearInput {
+  issueKey: string;
+  linearApiKey: string;
+  fetchGraphql?: LinearFetchGraphql;
 }
 
 export interface DemoResult {
@@ -416,3 +424,14 @@ export const runDemoIssueWithGitHub = async (
     ? { exec: input.ghExec }
     : { exec: input.ghExec, cwd: input.cwd }),
 });
+
+export const runDemoIssueFromLinear = async (
+  input: DemoLinearInput,
+): Promise<DemoResult> => {
+  const issueTracker = createLinearGraphqlIssueTrackerAdapter(input.fetchGraphql === undefined
+    ? { apiKey: input.linearApiKey }
+    : { apiKey: input.linearApiKey, fetchGraphql: input.fetchGraphql });
+  return runDemoIssue({
+    issue: await issueTracker.getIssue(input.issueKey),
+  });
+};

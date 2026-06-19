@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import {
   runDemoIssue,
+  runDemoIssueFromLinear,
   runDemoIssueWithAcpRoles,
   runDemoIssueWithGitHub,
   runDemoIssueWithWorkspace,
@@ -37,7 +38,7 @@ export const formatDemoResult = (result: DemoResult): string => [
   ...result.artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.id}`),
 ].join("\n");
 
-export type DemoMode = "scripted" | "agents" | "workspace" | "github";
+export type DemoMode = "scripted" | "agents" | "workspace" | "github" | "linear";
 
 export const selectDemoMode = (args: readonly string[]): DemoMode =>
   args.includes("demo:agents") || args.includes("--agents")
@@ -46,7 +47,9 @@ export const selectDemoMode = (args: readonly string[]): DemoMode =>
       ? "workspace"
       : args.includes("demo:github") || args.includes("--github")
         ? "github"
-        : "scripted";
+        : args.includes("demo:linear") || args.includes("--linear")
+          ? "linear"
+          : "scripted";
 
 const main = async (): Promise<void> => {
   const mode = selectDemoMode(process.argv.slice(2));
@@ -75,6 +78,22 @@ const main = async (): Promise<void> => {
             return { stdout: "", stderr: "", exitCode: 0 };
           },
         })
+        : mode === "linear"
+          ? await runDemoIssueFromLinear({
+            issueKey: "LIN-123",
+            linearApiKey: "demo-key",
+            fetchGraphql: async () => ({
+              issue: {
+                id: "issue-demo-1",
+                identifier: "LIN-123",
+                title: "Build hand-testable pipeline",
+                description: "Acceptance:\n- Architect plan exists\n- Verifier passes\n- Pull request artifact exists",
+                priority: 1,
+                state: { name: "Todo" },
+                comments: { nodes: [] },
+              },
+            }),
+          })
       : await runDemoIssue({ issue: defaultIssue });
   process.stdout.write(`${formatDemoResult(result)}\n`);
 };

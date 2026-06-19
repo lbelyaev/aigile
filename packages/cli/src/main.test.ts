@@ -28,6 +28,7 @@ describe("cli formatting", () => {
     expect(selectDemoMode(["demo:agents"])).toBe("agents");
     expect(selectDemoMode(["demo:workspace"])).toBe("workspace");
     expect(selectDemoMode(["demo:github"])).toBe("github");
+    expect(selectDemoMode(["demo:linear"])).toBe("linear");
     expect(selectDemoMode([])).toBe("scripted");
   });
 });

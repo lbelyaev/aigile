@@ -1,5 +1,6 @@
 export {
   createMockAcpConnector,
+  runDemoIssueFromLinear,
   runDemoIssue,
   runDemoIssueWithAcpRoles,
   runDemoIssueWithGitHub,
@@ -11,6 +12,7 @@ export type {
   DemoIssueInput,
   DemoGitHubInput,
   DemoResult,
+  DemoLinearInput,
   DemoWithAcpRolesInput,
   DemoWithRolesInput,
   DemoWorkspaceInput,
