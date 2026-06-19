@@ -11,16 +11,25 @@ describe("project scaffold", () => {
   it("declares a private Bun TypeScript monorepo", () => {
     const pkg = readJson<{
       private?: boolean;
+      license?: string;
       packageManager?: string;
       workspaces?: string[];
       scripts?: Record<string, string>;
     }>("package.json");
 
     expect(pkg.private).toBe(true);
+    expect(pkg.license).toBe("MIT");
     expect(pkg.packageManager).toBe("bun@1.2.21");
     expect(pkg.workspaces).toEqual(["packages/*"]);
     expect(pkg.scripts?.test).toBe("bun test");
     expect(pkg.scripts?.typecheck).toBe("tsc -b");
+  });
+
+  it("ships an MIT license file", () => {
+    const license = readFileSync(join(root, "LICENSE"), "utf8");
+
+    expect(license).toContain("MIT License");
+    expect(license).toContain("Aigile contributors");
   });
 
   it("documents the project operating rules", () => {
