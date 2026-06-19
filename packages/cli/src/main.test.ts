@@ -3,6 +3,7 @@ import {
   createDryRunExec,
   formatAcpRoleProgress,
   formatDemoResult,
+  parseGitHubRepoFromRemoteUrl,
   parseCliArgs,
   runRunModePreflight,
   runPublishPreflight,
@@ -204,6 +205,13 @@ describe("cli formatting", () => {
     });
   });
 
+  it("infers GitHub repos from common remote URL forms", () => {
+    expect(parseGitHubRepoFromRemoteUrl("git@github.com:lbelyaev/aigile.git")).toBe("lbelyaev/aigile");
+    expect(parseGitHubRepoFromRemoteUrl("https://github.com/lbelyaev/aigile.git")).toBe("lbelyaev/aigile");
+    expect(parseGitHubRepoFromRemoteUrl("ssh://git@github.com/lbelyaev/aigile.git")).toBe("lbelyaev/aigile");
+    expect(parseGitHubRepoFromRemoteUrl("git@gitlab.com:lbelyaev/aigile.git")).toBeUndefined();
+  });
+
   it("preflights run mode without starting agents", async () => {
     const calls: Array<{ command: string; args: string[]; cwd: string }> = [];
 
@@ -231,10 +239,39 @@ describe("cli formatting", () => {
       { command: "test", args: ["-e", "/repo/aigile/.worktrees/LIN-789"], cwd: "/repo/aigile" },
       { command: "git", args: ["show-ref", "--verify", "--quiet", "refs/heads/aigile/LIN-789"], cwd: "/repo/aigile" },
       { command: "gh", args: ["auth", "status"], cwd: "/repo/aigile" },
-      { command: "gh", args: ["repo", "view", "acme/project", "--json", "name"], cwd: "/repo/aigile" },
       { command: "git", args: ["remote", "get-url", "upstream"], cwd: "/repo/aigile" },
+      { command: "gh", args: ["repo", "view", "acme/project", "--json", "name"], cwd: "/repo/aigile" },
       { command: "git", args: ["rev-parse", "--verify", "develop"], cwd: "/repo/aigile" },
     ]);
+  });
+
+  it("preflights publish by inferring github repo from the remote", async () => {
+    const calls: Array<{ command: string; args: string[]; cwd: string }> = [];
+
+    const output = await runRunModePreflight({
+      issueKey: "LIN-789",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      publish: true,
+      remote: "origin",
+      baseBranch: "main",
+      exec: async (command, args, options) => {
+        calls.push({ command, args: [...args], cwd: options.cwd });
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "show-ref") return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "remote") {
+          return { stdout: "git@github.com:lbelyaev/aigile.git\n", stderr: "", exitCode: 0 };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    });
+
+    expect(output).toContain("Publish: ready lbelyaev/aigile via origin -> main");
+    expect(calls).toContainEqual({
+      command: "gh",
+      args: ["repo", "view", "lbelyaev/aigile", "--json", "name"],
+      cwd: "/repo/aigile",
+    });
   });
 
   it("preflights real publish dependencies before live role work", async () => {
@@ -253,10 +290,26 @@ describe("cli formatting", () => {
 
     expect(calls).toEqual([
       { command: "gh", args: ["auth", "status"], cwd: "/repo/aigile" },
-      { command: "gh", args: ["repo", "view", "acme/project", "--json", "name"], cwd: "/repo/aigile" },
       { command: "git", args: ["remote", "get-url", "upstream"], cwd: "/repo/aigile" },
+      { command: "gh", args: ["repo", "view", "acme/project", "--json", "name"], cwd: "/repo/aigile" },
       { command: "git", args: ["rev-parse", "--verify", "develop"], cwd: "/repo/aigile" },
     ]);
+  });
+
+  it("returns the inferred github repo from publish preflight", async () => {
+    const result = await runPublishPreflight({
+      repoPath: "/repo/aigile",
+      remote: "origin",
+      baseBranch: "main",
+      exec: async (command, args) => {
+        if (command === "git" && args[0] === "remote") {
+          return { stdout: "https://github.com/lbelyaev/aigile.git\n", stderr: "", exitCode: 0 };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    });
+
+    expect(result.githubRepo).toBe("lbelyaev/aigile");
   });
 
   it("fails publish preflight with the failing command context", async () => {

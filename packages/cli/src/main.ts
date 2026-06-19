@@ -115,10 +115,15 @@ export interface CliArgs {
 
 export interface PublishPreflightInput {
   repoPath: string;
-  githubRepo: string;
+  githubRepo?: string;
   remote: string;
   baseBranch: string;
   exec?: ExecCommand;
+}
+
+export interface PublishPreflightResult {
+  githubRepo: string;
+  remoteUrl: string;
 }
 
 const assertPreflightSuccess = (result: ExecResult, operation: string): void => {
@@ -127,24 +132,47 @@ const assertPreflightSuccess = (result: ExecResult, operation: string): void => 
   }
 };
 
-export const runPublishPreflight = async (input: PublishPreflightInput): Promise<void> => {
+export const parseGitHubRepoFromRemoteUrl = (remoteUrl: string): string | undefined => {
+  const trimmed = remoteUrl.trim();
+  const sshMatch = /^git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/.exec(trimmed);
+  if (sshMatch) return sshMatch[1];
+  const httpsMatch = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(trimmed);
+  if (httpsMatch) return httpsMatch[1];
+  const sshUrlMatch = /^ssh:\/\/git@github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(trimmed);
+  return sshUrlMatch?.[1];
+};
+
+const resolveGitHubRepo = (explicitRepo: string | undefined, remoteUrl: string): string => {
+  if (explicitRepo !== undefined) return explicitRepo;
+  const inferredRepo = parseGitHubRepoFromRemoteUrl(remoteUrl);
+  if (!inferredRepo) {
+    throw new Error("--publish requires --github-repo owner/repo when the git remote is not a GitHub URL");
+  }
+  return inferredRepo;
+};
+
+export const runPublishPreflight = async (input: PublishPreflightInput): Promise<PublishPreflightResult> => {
   const exec = input.exec ?? defaultExecCommand;
   assertPreflightSuccess(
     await exec("gh", ["auth", "status"], { cwd: input.repoPath }),
     "gh auth status",
   );
+  const remoteUrlResult = await exec("git", ["remote", "get-url", input.remote], { cwd: input.repoPath });
   assertPreflightSuccess(
-    await exec("gh", ["repo", "view", input.githubRepo, "--json", "name"], { cwd: input.repoPath }),
-    `gh repo view ${input.githubRepo}`,
-  );
-  assertPreflightSuccess(
-    await exec("git", ["remote", "get-url", input.remote], { cwd: input.repoPath }),
+    remoteUrlResult,
     `git remote get-url ${input.remote}`,
+  );
+  const remoteUrl = remoteUrlResult.stdout.trim();
+  const githubRepo = resolveGitHubRepo(input.githubRepo, remoteUrl);
+  assertPreflightSuccess(
+    await exec("gh", ["repo", "view", githubRepo, "--json", "name"], { cwd: input.repoPath }),
+    `gh repo view ${githubRepo}`,
   );
   assertPreflightSuccess(
     await exec("git", ["rev-parse", "--verify", input.baseBranch], { cwd: input.repoPath }),
     `git rev-parse --verify ${input.baseBranch}`,
   );
+  return { githubRepo, remoteUrl };
 };
 
 export interface RunModePreflightInput {
@@ -171,18 +199,16 @@ export const runRunModePreflight = async (input: RunModePreflightInput): Promise
 
   let publishLine = "Publish: skipped";
   if (input.publish) {
-    if (!input.githubRepo) throw new Error("--publish requires --github-repo owner/repo");
-    const [owner, repo] = input.githubRepo.split("/");
-    if (!owner || !repo) throw new Error("--github-repo must be in owner/repo format");
     const remote = input.remote ?? "origin";
-    await runPublishPreflight({
+    const publishPreflightInput: PublishPreflightInput = {
       repoPath: input.repoPath,
-      githubRepo: input.githubRepo,
       remote,
       baseBranch: input.baseBranch,
       exec,
-    });
-    publishLine = `Publish: ready ${input.githubRepo} via ${remote} -> ${input.baseBranch}`;
+    };
+    if (input.githubRepo !== undefined) publishPreflightInput.githubRepo = input.githubRepo;
+    const publishPreflight = await runPublishPreflight(publishPreflightInput);
+    publishLine = `Publish: ready ${publishPreflight.githubRepo} via ${remote} -> ${input.baseBranch}`;
   }
 
   return [
@@ -292,17 +318,17 @@ const main = async (): Promise<void> => {
     runInput.exec = createDryRunExec();
   }
   if (args.mode === "run" && args.publish && !args.dryRun) {
-    if (!args.githubRepo) throw new Error("--publish requires --github-repo owner/repo");
-    const [owner, repo] = args.githubRepo.split("/");
-    if (!owner || !repo) throw new Error("--github-repo must be in owner/repo format");
     const remote = args.remote ?? "origin";
     const baseBranch = args.baseBranch ?? "main";
-    await runPublishPreflight({
+    const publishPreflightInput: PublishPreflightInput = {
       repoPath: args.repoPath ?? process.cwd(),
-      githubRepo: args.githubRepo,
       remote,
       baseBranch,
-    });
+    };
+    if (args.githubRepo !== undefined) publishPreflightInput.githubRepo = args.githubRepo;
+    const publishPreflight = await runPublishPreflight(publishPreflightInput);
+    const [owner, repo] = publishPreflight.githubRepo.split("/");
+    if (!owner || !repo) throw new Error("--github-repo must be in owner/repo format");
     runInput.publish = true;
     runInput.remote = remote;
     runInput.pullRequestTarget = {
