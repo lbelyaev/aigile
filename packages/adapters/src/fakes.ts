@@ -8,6 +8,7 @@ import type {
   PullRequestReviewInput,
   ReadyIssueSource,
 } from "./contracts.js";
+import { sortReadyIssues } from "./ready-issue-ordering.js";
 
 const cloneIssue = (issue: IssueRecord): IssueRecord => structuredClone(issue);
 
@@ -55,9 +56,11 @@ export const createFakeReadyIssueSource = (
 
   return {
     listReadyIssues: async () =>
-      issues
-        .filter((issue) => issue.status === readyStatus)
-        .map(cloneIssue),
+      sortReadyIssues(
+        issues
+          .filter((issue) => issue.status === readyStatus)
+          .map(cloneIssue),
+      ),
   };
 };
 

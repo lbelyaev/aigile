@@ -10,7 +10,8 @@ describe("Linear GraphQL issue tracker adapter", () => {
   it("fetches a Linear issue by key", async () => {
     const adapter = createLinearGraphqlIssueTrackerAdapter({
       apiKey: "test-key",
-      fetchGraphql: async (_query, variables) => {
+      fetchGraphql: async (query, variables) => {
+        expect(query).toContain("createdAt");
         expect(variables).toEqual({ key: "LIN-123" });
         return {
           issue: {
@@ -19,6 +20,7 @@ describe("Linear GraphQL issue tracker adapter", () => {
             title: "Build Linear adapter",
             description: "Acceptance:\n- It fetches issues",
             priority: 2,
+            createdAt: "2024-01-01T00:00:00.000Z",
             state: { name: "Todo" },
             comments: { nodes: [{ body: "Existing comment" }] },
           },
@@ -33,6 +35,7 @@ describe("Linear GraphQL issue tracker adapter", () => {
       description: "Acceptance:\n- It fetches issues",
       acceptanceCriteria: ["It fetches issues"],
       priority: 2,
+      createdAt: "2024-01-01T00:00:00.000Z",
       status: "Todo",
       comments: ["Existing comment"],
     });
@@ -91,34 +94,59 @@ describe("Linear GraphQL issue tracker adapter", () => {
       readyStatus: "Ready for Aigile",
       fetchGraphql: async (query, variables) => {
         expect(query).toContain("ReadyIssues");
+        expect(query).toContain("createdAt");
         expect(variables).toEqual({
           teamKey: "ENG",
           readyStatus: "Ready for Aigile",
-          first: 1,
+          first: 25,
         });
         return {
           issues: {
-            nodes: [{
-              id: "issue-id",
-              identifier: "LIN-900",
-              title: "Watcher skeleton",
-              description: "Acceptance:\n- Claim it",
-              priority: 1,
-              state: { name: "Ready for Aigile" },
-              comments: { nodes: [] },
-            }],
+            nodes: [
+              {
+                id: "issue-low",
+                identifier: "LIN-901",
+                title: "Lower priority",
+                description: "",
+                priority: 2,
+                createdAt: "2024-01-01T00:00:00.000Z",
+                state: { name: "Ready for Aigile" },
+                comments: { nodes: [] },
+              },
+              {
+                id: "issue-high",
+                identifier: "LIN-900",
+                title: "Watcher skeleton",
+                description: "Acceptance:\n- Claim it",
+                priority: 1,
+                createdAt: "2024-02-01T00:00:00.000Z",
+                state: { name: "Ready for Aigile" },
+                comments: { nodes: [] },
+              },
+            ],
           },
         };
       },
     });
 
     await expect(source.listReadyIssues()).resolves.toEqual([{
-      id: "issue-id",
+      id: "issue-high",
       key: "LIN-900",
       title: "Watcher skeleton",
       description: "Acceptance:\n- Claim it",
       acceptanceCriteria: ["Claim it"],
       priority: 1,
+      createdAt: "2024-02-01T00:00:00.000Z",
+      status: "Ready for Aigile",
+      comments: [],
+    }, {
+      id: "issue-low",
+      key: "LIN-901",
+      title: "Lower priority",
+      description: "",
+      acceptanceCriteria: [],
+      priority: 2,
+      createdAt: "2024-01-01T00:00:00.000Z",
       status: "Ready for Aigile",
       comments: [],
     }]);
