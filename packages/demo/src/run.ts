@@ -54,6 +54,7 @@ export interface DemoWithRolesInput extends DemoIssueInput {
   createPullRequest?: boolean;
   initialArtifacts?: WorkflowArtifact[];
   verificationArtifact?: WorkflowArtifact;
+  publishPlan?: (plan: WorkflowArtifact) => Promise<void>;
   verify?: (artifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact>;
   beforeVerification?: (artifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact[]>;
   beforePullRequest?: (artifacts: readonly WorkflowArtifact[]) => Promise<void>;
@@ -77,6 +78,7 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   codeHost?: CodeHostAdapter;
   pullRequestTarget?: PullRequestTarget;
   createPullRequest?: boolean;
+  publishPlan?: (plan: WorkflowArtifact) => Promise<void>;
 }
 
 export interface DemoGitHubInput extends DemoIssueInput {
@@ -280,6 +282,7 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     issueId: issue.key,
   }, timeline, elapsedSinceLast);
 
+  await input.publishPlan?.(plan);
   await issueTracker.updateIssueStatus(issue.key, "developing");
   const attempt = await runAssignedRole({
     roleId: "developer",
@@ -579,6 +582,7 @@ export const runDemoIssueWithWorkspace = async (
   if (input.codeHost !== undefined) roleInput.codeHost = input.codeHost;
   if (input.pullRequestTarget !== undefined) roleInput.pullRequestTarget = input.pullRequestTarget;
   if (input.createPullRequest !== undefined) roleInput.createPullRequest = input.createPullRequest;
+  if (input.publishPlan !== undefined) roleInput.publishPlan = input.publishPlan;
   if (input.publish) {
     roleInput.beforePullRequest = async () => {
       const publisher = input.publisher ?? createGitPublisher(input.exec === undefined ? {} : { exec: input.exec });

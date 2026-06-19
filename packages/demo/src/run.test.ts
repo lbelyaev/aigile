@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { createRoleRuntimeRegistry, createScriptedRoleRunner } from "@aigile/roles";
+import { createRoleRuntimeRegistry, createScriptedRoleRunner, type RoleRunner } from "@aigile/roles";
 import { runDemoIssue, runDemoIssueWithRoles } from "./index.js";
 
 const issue = {
@@ -221,5 +221,102 @@ describe("demo orchestration", () => {
     expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("checker.verdict");
     expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("github.pull_request");
     expect(result.timeline.map((entry) => entry.label)).toContain("verification_failed -> developing");
+  });
+
+  it("publishes the architect plan after approval and before developer starts", async () => {
+    const order: string[] = [];
+    const runner: RoleRunner = {
+      run: async (input) => {
+        order.push(`run:${input.roleId}`);
+        if (input.roleId === "architect") {
+          return {
+            id: "agent:LIN-123:architect:architect.plan",
+            kind: "architect.plan",
+            source: "agent",
+            producerRoleId: "architect",
+            payload: {
+              summary: "Plan",
+              scope: ["demo"],
+              acceptanceCriteria: ["publish before development"],
+              verificationCommands: ["bun run check"],
+              risks: [],
+            },
+          };
+        }
+        if (input.roleId === "developer") {
+          return {
+            id: "agent:LIN-123:developer:developer.attempt",
+            kind: "developer.attempt",
+            source: "agent",
+            producerRoleId: "developer",
+            payload: {
+              summary: "Attempt",
+              changedFiles: ["README.md"],
+              verificationNotes: "Verifier runs.",
+            },
+          };
+        }
+        return {
+          id: "agent:LIN-123:checker:checker.verdict",
+          kind: "checker.verdict",
+          source: "agent",
+          producerRoleId: "checker",
+          payload: {
+            verdict: "pass",
+            summary: "Checker passed.",
+            reasons: [],
+          },
+        };
+      },
+    };
+
+    await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner,
+      publishPlan: async (plan) => {
+        order.push(`publish:${plan.kind}`);
+      },
+    });
+
+    expect(order.slice(0, 3)).toEqual([
+      "run:architect",
+      "publish:architect.plan",
+      "run:developer",
+    ]);
+  });
+
+  it("aborts before developer when architect plan publishing fails", async () => {
+    const order: string[] = [];
+    const runner: RoleRunner = {
+      run: async (input) => {
+        order.push(`run:${input.roleId}`);
+        return {
+          id: `agent:LIN-123:${input.roleId}:architect.plan`,
+          kind: "architect.plan",
+          source: "agent",
+          producerRoleId: input.roleId,
+          payload: {
+            summary: "Plan",
+            scope: ["demo"],
+            acceptanceCriteria: ["publish fails"],
+            verificationCommands: ["bun run check"],
+            risks: [],
+          },
+        };
+      },
+    };
+
+    await expect(runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner,
+      publishPlan: async () => {
+        order.push("publish:failed");
+        throw new Error("Linear comment failed");
+      },
+    })).rejects.toThrow("Linear comment failed");
+
+    expect(order).toEqual(["run:architect", "publish:failed"]);
   });
 });
