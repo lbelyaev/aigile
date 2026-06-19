@@ -392,6 +392,30 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     summary: "Local scripted verifier passed.",
   });
   await codeHost.appendPullRequestComment(pullRequest.id, `Checker: ${verdict.id}`);
+  const mergeability = await codeHost.getPullRequestMergeability(pullRequest.id);
+  if (mergeability.mergeable === "conflicting") {
+    const blockedMessage = `Blocked: pull request has merge conflicts and requires human attention before this issue can be marked complete: ${pullRequest.url}`;
+    await codeHost.appendPullRequestComment(pullRequest.id, blockedMessage);
+    await issueTracker.appendIssueComment(issue.key, blockedMessage);
+    const pullRequestArtifact = pullRequestToArtifact(await codeHost.getPullRequest(pullRequest.id));
+    artifacts.push(pullRequestArtifact);
+    snapshot = pushTransition(snapshot, {
+      type: "publish_failed",
+      issueId: issue.key,
+      artifactId: pullRequestArtifact.id,
+      reason: `Pull request has merge conflicts: ${pullRequest.url}`,
+    }, timeline, elapsedSinceLast);
+    await issueTracker.updateIssueStatus(issue.key, snapshot.state);
+
+    return {
+      issueKey: issue.key,
+      finalState: snapshot.state,
+      pullRequest: pullRequestArtifact.payload,
+      artifacts,
+      timeline,
+      durationMs: timeline.reduce((total, entry) => total + entry.elapsedMs, 0),
+    };
+  }
   const pullRequestArtifact = pullRequestToArtifact(await codeHost.getPullRequest(pullRequest.id));
   artifacts.push(pullRequestArtifact);
   snapshot = pushTransition(snapshot, {

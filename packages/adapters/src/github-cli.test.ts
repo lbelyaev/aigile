@@ -131,10 +131,7 @@ describe("GitHub CLI code host adapter", () => {
     });
 
     await expect(adapter.getPullRequestMergeability(pr.id)).resolves.toEqual({
-      id: pr.id,
-      status: "mergeable",
-      mergeable: "MERGEABLE",
-      mergeStateStatus: "CLEAN",
+      mergeable: "mergeable",
     });
     expect(calls).toContainEqual([
       "pr",
@@ -169,8 +166,8 @@ describe("GitHub CLI code host adapter", () => {
         body: "PR body",
       });
 
-      await expect(adapter.getPullRequestMergeability(pr.id)).resolves.toMatchObject({
-        status: "conflicting",
+      await expect(adapter.getPullRequestMergeability(pr.id)).resolves.toEqual({
+        mergeable: "conflicting",
       });
     }
   });
@@ -197,8 +194,8 @@ describe("GitHub CLI code host adapter", () => {
         body: "PR body",
       });
 
-      await expect(adapter.getPullRequestMergeability(pr.id)).resolves.toMatchObject({
-        status: "unknown",
+      await expect(adapter.getPullRequestMergeability(pr.id)).resolves.toEqual({
+        mergeable: "unknown",
       });
     }
   });

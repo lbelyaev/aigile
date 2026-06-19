@@ -553,7 +553,7 @@ const getPublishedMergeabilityStatus = async (
 ): Promise<PullRequestMergeabilityStatus> => {
   if (result.pullRequest === undefined || codeHost === undefined) return "unknown";
   try {
-    return (await codeHost.getPullRequestMergeability(result.pullRequest.id)).status;
+    return (await codeHost.getPullRequestMergeability(result.pullRequest.id)).mergeable;
   } catch {
     return "unknown";
   }

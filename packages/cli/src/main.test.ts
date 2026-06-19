@@ -955,7 +955,7 @@ describe("cli formatting", () => {
       getPullRequest: async () => {
         throw new Error("getPullRequest should not be called");
       },
-      getPullRequestMergeability: async () => ({ id: "lbelyaev/aigile#1", status: "mergeable" }),
+      getPullRequestMergeability: async () => ({ mergeable: "mergeable" }),
       appendPullRequestComment: async () => {},
       recordCheckResult: async () => {},
     };
@@ -1104,7 +1104,7 @@ describe("cli formatting", () => {
       getPullRequest: async () => {
         throw new Error("getPullRequest should not be called");
       },
-      getPullRequestMergeability: async (id) => ({ id, status: "mergeable" }),
+      getPullRequestMergeability: async () => ({ mergeable: "mergeable" }),
       appendPullRequestComment: async () => {},
       recordCheckResult: async () => {},
     };
@@ -1208,7 +1208,7 @@ describe("cli formatting", () => {
       getPullRequest: async () => {
         throw new Error("getPullRequest should not be called");
       },
-      getPullRequestMergeability: async (id) => ({ id, status: "conflicting" }),
+      getPullRequestMergeability: async () => ({ mergeable: "conflicting" }),
       appendPullRequestComment: async () => {},
       recordCheckResult: async () => {},
     };
@@ -1292,7 +1292,7 @@ describe("cli formatting", () => {
       getPullRequest: async () => {
         throw new Error("getPullRequest should not be called");
       },
-      getPullRequestMergeability: async (id) => ({ id, status: "unknown" }),
+      getPullRequestMergeability: async () => ({ mergeable: "unknown" }),
       appendPullRequestComment: async () => {},
       recordCheckResult: async () => {},
     };

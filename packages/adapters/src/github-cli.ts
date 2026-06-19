@@ -59,7 +59,7 @@ const execOptions = (cwd: string | undefined): { cwd?: string } =>
 const optionalString = (value: unknown): string | undefined =>
   typeof value === "string" && value.length > 0 ? value : undefined;
 
-const parseMergeabilityPayload = (id: string, stdout: string): PullRequestMergeability => {
+const parseMergeabilityPayload = (stdout: string): PullRequestMergeability => {
   let payload: unknown;
   try {
     payload = JSON.parse(stdout);
@@ -79,12 +79,7 @@ const parseMergeabilityPayload = (id: string, stdout: string): PullRequestMergea
   } else if (mergeableValue === "MERGEABLE") {
     status = "mergeable";
   }
-  return {
-    id,
-    status,
-    ...(mergeable === undefined ? {} : { mergeable }),
-    ...(mergeStateStatus === undefined ? {} : { mergeStateStatus }),
-  };
+  return { mergeable: status };
 };
 
 export const createGitHubCliCodeHostAdapter = (
@@ -138,7 +133,7 @@ export const createGitHubCliCodeHostAdapter = (
         "mergeable,mergeStateStatus",
       ], execOptions(options.cwd));
       assertSuccess(result, "gh pr view");
-      return parseMergeabilityPayload(id, result.stdout);
+      return parseMergeabilityPayload(result.stdout);
     },
     appendPullRequestComment: async (id, comment) => {
       const record = pullRequests.get(id);

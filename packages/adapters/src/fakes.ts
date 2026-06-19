@@ -63,15 +63,20 @@ export const createFakeReadyIssueSource = (
 };
 
 export interface FakeCodeHostAdapterOptions {
-  mergeabilityStatus?: PullRequestMergeabilityStatus;
+  mergeability?: PullRequestMergeabilityStatus | Record<string, PullRequestMergeabilityStatus>;
 }
 
 export const createFakeCodeHostAdapter = (
   options: FakeCodeHostAdapterOptions = {},
 ): CodeHostAdapter => {
   const pullRequests = new Map<string, PullRequestRecord>();
-  const mergeabilityStatus = options.mergeabilityStatus ?? "mergeable";
   let nextNumber = 1;
+
+  const mergeabilityFor = (id: string): PullRequestMergeabilityStatus => {
+    if (options.mergeability === undefined) return "mergeable";
+    if (typeof options.mergeability === "string") return options.mergeability;
+    return options.mergeability[id] ?? "mergeable";
+  };
 
   return {
     createPullRequest: async (input: PullRequestInput) => {
@@ -93,7 +98,7 @@ export const createFakeCodeHostAdapter = (
     getPullRequest: async (id) => clonePullRequest(requirePullRequest(pullRequests, id)),
     getPullRequestMergeability: async (id): Promise<PullRequestMergeability> => {
       requirePullRequest(pullRequests, id);
-      return { id, status: mergeabilityStatus };
+      return { mergeable: mergeabilityFor(id) };
     },
     appendPullRequestComment: async (id, comment) => {
       const pullRequest = requirePullRequest(pullRequests, id);

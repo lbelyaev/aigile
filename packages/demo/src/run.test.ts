@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { createFakeCodeHostAdapter } from "@aigile/adapters";
 import { createRoleRuntimeRegistry, createScriptedRoleRunner } from "@aigile/roles";
 import { runDemoIssue, runDemoIssueWithRoles } from "./index.js";
 
@@ -184,5 +185,36 @@ describe("demo orchestration", () => {
     expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("checker.verdict");
     expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("github.pull_request");
     expect(result.timeline.map((entry) => entry.label)).toContain("verification_failed -> developing");
+  });
+
+  it("escalates instead of merging when the created pull request has conflicts", async () => {
+    const result = await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner: runnerWithCheckerVerdict("pass"),
+      codeHost: createFakeCodeHostAdapter({ mergeability: "conflicting" }),
+    });
+
+    expect(result.finalState).toBe("escalated");
+    expect(result.pullRequest?.url).toBe("https://github.local/aigile/aigile/pull/1");
+    expect(result.pullRequest?.comments).toContain(
+      "Blocked: pull request has merge conflicts and requires human attention before this issue can be marked complete: https://github.local/aigile/aigile/pull/1",
+    );
+    expect(result.timeline.map((entry) => entry.label)).toContain("publish_failed -> escalated");
+    expect(result.timeline.map((entry) => entry.label)).not.toContain("merge_completed -> merged");
+  });
+
+  it("keeps the successful publish path unchanged when the created pull request is mergeable", async () => {
+    const result = await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner: runnerWithCheckerVerdict("pass"),
+      codeHost: createFakeCodeHostAdapter({ mergeability: "mergeable" }),
+    });
+
+    expect(result.finalState).toBe("merged");
+    expect(result.pullRequest?.url).toBe("https://github.local/aigile/aigile/pull/1");
+    expect(result.timeline.map((entry) => entry.label)).toContain("merge_completed -> merged");
+    expect(result.timeline.map((entry) => entry.label)).not.toContain("publish_failed -> escalated");
   });
 });

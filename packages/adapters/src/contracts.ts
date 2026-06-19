@@ -47,10 +47,7 @@ export interface PullRequestRecord extends PullRequestInput {
 export type PullRequestMergeabilityStatus = "mergeable" | "conflicting" | "unknown";
 
 export interface PullRequestMergeability {
-  id: string;
-  status: PullRequestMergeabilityStatus;
-  mergeable?: string;
-  mergeStateStatus?: string;
+  mergeable: PullRequestMergeabilityStatus;
 }
 
 export interface CodeHostAdapter {

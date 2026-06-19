@@ -217,6 +217,11 @@ export const transitionWorkflow = (
       return illegalTransition(snapshot.state, event);
 
     case "merge_ready":
+      if (event.type === "publish_failed") {
+        return moveTo(snapshot, "escalated", [
+          command("request_human_attention", snapshot.issueId, event.reason),
+        ], event);
+      }
       if (event.type === "merge_completed") {
         return moveTo(snapshot, "merged", [
           command("sync_sources_of_truth", snapshot.issueId),

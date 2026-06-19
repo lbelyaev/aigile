@@ -20,6 +20,13 @@ describe("GitHub demo orchestration", () => {
         if (args[0] === "pr" && args[1] === "create") {
           return { stdout: "https://github.com/aigile/aigile/pull/99", stderr: "", exitCode: 0 };
         }
+        if (args[0] === "pr" && args[1] === "view") {
+          return {
+            stdout: JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+            stderr: "",
+            exitCode: 0,
+          };
+        }
         return { stdout: "", stderr: "", exitCode: 0 };
       },
     });
@@ -31,6 +38,7 @@ describe("GitHub demo orchestration", () => {
       source: "github",
     });
     expect(ghCalls.some((args) => args[0] === "pr" && args[1] === "create")).toBe(true);
+    expect(ghCalls.some((args) => args[0] === "pr" && args[1] === "view")).toBe(true);
     expect(ghCalls.some((args) => args[0] === "pr" && args[1] === "comment")).toBe(true);
   });
 });
