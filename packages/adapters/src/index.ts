@@ -6,6 +6,7 @@ export {
 export {
   createFakeCodeHostAdapter,
   createFakeIssueTrackerAdapter,
+  createFakeReadyIssueSource,
 } from "./fakes.js";
 
 export {
@@ -25,6 +26,7 @@ export type {
   PullRequestArtifact,
   PullRequestInput,
   PullRequestRecord,
+  ReadyIssueSource,
 } from "./contracts.js";
 
 export type {

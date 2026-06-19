@@ -7,6 +7,7 @@ import {
   formatDuration,
   parseGitHubRepoFromRemoteUrl,
   parseCliArgs,
+  runWatchOnceCli,
   runRunModePreflight,
   runPublishPreflight,
   runIssueWorkspaceStatus,
@@ -437,6 +438,56 @@ describe("cli formatting", () => {
       worktreesPath: "/repo/aigile/.worktrees",
       baseBranch: "develop",
     });
+  });
+
+  it("parses watch-once issue arguments", () => {
+    expect(parseCliArgs([
+      "watch",
+      "--once",
+      "--issue",
+      "LIN-900",
+      "--title",
+      "Watcher skeleton",
+      "--description",
+      "Claim a ready issue.",
+      "--acceptance",
+      "Ready issue is claimed",
+      "--claim-status",
+      "aigile:claimed",
+    ])).toEqual({
+      mode: "watch",
+      once: true,
+      issueKey: "LIN-900",
+      title: "Watcher skeleton",
+      description: "Claim a ready issue.",
+      acceptanceCriteria: ["Ready issue is claimed"],
+      claimStatus: "aigile:claimed",
+    });
+  });
+
+  it("rejects watch without an explicit once pass", () => {
+    expect(() => parseCliArgs(["watch"])).toThrow(/requires --once/i);
+  });
+
+  it("runs a local watch-once claim without starting agents", async () => {
+    const output = await runWatchOnceCli({
+      issue: {
+        id: "issue-900",
+        key: "LIN-900",
+        title: "Watcher skeleton",
+        description: "Claim a ready issue.",
+        acceptanceCriteria: ["Ready issue is claimed"],
+        status: "ready",
+        comments: [],
+      },
+    });
+
+    expect(output).toContain("Aigile watch: once");
+    expect(output).toContain("Ready issues: 1");
+    expect(output).toContain("Claimed: LIN-900");
+    expect(output).toContain("Status: aigile:claimed");
+    expect(output).toContain("Comment: Aigile claimed this issue for local processing.");
+    expect(output).toContain("Agents: not started");
   });
 
   it("infers GitHub repos from common remote URL forms", () => {

@@ -17,6 +17,10 @@ export interface IssueTrackerAdapter {
   appendIssueComment: (key: string, comment: string) => Promise<void>;
 }
 
+export interface ReadyIssueSource {
+  listReadyIssues: () => Promise<IssueRecord[]>;
+}
+
 export interface PullRequestInput {
   owner: string;
   repo: string;

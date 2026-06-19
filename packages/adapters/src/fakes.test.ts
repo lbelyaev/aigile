@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   createFakeCodeHostAdapter,
   createFakeIssueTrackerAdapter,
+  createFakeReadyIssueSource,
   issueToArtifact,
   pullRequestToArtifact,
 } from "./index.js";
@@ -31,6 +32,35 @@ describe("fake source-of-truth adapters", () => {
       status: "in_progress",
       comments: ["Planning started"],
     });
+  });
+
+  it("lists ready issues without exposing mutable records", async () => {
+    const source = createFakeReadyIssueSource([
+      {
+        id: "issue-1",
+        key: "LIN-123",
+        title: "Ready issue",
+        description: "Ready for Aigile.",
+        acceptanceCriteria: [],
+        status: "ready",
+        comments: [],
+      },
+      {
+        id: "issue-2",
+        key: "LIN-124",
+        title: "Blocked issue",
+        description: "Not ready yet.",
+        acceptanceCriteria: [],
+        status: "blocked",
+        comments: [],
+      },
+    ]);
+
+    const readyIssues = await source.listReadyIssues();
+    readyIssues[0]!.status = "mutated";
+
+    expect(readyIssues.map((issue) => issue.key)).toEqual(["LIN-123"]);
+    expect((await source.listReadyIssues())[0]!.status).toBe("ready");
   });
 
   it("turns issue records into workflow artifacts", async () => {

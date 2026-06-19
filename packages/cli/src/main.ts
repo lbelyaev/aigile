@@ -1,7 +1,11 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
 import { formatDistanceStrict } from "date-fns";
-import { createGitHubCliCodeHostAdapter } from "@aigile/adapters";
+import {
+  createFakeIssueTrackerAdapter,
+  createFakeReadyIssueSource,
+  createGitHubCliCodeHostAdapter,
+} from "@aigile/adapters";
 import { loadRuntimeConfigFromJson, runtimeConfigToRegistry } from "@aigile/config";
 import {
   runDemoIssue,
@@ -15,6 +19,7 @@ import {
 } from "@aigile/demo";
 import type { IssueRecord } from "@aigile/adapters";
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
+import { defaultClaimComment, watchOnce } from "@aigile/watch";
 import {
   createGitWorkspaceAdapter,
   defaultExecCommand,
@@ -199,7 +204,7 @@ export const createAcpRoleProgressFormatter = (
   };
 };
 
-export type DemoMode = "scripted" | "agents" | "workspace" | "github" | "linear" | "run" | "status";
+export type DemoMode = "scripted" | "agents" | "workspace" | "github" | "linear" | "run" | "status" | "watch";
 
 export const selectDemoMode = (args: readonly string[]): DemoMode =>
   args.includes("demo:agents") || args.includes("--agents")
@@ -228,6 +233,9 @@ export interface CliArgs {
   dryRun?: boolean;
   agentWrite?: boolean;
   preflightOnly?: boolean;
+  once?: boolean;
+  readyStatus?: string;
+  claimStatus?: string;
 }
 
 export interface PublishPreflightInput {
@@ -388,6 +396,42 @@ export const runRunModePreflight = async (input: RunModePreflightInput): Promise
   ].join("\n");
 };
 
+export interface WatchOnceCliInput {
+  issue: IssueRecord;
+  readyStatus?: string;
+  claimStatus?: string;
+}
+
+export const runWatchOnceCli = async (input: WatchOnceCliInput): Promise<string> => {
+  const issue = {
+    ...input.issue,
+    status: input.readyStatus ?? "ready",
+  };
+  const tracker = createFakeIssueTrackerAdapter([issue]);
+  const watchInput = {
+    source: createFakeReadyIssueSource([issue], issue.status),
+    tracker,
+  };
+  const result = await watchOnce(input.claimStatus === undefined
+    ? watchInput
+    : { ...watchInput, claimStatus: input.claimStatus });
+
+  const claimedIssue = result.claimedIssue === undefined
+    ? undefined
+    : await tracker.getIssue(result.claimedIssue.key);
+
+  return [
+    "Aigile watch: once",
+    `Ready issues: ${result.readyCount}`,
+    `Claimed: ${claimedIssue?.key ?? "none"}`,
+    ...(claimedIssue === undefined ? [] : [
+      `Status: ${claimedIssue.status}`,
+      `Comment: ${claimedIssue.comments.at(-1) ?? defaultClaimComment}`,
+    ]),
+    "Agents: not started",
+  ].join("\n");
+};
+
 export const createDryRunExec = (): ExecCommand => async (command, commandArgs, options) => {
   if (command === "test" && commandArgs[0] === "-e") {
     return { stdout: "", stderr: "", exitCode: 1 };
@@ -421,6 +465,23 @@ const optionValues = (args: readonly string[], name: string): string[] => {
 };
 
 export const parseCliArgs = (args: readonly string[]): CliArgs => {
+  if (args[0] === "watch") {
+    if (!args.includes("--once")) throw new Error("watch currently requires --once");
+    const parsed: CliArgs = { mode: "watch", once: true };
+    const issueKey = optionValue(args, "--issue");
+    const title = optionValue(args, "--title");
+    const description = optionValue(args, "--description");
+    const acceptanceCriteria = optionValues(args, "--acceptance");
+    const readyStatus = optionValue(args, "--ready-status");
+    const claimStatus = optionValue(args, "--claim-status");
+    if (issueKey !== undefined) parsed.issueKey = issueKey;
+    if (title !== undefined) parsed.title = title;
+    if (description !== undefined) parsed.description = description;
+    if (acceptanceCriteria.length > 0) parsed.acceptanceCriteria = acceptanceCriteria;
+    if (readyStatus !== undefined) parsed.readyStatus = readyStatus;
+    if (claimStatus !== undefined) parsed.claimStatus = claimStatus;
+    return parsed;
+  }
   if (args[0] === "status") {
     const issueKey = args[1];
     if (!issueKey) throw new Error("status requires an issue key");
@@ -491,6 +552,14 @@ const main = async (): Promise<void> => {
       worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
       baseBranch: args.baseBranch ?? "main",
     });
+    process.stdout.write(`${output}\n`);
+    return;
+  }
+  if (args.mode === "watch") {
+    const watchInput: WatchOnceCliInput = { issue: runInput.issue };
+    if (args.readyStatus !== undefined) watchInput.readyStatus = args.readyStatus;
+    if (args.claimStatus !== undefined) watchInput.claimStatus = args.claimStatus;
+    const output = await runWatchOnceCli(watchInput);
     process.stdout.write(`${output}\n`);
     return;
   }

@@ -32,6 +32,7 @@
         "@aigile/adapters": "workspace:*",
         "@aigile/config": "workspace:*",
         "@aigile/demo": "workspace:*",
+        "@aigile/watch": "workspace:*",
         "@aigile/workspace": "workspace:*",
       },
     },
@@ -84,6 +85,13 @@
         "@aigile/workspace": "workspace:*",
       },
     },
+    "packages/watch": {
+      "name": "@aigile/watch",
+      "version": "0.0.0",
+      "dependencies": {
+        "@aigile/adapters": "workspace:*",
+      },
+    },
     "packages/workflow": {
       "name": "@aigile/workflow",
       "version": "0.0.0",
@@ -114,6 +122,8 @@
     "@aigile/types": ["@aigile/types@workspace:packages/types"],
 
     "@aigile/verifier": ["@aigile/verifier@workspace:packages/verifier"],
+
+    "@aigile/watch": ["@aigile/watch@workspace:packages/watch"],
 
     "@aigile/workflow": ["@aigile/workflow@workspace:packages/workflow"],
 

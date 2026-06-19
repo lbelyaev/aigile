@@ -5,6 +5,7 @@ import type {
   IssueTrackerAdapter,
   PullRequestInput,
   PullRequestRecord,
+  ReadyIssueSource,
 } from "./contracts.js";
 
 const cloneIssue = (issue: IssueRecord): IssueRecord => structuredClone(issue);
@@ -42,6 +43,20 @@ export const createFakeIssueTrackerAdapter = (
       const issue = requireIssue(issues, key);
       issue.comments.push(comment);
     },
+  };
+};
+
+export const createFakeReadyIssueSource = (
+  seedIssues: readonly IssueRecord[] = [],
+  readyStatus = "ready",
+): ReadyIssueSource => {
+  const issues = seedIssues.map(cloneIssue);
+
+  return {
+    listReadyIssues: async () =>
+      issues
+        .filter((issue) => issue.status === readyStatus)
+        .map(cloneIssue),
   };
 };
 

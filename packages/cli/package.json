@@ -13,6 +13,7 @@
     "@aigile/adapters": "workspace:*",
     "@aigile/config": "workspace:*",
     "@aigile/demo": "workspace:*",
+    "@aigile/watch": "workspace:*",
     "@aigile/workspace": "workspace:*"
   }
 }
