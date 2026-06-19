@@ -36,18 +36,25 @@ export interface CheckResult {
   summary: string;
 }
 
+export interface PullRequestReviewInput {
+  event: "approve" | "request_changes" | "comment";
+  body: string;
+}
+
 export interface PullRequestRecord extends PullRequestInput {
   id: string;
   number: number;
   url: string;
   comments: string[];
   checks: CheckResult[];
+  reviews: PullRequestReviewInput[];
 }
 
 export interface CodeHostAdapter {
   createPullRequest: (input: PullRequestInput) => Promise<PullRequestRecord>;
   getPullRequest: (id: string) => Promise<PullRequestRecord>;
   appendPullRequestComment: (id: string, comment: string) => Promise<void>;
+  submitPullRequestReview: (id: string, input: PullRequestReviewInput) => Promise<void>;
   recordCheckResult: (id: string, result: CheckResult) => Promise<void>;
 }
 

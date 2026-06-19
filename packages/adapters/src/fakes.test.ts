@@ -94,7 +94,7 @@ describe("fake source-of-truth adapters", () => {
     });
   });
 
-  it("creates pull requests and records comments/checks", async () => {
+  it("creates pull requests and records comments/checks/reviews", async () => {
     const codeHost = createFakeCodeHostAdapter();
     const pr = await codeHost.createPullRequest({
       owner: "example",
@@ -107,12 +107,25 @@ describe("fake source-of-truth adapters", () => {
 
     expect(pr.number).toBe(1);
     expect(pr.url).toBe("https://github.local/example/aigile/pull/1");
+    expect(pr.reviews).toEqual([]);
 
     await codeHost.appendPullRequestComment(pr.id, "Verifier passed");
     await codeHost.recordCheckResult(pr.id, {
       name: "aigile/verifier",
       status: "passed",
       summary: "All commands passed",
+    });
+    await codeHost.submitPullRequestReview(pr.id, {
+      event: "approve",
+      body: "Checker passed",
+    });
+    await codeHost.submitPullRequestReview(pr.id, {
+      event: "request_changes",
+      body: "Checker requested changes",
+    });
+    await codeHost.submitPullRequestReview(pr.id, {
+      event: "comment",
+      body: "Checker escalated",
     });
 
     expect(await codeHost.getPullRequest(pr.id)).toMatchObject({
@@ -122,6 +135,11 @@ describe("fake source-of-truth adapters", () => {
         status: "passed",
         summary: "All commands passed",
       }],
+      reviews: [
+        { event: "approve", body: "Checker passed" },
+        { event: "request_changes", body: "Checker requested changes" },
+        { event: "comment", body: "Checker escalated" },
+      ],
     });
   });
 

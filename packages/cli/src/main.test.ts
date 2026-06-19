@@ -39,6 +39,7 @@ describe("cli formatting", () => {
         body: "Demo PR",
         comments: [],
         checks: [],
+        reviews: [],
       },
       artifacts: [],
       timeline: [
@@ -80,6 +81,7 @@ describe("cli formatting", () => {
         body: "Demo PR",
         comments: [],
         checks: [],
+        reviews: [],
       },
       artifacts: [{
         id: "policy:LIN-456:dry-run",
@@ -149,6 +151,7 @@ describe("cli formatting", () => {
         body: "Demo PR",
         comments: [],
         checks: [],
+        reviews: [],
       },
       artifacts: [],
       timeline: [
@@ -182,6 +185,7 @@ describe("cli formatting", () => {
         body: "Demo PR",
         comments: [],
         checks: [],
+        reviews: [],
       },
       artifacts: [{
         id: "agent:LIN-123:architect:architect.plan",
@@ -951,11 +955,13 @@ describe("cli formatting", () => {
         url: `https://github.local/${input.owner}/${input.repo}/pull/1`,
         comments: [],
         checks: [],
+        reviews: [],
       }),
       getPullRequest: async () => {
         throw new Error("getPullRequest should not be called");
       },
       appendPullRequestComment: async () => {},
+      submitPullRequestReview: async () => {},
       recordCheckResult: async () => {},
     };
 
@@ -1143,6 +1149,7 @@ describe("cli formatting", () => {
           body: "Demo PR",
           comments: [],
           checks: [],
+          reviews: [],
         },
         artifacts: [{
           id: "verifier:LBE-7:local",

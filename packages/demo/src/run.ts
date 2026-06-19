@@ -10,6 +10,7 @@ import {
   type IssueRecord,
   type LinearFetchGraphql,
   type PullRequestRecord,
+  type PullRequestReviewInput,
 } from "@aigile/adapters";
 import {
   createAcpRoleRunner,
@@ -198,6 +199,16 @@ const checkerEventForVerdict = (artifact: WorkflowArtifact): WorkflowEvent["type
   return "checker_escalated";
 };
 
+const checkerReviewForVerdict = (artifact: WorkflowArtifact): PullRequestReviewInput => {
+  if (!isCheckerVerdictPayload(artifact.payload)) {
+    throw new Error(`Checker artifact payload is invalid: ${artifact.id}`);
+  }
+  const body = artifact.payload.summary.trim() || `Checker verdict: ${artifact.payload.verdict}`;
+  if (artifact.payload.verdict === "pass") return { event: "approve", body };
+  if (artifact.payload.verdict === "changes_requested") return { event: "request_changes", body };
+  return { event: "comment", body };
+};
+
 const verificationEventForResult = (artifact: WorkflowArtifact): WorkflowEvent["type"] => {
   if (typeof artifact.payload !== "object" || artifact.payload === null || Array.isArray(artifact.payload)) {
     return "verification_passed";
@@ -346,16 +357,6 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
       durationMs: timeline.reduce((total, entry) => total + entry.elapsedMs, 0),
     };
   }
-  if (checkerEvent !== "checker_passed") {
-    await issueTracker.updateIssueStatus(issue.key, snapshot.state);
-    return {
-      issueKey: issue.key,
-      finalState: snapshot.state,
-      artifacts,
-      timeline,
-      durationMs: timeline.reduce((total, entry) => total + entry.elapsedMs, 0),
-    };
-  }
 
   artifactByKind(artifacts, "developer.attempt");
   if (input.createPullRequest === false) {
@@ -391,9 +392,20 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     status: "passed",
     summary: "Local scripted verifier passed.",
   });
-  await codeHost.appendPullRequestComment(pullRequest.id, `Checker: ${verdict.id}`);
+  await codeHost.submitPullRequestReview(pullRequest.id, checkerReviewForVerdict(verdict));
   const pullRequestArtifact = pullRequestToArtifact(await codeHost.getPullRequest(pullRequest.id));
   artifacts.push(pullRequestArtifact);
+  if (checkerEvent !== "checker_passed") {
+    await issueTracker.updateIssueStatus(issue.key, snapshot.state);
+    return {
+      issueKey: issue.key,
+      finalState: snapshot.state,
+      pullRequest: pullRequestArtifact.payload,
+      artifacts,
+      timeline,
+      durationMs: timeline.reduce((total, entry) => total + entry.elapsedMs, 0),
+    };
+  }
   snapshot = pushTransition(snapshot, {
     type: "merge_completed",
     issueId: issue.key,
