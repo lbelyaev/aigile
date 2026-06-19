@@ -67,6 +67,30 @@ const assertSuccess = (result: ExecResult, operation: string): void => {
   }
 };
 
+const assertWorkspaceTargetAvailable = async (
+  exec: ExecCommand,
+  repoPath: string,
+  workspace: IssueWorkspace,
+): Promise<void> => {
+  const pathResult = await exec("test", ["-e", workspace.worktreePath], { cwd: repoPath });
+  if (pathResult.exitCode === 0) {
+    throw new Error(`Issue worktree path already exists: ${workspace.worktreePath}`);
+  }
+
+  const branchResult = await exec("git", [
+    "show-ref",
+    "--verify",
+    "--quiet",
+    `refs/heads/${workspace.branchName}`,
+  ], { cwd: repoPath });
+  if (branchResult.exitCode === 0) {
+    throw new Error(`Issue branch already exists: ${workspace.branchName}`);
+  }
+  if (branchResult.exitCode !== 1) {
+    assertSuccess(branchResult, "git show-ref");
+  }
+};
+
 export const createGitWorkspaceAdapter = (
   options: GitWorkspaceAdapterOptions,
 ): GitWorkspaceAdapter => {
@@ -81,6 +105,7 @@ export const createGitWorkspaceAdapter = (
         worktreePath: join(options.worktreesPath, slug),
         baseBranch: input.baseBranch,
       };
+      await assertWorkspaceTargetAvailable(exec, options.repoPath, workspace);
       const result = await exec("git", [
         "worktree",
         "add",

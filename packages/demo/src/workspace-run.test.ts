@@ -6,6 +6,12 @@ import {
 } from "@aigile/roles";
 import { runDemoIssueWithWorkspace } from "./index.js";
 
+const availableWorkspaceTarget = (command: string, args: readonly string[]) => {
+  if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+  if (command === "git" && args[0] === "show-ref") return { stdout: "", stderr: "", exitCode: 1 };
+  return undefined;
+};
+
 describe("workspace-aware demo orchestration", () => {
   it("adds workspace and verifier artifacts to the role handoff", async () => {
     const result = await runDemoIssueWithWorkspace({
@@ -22,6 +28,8 @@ describe("workspace-aware demo orchestration", () => {
       repoPath: "/repo/aigile",
       worktreesPath: "/repo/aigile/.worktrees",
       exec: async (command, args, options) => {
+        const preflight = availableWorkspaceTarget(command, args);
+        if (preflight) return preflight;
         if (command === "git" && args[0] === "worktree") {
           return { stdout: "", stderr: "", exitCode: 0 };
         }
@@ -109,6 +117,8 @@ describe("workspace-aware demo orchestration", () => {
       registry,
       runner,
       exec: async (command, args, options) => {
+        const preflight = availableWorkspaceTarget(command, args);
+        if (preflight) return preflight;
         if (command === "git" && args[0] === "worktree") {
           return { stdout: "", stderr: "", exitCode: 0 };
         }
@@ -199,6 +209,8 @@ describe("workspace-aware demo orchestration", () => {
       registry,
       runner,
       exec: async (command, args, options) => {
+        const preflight = availableWorkspaceTarget(command, args);
+        if (preflight) return preflight;
         if (command === "git" && args[0] === "worktree") {
           return { stdout: "", stderr: "", exitCode: 0 };
         }
@@ -270,6 +282,8 @@ describe("workspace-aware demo orchestration", () => {
         recordCheckResult: async () => undefined,
       },
       exec: async (command, args, options) => {
+        const preflight = availableWorkspaceTarget(command, args);
+        if (preflight) return preflight;
         if (command === "git" && args[0] === "worktree") {
           return { stdout: "", stderr: "", exitCode: 0 };
         }
@@ -338,6 +352,8 @@ describe("workspace-aware demo orchestration", () => {
         recordCheckResult: async () => undefined,
       },
       exec: async (command, args, options) => {
+        const preflight = availableWorkspaceTarget(command, args);
+        if (preflight) return preflight;
         if (command === "git" && args[0] === "worktree") {
           return { stdout: "", stderr: "", exitCode: 0 };
         }

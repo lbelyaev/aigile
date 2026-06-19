@@ -9,6 +9,8 @@ describe("git workspace adapter", () => {
       worktreesPath: "/repo/aigile/.worktrees",
       exec: async (command, args, options) => {
         commands.push({ command, args: [...args], cwd: options.cwd });
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "show-ref") return { stdout: "", stderr: "", exitCode: 1 };
         return { stdout: "", stderr: "", exitCode: 0 };
       },
     });
@@ -24,11 +26,56 @@ describe("git workspace adapter", () => {
       worktreePath: "/repo/aigile/.worktrees/LIN-123",
       baseBranch: "main",
     });
-    expect(commands).toEqual([{
-      command: "git",
-      args: ["worktree", "add", "-b", "aigile/LIN-123", "/repo/aigile/.worktrees/LIN-123", "main"],
-      cwd: "/repo/aigile",
-    }]);
+    expect(commands).toEqual([
+      {
+        command: "test",
+        args: ["-e", "/repo/aigile/.worktrees/LIN-123"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["show-ref", "--verify", "--quiet", "refs/heads/aigile/LIN-123"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["worktree", "add", "-b", "aigile/LIN-123", "/repo/aigile/.worktrees/LIN-123", "main"],
+        cwd: "/repo/aigile",
+      },
+    ]);
+  });
+
+  it("fails clearly when the issue worktree path already exists", async () => {
+    const adapter = createGitWorkspaceAdapter({
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      exec: async (command) => {
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 0 };
+        throw new Error("worktree add should not run");
+      },
+    });
+
+    await expect(adapter.createIssueWorkspace({
+      issueKey: "LIN-123",
+      baseBranch: "main",
+    })).rejects.toThrow("Issue worktree path already exists: /repo/aigile/.worktrees/LIN-123");
+  });
+
+  it("fails clearly when the issue branch already exists", async () => {
+    const adapter = createGitWorkspaceAdapter({
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      exec: async (command, args) => {
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "show-ref") return { stdout: "", stderr: "", exitCode: 0 };
+        throw new Error("worktree add should not run");
+      },
+    });
+
+    await expect(adapter.createIssueWorkspace({
+      issueKey: "LIN-123",
+      baseBranch: "main",
+    })).rejects.toThrow("Issue branch already exists: aigile/LIN-123");
   });
 
   it("summarizes worktree diff", async () => {
@@ -54,7 +101,11 @@ describe("git workspace adapter", () => {
     const adapter = createGitWorkspaceAdapter({
       repoPath: "/repo/aigile",
       worktreesPath: "/repo/aigile/.worktrees",
-      exec: async () => ({ stdout: "", stderr: "fatal", exitCode: 128 }),
+      exec: async (command, args) => {
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "show-ref") return { stdout: "", stderr: "", exitCode: 1 };
+        return { stdout: "", stderr: "fatal", exitCode: 128 };
+      },
     });
 
     await expect(adapter.createIssueWorkspace({
