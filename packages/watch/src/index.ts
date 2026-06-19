@@ -27,6 +27,7 @@ export interface WatchLoopInput extends WatchOnceInput {
   signal?: AbortSignal;
   sleep?: (durationMs: number, signal?: AbortSignal) => Promise<void>;
   onEvent?: (event: WatchLoopEvent) => void;
+  onClaimedIssue?: (issue: IssueRecord) => Promise<void>;
 }
 
 const defaultClaimStatus = "aigile:claimed";
@@ -96,6 +97,7 @@ export const watchLoop = async (input: WatchLoopInput): Promise<void> => {
         issueKey: result.claimedIssue.key,
         readyCount: result.readyCount,
       });
+      await input.onClaimedIssue?.(result.claimedIssue);
     }
 
     if (input.maxPolls !== undefined && polls >= input.maxPolls) {

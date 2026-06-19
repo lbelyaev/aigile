@@ -245,6 +245,7 @@ export interface CliArgs {
   linearApiKeyEnv?: string;
   pollIntervalMs?: number;
   maxPolls?: number;
+  startRun?: boolean;
 }
 
 export interface PublishPreflightInput {
@@ -472,6 +473,7 @@ export interface LinearWatchLoopCliInput extends LinearWatchOnceCliInput {
   signal?: AbortSignal;
   sleep?: (durationMs: number, signal?: AbortSignal) => Promise<void>;
   onLine?: (line: string) => void;
+  startRun?: (issue: IssueRecord) => Promise<string>;
 }
 
 export interface LinearWatchPreflightCliInput {
@@ -486,11 +488,51 @@ export interface LinearRunIssueInput {
   fetchGraphql?: LinearFetchGraphql;
 }
 
+export interface LinearIssueWorkflowCliInput {
+  apiKey: string;
+  issueKey: string;
+  repoPath: string;
+  worktreesPath: string;
+  runtimeConfigPath: string;
+  baseBranch?: string;
+  dryRun?: boolean;
+  agentWrite?: boolean;
+  fetchGraphql?: LinearFetchGraphql;
+  onProgressLine?: (line: string) => void;
+}
+
 export const fetchLinearIssueForRun = async (input: LinearRunIssueInput): Promise<IssueRecord> => {
   const adapter = createLinearGraphqlIssueTrackerAdapter(input.fetchGraphql === undefined
     ? { apiKey: input.apiKey }
     : { apiKey: input.apiKey, fetchGraphql: input.fetchGraphql });
   return adapter.getIssue(input.issueKey);
+};
+
+export const runLinearIssueWorkflowCli = async (input: LinearIssueWorkflowCliInput): Promise<string> => {
+  const issue = await fetchLinearIssueForRun(input.fetchGraphql === undefined
+    ? { apiKey: input.apiKey, issueKey: input.issueKey }
+    : { apiKey: input.apiKey, issueKey: input.issueKey, fetchGraphql: input.fetchGraphql });
+  const runInput: DemoWorkspaceInput = {
+    issue,
+    repoPath: input.repoPath,
+    worktreesPath: input.worktreesPath,
+    registry: runtimeConfigToRegistry(loadRuntimeConfigFromJson(readFileSync(input.runtimeConfigPath, "utf8"))),
+  };
+  if (input.baseBranch !== undefined) runInput.baseBranch = input.baseBranch;
+  if (input.dryRun === true) {
+    runInput.dryRun = true;
+    runInput.exec = createDryRunExec();
+  }
+  if (input.agentWrite === true) runInput.createPullRequest = false;
+  const progressFormatter = createAcpRoleProgressFormatter();
+  runInput.runner = createAcpRoleRunner({
+    onProgress: (event) => {
+      for (const line of progressFormatter.format(event)) {
+        if (line.trim().length > 0) input.onProgressLine?.(line);
+      }
+    },
+  });
+  return formatDemoResult(await runDemoIssueWithWorkspace(runInput));
 };
 
 export const runLinearWatchOnceCli = async (input: LinearWatchOnceCliInput): Promise<string> => {
@@ -537,6 +579,9 @@ const formatWatchLoopEvent = (event: WatchLoopEvent): string => {
   return `Stopped: ${event.reason} after ${event.polls} polls`;
 };
 
+const runResultStateLine = (output: string): string | undefined =>
+  output.split("\n").find((line) => line.startsWith("Final state:") || line.startsWith("Workflow state:"));
+
 export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Promise<string> => {
   const { source, tracker } = createLinearWatchAdapters(input);
   const lines: string[] = [];
@@ -558,9 +603,20 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
     ...(input.signal === undefined ? {} : { signal: input.signal }),
     ...(input.sleep === undefined ? {} : { sleep: input.sleep }),
     onEvent: (event) => emit(formatWatchLoopEvent(event)),
+    ...(input.startRun === undefined
+      ? {}
+      : {
+        onClaimedIssue: async (issue: IssueRecord) => {
+          emit(`Run ${issue.key}: starting`);
+          const output = await input.startRun!(issue);
+          const stateLine = runResultStateLine(output);
+          if (stateLine !== undefined) emit(`Run ${issue.key}: ${stateLine}`);
+          emit(`Run ${issue.key}: completed`);
+        },
+      }),
   });
 
-  emit("Agents: not started");
+  emit(input.startRun === undefined ? "Agents: not started" : "Agents: handled claimed issues");
   return lines.join("\n");
 };
 
@@ -658,6 +714,10 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     const acceptanceCriteria = optionValues(args, "--acceptance");
     const readyStatus = optionValue(args, "--ready-status");
     const claimStatus = optionValue(args, "--claim-status");
+    const runtimeConfigPath = optionValue(args, "--runtime-config");
+    const repoPath = optionValue(args, "--repo");
+    const worktreesPath = optionValue(args, "--worktrees");
+    const baseBranch = optionValue(args, "--base-branch");
     const linearTeam = optionValue(args, "--linear-team");
     const linearApiKeyEnv = optionValue(args, "--linear-api-key-env");
     const maxPolls = optionValue(args, "--max-polls");
@@ -667,10 +727,27 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (acceptanceCriteria.length > 0) parsed.acceptanceCriteria = acceptanceCriteria;
     if (readyStatus !== undefined) parsed.readyStatus = readyStatus;
     if (claimStatus !== undefined) parsed.claimStatus = claimStatus;
+    if (runtimeConfigPath !== undefined) parsed.runtimeConfigPath = runtimeConfigPath;
+    if (repoPath !== undefined) parsed.repoPath = repoPath;
+    if (worktreesPath !== undefined) parsed.worktreesPath = worktreesPath;
+    if (baseBranch !== undefined) parsed.baseBranch = baseBranch;
     if (args.includes("--linear")) parsed.linear = true;
     if (linearTeam !== undefined) parsed.linearTeam = linearTeam;
     if (linearApiKeyEnv !== undefined) parsed.linearApiKeyEnv = linearApiKeyEnv;
     if (maxPolls !== undefined) parsed.maxPolls = parsePositiveInteger(maxPolls, "--max-polls");
+    if (args.includes("--start-run")) parsed.startRun = true;
+    if (args.includes("--dry-run")) parsed.dryRun = true;
+    if (args.includes("--agent-write")) parsed.agentWrite = true;
+    if (parsed.dryRun && parsed.agentWrite) {
+      throw new Error("choose only one of --dry-run or --agent-write");
+    }
+    if (parsed.startRun) {
+      if (parsed.pollIntervalMs === undefined) throw new Error("watch --start-run requires --poll-interval");
+      if (parsed.runtimeConfigPath === undefined) throw new Error("watch --start-run requires --runtime-config");
+      if (parsed.dryRun !== true && parsed.agentWrite !== true) {
+        throw new Error("watch --start-run requires --dry-run or --agent-write");
+      }
+    }
     return parsed;
   }
   if (args[0] === "status") {
@@ -790,6 +867,23 @@ const main = async (): Promise<void> => {
         if (args.readyStatus !== undefined) loopInput.readyStatus = args.readyStatus;
         if (args.claimStatus !== undefined) loopInput.claimStatus = args.claimStatus;
         if (args.maxPolls !== undefined) loopInput.maxPolls = args.maxPolls;
+        if (args.startRun) {
+          if (args.runtimeConfigPath === undefined) throw new Error("watch --start-run requires --runtime-config");
+          if (args.dryRun !== true && args.agentWrite !== true) {
+            throw new Error("watch --start-run requires --dry-run or --agent-write");
+          }
+          loopInput.startRun = async (issue) => runLinearIssueWorkflowCli({
+            apiKey,
+            issueKey: issue.key,
+            repoPath: args.repoPath ?? process.cwd(),
+            worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
+            runtimeConfigPath: args.runtimeConfigPath!,
+            ...(args.baseBranch === undefined ? {} : { baseBranch: args.baseBranch }),
+            ...(args.dryRun === true ? { dryRun: true } : {}),
+            ...(args.agentWrite === true ? { agentWrite: true } : {}),
+            onProgressLine: (line) => process.stderr.write(`${line}\n`),
+          });
+        }
         await runLinearWatchLoopCli(loopInput);
         return;
       }

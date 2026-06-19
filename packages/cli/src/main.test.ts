@@ -565,6 +565,44 @@ describe("cli formatting", () => {
     });
   });
 
+  it("parses Linear watch start-run arguments", () => {
+    expect(parseCliArgs([
+      "watch",
+      "--linear",
+      "--linear-team",
+      "LBE",
+      "--ready-status",
+      "Todo",
+      "--claim-status",
+      "In Progress",
+      "--poll-interval",
+      "30s",
+      "--max-polls",
+      "1",
+      "--start-run",
+      "--runtime-config",
+      "config/aigile.runtimes.example.json",
+      "--repo",
+      "/repo/aigile",
+      "--worktrees",
+      "/repo/aigile/.worktrees",
+      "--agent-write",
+    ])).toEqual({
+      mode: "watch",
+      linear: true,
+      linearTeam: "LBE",
+      readyStatus: "Todo",
+      claimStatus: "In Progress",
+      pollIntervalMs: 30_000,
+      maxPolls: 1,
+      startRun: true,
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      agentWrite: true,
+    });
+  });
+
   it("rejects watch without an explicit once pass", () => {
     expect(() => parseCliArgs(["watch"])).toThrow(/requires --once or --poll-interval/i);
   });
@@ -581,6 +619,30 @@ describe("cli formatting", () => {
       "never",
     ])).toThrow(/--max-polls must be a positive integer/i);
   });
+
+  it("rejects start-run without runtime config or execution mode", () => {
+    expect(() => parseCliArgs([
+      "watch",
+      "--linear",
+      "--linear-team",
+      "LBE",
+      "--poll-interval",
+      "30s",
+      "--start-run",
+    ])).toThrow(/requires --runtime-config/i);
+    expect(() => parseCliArgs([
+      "watch",
+      "--linear",
+      "--linear-team",
+      "LBE",
+      "--poll-interval",
+      "30s",
+      "--start-run",
+      "--runtime-config",
+      "config/aigile.runtimes.example.json",
+    ])).toThrow(/requires --dry-run or --agent-write/i);
+  });
+
 
   it("runs a local watch-once claim without starting agents", async () => {
     const output = await runWatchOnceCli({
@@ -805,6 +867,67 @@ describe("cli formatting", () => {
     expect(output).toContain("Agents: not started");
     expect(calls.filter((call) => call.query.includes("issueUpdate"))).toHaveLength(1);
     expect(calls.filter((call) => call.query.includes("commentCreate"))).toHaveLength(1);
+  });
+
+  it("starts a run after claiming an issue when requested", async () => {
+    const startedIssueKeys: string[] = [];
+
+    const output = await runLinearWatchLoopCli({
+      apiKey: "test-key",
+      teamKey: "LBE",
+      readyStatus: "Todo",
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 1,
+      sleep: async () => {},
+      startRun: async (issue) => {
+        startedIssueKeys.push(issue.key);
+        return [
+          `Aigile demo run: ${issue.key}`,
+          "Mode: agent_write",
+          "Final state: merge_ready",
+        ].join("\n");
+      },
+      fetchGraphql: async (query) => {
+        if (query.includes("ReadyIssues")) {
+          return {
+            issues: {
+              nodes: [{
+                id: "issue-id",
+                identifier: "LBE-6",
+                title: "Start Linear-claimed issues automatically",
+                description: "Acceptance:\n- Starts run",
+                state: { name: "Todo" },
+                comments: { nodes: [] },
+              }],
+            },
+          };
+        }
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-in-progress", name: "In Progress" }] } };
+        }
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("issueUpdate")) return {};
+        if (query.includes("commentCreate")) return {};
+        return {
+          issue: {
+            id: "issue-id",
+            identifier: "LBE-6",
+            title: "Start Linear-claimed issues automatically",
+            description: "Acceptance:\n- Starts run",
+            state: { name: "In Progress" },
+            comments: { nodes: [{ body: "Aigile claimed this issue for local processing." }] },
+          },
+        };
+      },
+    });
+
+    expect(startedIssueKeys).toEqual(["LBE-6"]);
+    expect(output).toContain("Poll 1: claimed LBE-6 (ready issues: 1)");
+    expect(output).toContain("Run LBE-6: starting");
+    expect(output).toContain("Run LBE-6: Final state: merge_ready");
+    expect(output).toContain("Run LBE-6: completed");
+    expect(output).toContain("Agents: handled claimed issues");
   });
 
   it("fetches run issue metadata from Linear", async () => {

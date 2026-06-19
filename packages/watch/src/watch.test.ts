@@ -109,4 +109,29 @@ describe("watchOnce", () => {
 
     expect(events).toEqual(["watch_stopped"]);
   });
+
+  it("runs a callback after a successful claim", async () => {
+    const seedIssues = [{
+      id: "issue-1",
+      key: "LIN-900",
+      title: "Watcher loop",
+      description: "Start work after claim.",
+      acceptanceCriteria: [],
+      status: "ready",
+      comments: [],
+    }];
+    const claimedIssueKeys: string[] = [];
+
+    await watchLoop({
+      source: createFakeReadyIssueSource(seedIssues),
+      tracker: createFakeIssueTrackerAdapter(seedIssues),
+      pollIntervalMs: 1,
+      maxPolls: 1,
+      onClaimedIssue: async (issue) => {
+        claimedIssueKeys.push(issue.key);
+      },
+    });
+
+    expect(claimedIssueKeys).toEqual(["LIN-900"]);
+  });
 });
