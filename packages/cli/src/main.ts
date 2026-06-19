@@ -58,6 +58,9 @@ export const formatAcpRoleProgress = (event: AcpRoleProgressEvent): string => {
   if (event.type === "thinking_delta") return `${prefix} thinking`;
   if (event.type === "tool_start") return `${prefix} tool started: ${event.tool}`;
   if (event.type === "tool_end") return `${prefix} tool finished: ${event.tool}`;
+  if (event.type === "permission_decision") {
+    return `${prefix} permission ${event.decision}: ${event.tool} ${event.description}`;
+  }
   if (event.type === "approval_request") return `${prefix} approval requested: ${event.tool}`;
   if (event.type === "artifact_parsed") return `${prefix} artifact parsed: ${event.artifactKind}`;
   return `${prefix} stopped ${event.runtimeId}`;

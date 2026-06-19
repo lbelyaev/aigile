@@ -8,13 +8,31 @@ import {
 describe("ACP role runner", () => {
   it("emits progress while connecting, prompting, streaming, and stopping", async () => {
     const progress: string[] = [];
-    let eventHandler: ((event: { type: "text_delta"; sessionId: string; delta: string }) => void) | undefined;
+    let eventHandler: ((event:
+      | { type: "text_delta"; sessionId: string; delta: string }
+      | {
+        type: "permission_decision";
+        sessionId: string;
+        requestId: string;
+        tool: string;
+        description: string;
+        decision: "allow_once" | "reject_once" | "cancelled";
+      }
+    ) => void) | undefined;
     const connector: AcpRuntimeConnector = async () => ({
       session: {
         sessionId: "role-session-1",
         acpSessionId: "acp-session-1",
         prompt: async () => {
           eventHandler?.({ type: "text_delta", sessionId: "role-session-1", delta: "working" });
+          eventHandler?.({
+            type: "permission_decision",
+            sessionId: "role-session-1",
+            requestId: "tool-1",
+            tool: "Bash",
+            description: JSON.stringify({ command: "git status --short" }),
+            decision: "allow_once",
+          });
           return {
             artifactKind: "architect.plan",
             payload: {
@@ -64,6 +82,7 @@ describe("ACP role runner", () => {
       "runtime_connected",
       "prompt_started",
       "text_delta",
+      "permission_decision",
       "artifact_parsed",
       "runtime_stopped",
     ]);

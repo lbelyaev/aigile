@@ -105,11 +105,13 @@ describe("ACP session translation", () => {
 
   it("routes permission requests through policy before asking", async () => {
     const rpc = mockRpc();
-    createAcpSession(rpc, {
+    const events: unknown[] = [];
+    const session = createAcpSession(rpc, {
       acpSessionId: "acp-1",
       sessionId: "role-session-1",
       decidePermission: () => "allow_once",
     });
+    session.onEvent((event) => events.push(event));
 
     await expect(rpc.emitRequest("session/request_permission", {
       sessionId: "acp-1",
@@ -122,5 +124,13 @@ describe("ACP session translation", () => {
     })).resolves.toEqual({
       outcome: { outcome: "selected", optionId: "allow_once" },
     });
+    expect(events).toEqual([{
+      type: "permission_decision",
+      sessionId: "role-session-1",
+      requestId: "tool-1",
+      tool: "Bash",
+      description: JSON.stringify({ command: "bun test" }),
+      decision: "allow_once",
+    }]);
   });
 });

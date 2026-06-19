@@ -6,6 +6,14 @@ export type AcpEvent =
   | { type: "tool_start"; sessionId: string; tool: string; toolCallId?: string; params?: unknown }
   | { type: "tool_end"; sessionId: string; tool: string; toolCallId?: string; result?: string }
   | {
+      type: "permission_decision";
+      sessionId: string;
+      requestId: string;
+      tool: string;
+      description: string;
+      decision: PermissionDecision;
+    }
+  | {
       type: "approval_request";
       sessionId: string;
       requestId: string;
@@ -183,7 +191,18 @@ export const createAcpSession = (
     };
 
     const decision = options.decidePermission?.(request);
-    if (decision) return permissionResult(decision);
+    if (decision) {
+      const event: AcpEvent = {
+        type: "permission_decision",
+        sessionId: request.sessionId,
+        requestId: request.requestId,
+        tool: request.tool,
+        description: request.description,
+        decision,
+      };
+      for (const handler of handlers) handler(event);
+      return permissionResult(decision);
+    }
 
     const event: AcpEvent = { type: "approval_request", ...request };
     for (const handler of handlers) handler(event);

@@ -28,6 +28,15 @@ export type AcpRoleProgressEvent =
   | { type: "thinking_delta"; roleId: string; issueId: string; runtimeId: string; delta: string }
   | { type: "tool_start"; roleId: string; issueId: string; runtimeId: string; tool: string }
   | { type: "tool_end"; roleId: string; issueId: string; runtimeId: string; tool: string }
+  | {
+      type: "permission_decision";
+      roleId: string;
+      issueId: string;
+      runtimeId: string;
+      tool: string;
+      description: string;
+      decision: PermissionDecision;
+    }
   | { type: "approval_request"; roleId: string; issueId: string; runtimeId: string; tool: string; description: string }
   | { type: "artifact_parsed"; roleId: string; issueId: string; runtimeId: string; artifactKind: string }
   | { type: "runtime_stopped"; roleId: string; issueId: string; runtimeId: string };
@@ -227,6 +236,16 @@ export const createAcpRoleRunner = (
         }
         if (event.type === "tool_end") {
           options.onProgress?.({ type: "tool_end", ...progressBase(input), tool: event.tool });
+          return;
+        }
+        if (event.type === "permission_decision") {
+          options.onProgress?.({
+            type: "permission_decision",
+            ...progressBase(input),
+            tool: event.tool,
+            description: event.description,
+            decision: event.decision,
+          });
           return;
         }
         if (event.type === "approval_request") {

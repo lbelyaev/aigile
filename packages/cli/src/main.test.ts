@@ -39,6 +39,15 @@ describe("cli formatting", () => {
       runtimeId: "codex-acp",
       tool: "Bash",
     })).toBe("[LIN-123 developer] tool started: Bash");
+    expect(formatAcpRoleProgress({
+      type: "permission_decision",
+      roleId: "developer",
+      issueId: "LIN-123",
+      runtimeId: "codex-acp",
+      tool: "Bash",
+      decision: "reject_once",
+      description: JSON.stringify({ command: "git commit -m test" }),
+    })).toBe("[LIN-123 developer] permission reject_once: Bash {\"command\":\"git commit -m test\"}");
   });
 
   it("selects the ACP-agent demo mode from argv", () => {
