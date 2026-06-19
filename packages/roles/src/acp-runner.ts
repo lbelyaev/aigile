@@ -29,6 +29,14 @@ export type AcpRoleProgressEvent =
   | { type: "tool_start"; roleId: string; issueId: string; runtimeId: string; tool: string }
   | { type: "tool_end"; roleId: string; issueId: string; runtimeId: string; tool: string }
   | {
+      type: "policy_violation";
+      roleId: string;
+      issueId: string;
+      runtimeId: string;
+      reason: "broad_discovery";
+      detail: string;
+    }
+  | {
       type: "permission_decision";
       roleId: string;
       issueId: string;
@@ -131,6 +139,11 @@ const extractCommand = (request: AcpPermissionRequest): string => {
   return request.description;
 };
 
+const toolCommand = (tool: string, params: unknown): string => {
+  if (isRecord(params) && typeof params.command === "string") return params.command;
+  return tool;
+};
+
 const isWriteLikePermission = (request: AcpPermissionRequest): boolean => {
   const tool = request.tool.toLowerCase();
   const command = extractCommand(request).trim().toLowerCase();
@@ -150,15 +163,20 @@ const isCommitLikePermission = (request: AcpPermissionRequest): boolean => {
 const hasTargetedPathArgument = (command: string): boolean =>
   /(^|\s)(\.?\/?[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+|[A-Za-z0-9_.-]+\.(ts|tsx|js|jsx|json|md|yml|yaml|toml|lock))(\s|$)/.test(command);
 
-const isBroadDiscoveryPermission = (request: AcpPermissionRequest): boolean => {
-  if (request.tool.toLowerCase() !== "bash") return false;
-  const command = extractCommand(request).trim();
-  const lowered = command.toLowerCase();
+const isBroadDiscoveryCommand = (command: string): boolean => {
+  const trimmed = command.trim();
+  const lowered = trimmed.toLowerCase();
   if (/^find\b/.test(lowered)) return true;
-  if (/^ls\b/.test(lowered) && /(^|\s)-[A-Za-z]*R[A-Za-z]*(\s|$)/.test(command)) return true;
-  if (/^(rg|grep)\b/.test(lowered) && !hasTargetedPathArgument(command)) return true;
-  if (/^git\s+grep\b/.test(lowered) && !hasTargetedPathArgument(command)) return true;
+  if (/^ls\b/.test(lowered) && /(^|\s)-[A-Za-z]*R[A-Za-z]*(\s|$)/.test(trimmed)) return true;
+  if (/^git\b.*\bls-files\b/.test(lowered)) return true;
+  if (/^grep\b/.test(lowered) && /(^|\s)-[A-Za-z]*r[A-Za-z]*(\s|$)/.test(trimmed)) return true;
+  if (/^(rg|grep)\b/.test(lowered) && !hasTargetedPathArgument(trimmed)) return true;
+  if (/^git\s+grep\b/.test(lowered) && !hasTargetedPathArgument(trimmed)) return true;
   return false;
+};
+
+const isBroadDiscoveryPermission = (request: AcpPermissionRequest): boolean => {
+  return isBroadDiscoveryCommand(extractCommand(request));
 };
 
 const isReadOnlyPermission = (request: AcpPermissionRequest): boolean => {
@@ -250,6 +268,7 @@ export const createAcpRoleRunner = (
         acpSessionId: connection.session.acpSessionId,
       });
       let streamedText = "";
+      let policyViolation: { reason: "broad_discovery"; detail: string } | undefined;
       const unsubscribe = connection.session.onEvent((event) => {
         if (event.type === "text_delta") {
           streamedText += event.delta;
@@ -262,6 +281,16 @@ export const createAcpRoleRunner = (
         }
         if (event.type === "tool_start") {
           options.onProgress?.({ type: "tool_start", ...progressBase(input), tool: event.tool });
+          const command = toolCommand(event.tool, event.params);
+          if (executionPolicyMode(input) !== undefined && isBroadDiscoveryCommand(command)) {
+            policyViolation = { reason: "broad_discovery", detail: command };
+            options.onProgress?.({
+              type: "policy_violation",
+              ...progressBase(input),
+              reason: policyViolation.reason,
+              detail: policyViolation.detail,
+            });
+          }
           return;
         }
         if (event.type === "tool_end") {
@@ -290,6 +319,9 @@ export const createAcpRoleRunner = (
       try {
         options.onProgress?.({ type: "prompt_started", ...progressBase(input) });
         const promptResult = await connection.session.prompt(buildPrompt(input));
+        if (policyViolation !== undefined) {
+          throw new Error(`Policy violation ${policyViolation.reason}: ${policyViolation.detail}`);
+        }
         const response = parsePromptArtifactResponse(promptResult, streamedText);
         assertExpectedArtifactKind(input.roleId, response.artifactKind);
         options.onProgress?.({

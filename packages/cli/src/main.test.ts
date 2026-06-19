@@ -92,6 +92,14 @@ describe("cli formatting", () => {
       decision: "reject_once",
       description: JSON.stringify({ command: "git commit -m test" }),
     })).toBe("[LIN-123 developer] permission reject_once: Bash {\"command\":\"git commit -m test\"}");
+    expect(formatAcpRoleProgress({
+      type: "policy_violation",
+      roleId: "architect",
+      issueId: "LIN-123",
+      runtimeId: "claude-acp",
+      reason: "broad_discovery",
+      detail: "find /repo/aigile -type f",
+    })).toBe("[LIN-123 architect] policy violation broad_discovery: find /repo/aigile -type f");
   });
 
   it("selects the ACP-agent demo mode from argv", () => {
