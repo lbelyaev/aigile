@@ -4,6 +4,7 @@ export {
 
 export {
   createAcpSession,
+  extractTokenUsage,
   translateSessionUpdate,
 } from "./session.js";
 
@@ -27,6 +28,7 @@ export type {
   AcpPermissionRequest,
   AcpSession,
   AcpSessionOptions,
+  AcpTokenUsage,
   PermissionDecision,
 } from "./session.js";
 

@@ -103,6 +103,59 @@ describe("ACP session translation", () => {
     });
   });
 
+  it("translates token usage from session updates", () => {
+    expect(translateSessionUpdate({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "acp-1",
+        update: {
+          sessionUpdate: "agent_message",
+          usage: {
+            inputTokens: 1200,
+            outputTokens: 500,
+          },
+        },
+      },
+    }, "role-session-1", "acp-1")).toEqual({
+      type: "token_usage",
+      sessionId: "role-session-1",
+      usage: {
+        inputTokens: 1200,
+        outputTokens: 500,
+        totalTokens: 1700,
+      },
+    });
+
+    expect(translateSessionUpdate({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "acp-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "hello" },
+          _meta: {
+            usage: {
+              prompt_tokens: 10,
+              completion_tokens: 4,
+              total_tokens: 14,
+            },
+          },
+        },
+      },
+    }, "role-session-1", "acp-1")).toEqual({
+      type: "text_delta",
+      sessionId: "role-session-1",
+      delta: "hello",
+      usage: {
+        inputTokens: 10,
+        outputTokens: 4,
+        totalTokens: 14,
+      },
+    });
+  });
+
   it("routes permission requests through policy before asking", async () => {
     const rpc = mockRpc();
     const events: unknown[] = [];

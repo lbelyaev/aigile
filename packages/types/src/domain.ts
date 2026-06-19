@@ -70,12 +70,19 @@ export interface RoleAssignment {
   instructionRef?: string;
 }
 
+export interface RuntimeTokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
+
 export interface RuntimeArtifactProvenance {
   runtimeId: string;
   runtimeDisplayName?: string;
   transport: AcpRuntimeProfile["transport"];
   command?: readonly string[];
   model: string;
+  tokenUsage?: RuntimeTokenUsage;
 }
 
 export interface ArtifactProvenance {
@@ -150,7 +157,17 @@ const isRuntimeArtifactProvenance = (value: unknown): value is RuntimeArtifactPr
   && (value.runtimeDisplayName === undefined || isNonEmptyString(value.runtimeDisplayName))
   && isKnownValue(["stdio", "http", "websocket"] as const, value.transport)
   && (value.command === undefined || (Array.isArray(value.command) && value.command.every(isNonEmptyString)))
-  && isNonEmptyString(value.model);
+  && isNonEmptyString(value.model)
+  && (value.tokenUsage === undefined || isRuntimeTokenUsage(value.tokenUsage));
+
+const isNonNegativeNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0;
+
+const isRuntimeTokenUsage = (value: unknown): value is RuntimeTokenUsage =>
+  isRecord(value)
+  && (value.inputTokens === undefined || isNonNegativeNumber(value.inputTokens))
+  && (value.outputTokens === undefined || isNonNegativeNumber(value.outputTokens))
+  && (value.totalTokens === undefined || isNonNegativeNumber(value.totalTokens));
 
 const isArtifactProvenance = (value: unknown): value is ArtifactProvenance =>
   isRecord(value)

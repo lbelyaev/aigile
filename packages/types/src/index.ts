@@ -22,6 +22,7 @@ export type {
   ArtifactSource,
   RoleAssignment,
   RuntimeArtifactProvenance,
+  RuntimeTokenUsage,
   WorkflowArtifact,
   WorkflowEvent,
   WorkflowEventType,

@@ -1,10 +1,11 @@
 import type { JsonRpcNotification, RpcClient } from "./rpc.js";
 
 export type AcpEvent =
-  | { type: "text_delta"; sessionId: string; delta: string }
-  | { type: "thinking_delta"; sessionId: string; delta: string }
+  | { type: "text_delta"; sessionId: string; delta: string; usage?: AcpTokenUsage }
+  | { type: "thinking_delta"; sessionId: string; delta: string; usage?: AcpTokenUsage }
+  | { type: "token_usage"; sessionId: string; usage: AcpTokenUsage }
   | { type: "tool_start"; sessionId: string; tool: string; toolCallId?: string; params?: unknown }
-  | { type: "tool_end"; sessionId: string; tool: string; toolCallId?: string; result?: string }
+  | { type: "tool_end"; sessionId: string; tool: string; toolCallId?: string; result?: string; usage?: AcpTokenUsage }
   | {
       type: "permission_decision";
       sessionId: string;
@@ -29,6 +30,12 @@ export interface AcpPermissionOption {
 }
 
 export type PermissionDecision = "allow_once" | "reject_once" | "cancelled";
+
+export interface AcpTokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
 
 export interface AcpSessionOptions {
   sessionId: string;
@@ -61,12 +68,14 @@ interface AcpContentBlock {
 interface AcpSessionUpdate {
   sessionUpdate?: string;
   content?: AcpContentBlock | AcpContentBlock[];
+  usage?: unknown;
+  tokenUsage?: unknown;
   toolCallId?: string;
   title?: string;
   status?: string;
   rawInput?: unknown;
   rawOutput?: unknown;
-  _meta?: { claudeCode?: { toolName?: string } };
+  _meta?: { claudeCode?: { toolName?: string }; usage?: unknown; tokenUsage?: unknown };
 }
 
 interface AcpSessionUpdateParams {
@@ -105,6 +114,46 @@ const extractToolName = (update: AcpSessionUpdate): string => {
   return update._meta?.claudeCode?.toolName ?? "unknown";
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const tokenCount = (value: unknown): number | undefined => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
+  return value;
+};
+
+const tokenField = (source: Record<string, unknown>, keys: readonly string[]): number | undefined => {
+  for (const key of keys) {
+    const value = tokenCount(source[key]);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+};
+
+const normalizeTokenUsage = (value: unknown): AcpTokenUsage | undefined => {
+  if (!isRecord(value)) return undefined;
+  const inputTokens = tokenField(value, ["inputTokens", "input_tokens", "promptTokens", "prompt_tokens"]);
+  const outputTokens = tokenField(value, ["outputTokens", "output_tokens", "completionTokens", "completion_tokens"]);
+  const explicitTotalTokens = tokenField(value, ["totalTokens", "total_tokens", "tokens"]);
+  const totalTokens = explicitTotalTokens ?? (
+    inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined
+  );
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) return undefined;
+  const usage: AcpTokenUsage = {};
+  if (inputTokens !== undefined) usage.inputTokens = inputTokens;
+  if (outputTokens !== undefined) usage.outputTokens = outputTokens;
+  if (totalTokens !== undefined) usage.totalTokens = totalTokens;
+  return usage;
+};
+
+export const extractTokenUsage = (value: unknown): AcpTokenUsage | undefined => {
+  if (!isRecord(value)) return undefined;
+  return normalizeTokenUsage(value.usage)
+    ?? normalizeTokenUsage(value.tokenUsage)
+    ?? normalizeTokenUsage(isRecord(value._meta) ? value._meta.usage : undefined)
+    ?? normalizeTokenUsage(isRecord(value._meta) ? value._meta.tokenUsage : undefined);
+};
+
 export const translateSessionUpdate = (
   notification: JsonRpcNotification,
   sessionId: string,
@@ -114,12 +163,19 @@ export const translateSessionUpdate = (
   const params = notification.params as AcpSessionUpdateParams | undefined;
   if (!params || params.sessionId !== acpSessionId || !params.update) return null;
   const update = params.update;
+  const usage = extractTokenUsage(update);
 
   if (update.sessionUpdate === "agent_message_chunk" || update.sessionUpdate === "agent_message") {
-    return { type: "text_delta", sessionId, delta: extractText(update.content) };
+    const delta = extractText(update.content);
+    if (delta.length === 0 && usage !== undefined) return { type: "token_usage", sessionId, usage };
+    const event: AcpEvent = { type: "text_delta", sessionId, delta };
+    if (usage !== undefined) event.usage = usage;
+    return event;
   }
   if (update.sessionUpdate === "agent_thought_chunk") {
-    return { type: "thinking_delta", sessionId, delta: extractText(update.content) };
+    const event: AcpEvent = { type: "thinking_delta", sessionId, delta: extractText(update.content) };
+    if (usage !== undefined) event.usage = usage;
+    return event;
   }
   if (update.sessionUpdate === "tool_call") {
     const event: AcpEvent = {
@@ -142,8 +198,11 @@ export const translateSessionUpdate = (
     };
     if (update.toolCallId !== undefined) event.toolCallId = update.toolCallId;
     if (typeof update.rawOutput === "string") event.result = update.rawOutput;
+    if (usage !== undefined) event.usage = usage;
     return event;
   }
+
+  if (usage !== undefined) return { type: "token_usage", sessionId, usage };
 
   return null;
 };

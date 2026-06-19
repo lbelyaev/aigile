@@ -1,11 +1,13 @@
 import {
   connectAcpRuntime,
+  extractTokenUsage,
   type AcpPermissionRequest,
   type AcpSession,
+  type AcpTokenUsage,
   type ConnectAcpRuntimeInput,
   type PermissionDecision,
 } from "@aigile/acp";
-import { parseRoleArtifactResponse, type RuntimeArtifactProvenance, type WorkflowArtifact } from "@aigile/types";
+import { parseRoleArtifactResponse, type RuntimeArtifactProvenance, type RuntimeTokenUsage, type WorkflowArtifact } from "@aigile/types";
 import type { RoleRunner, RoleRunInput } from "./runner.js";
 import { buildRolePrompt, getDefaultRoleInstruction } from "./prompts.js";
 
@@ -26,6 +28,7 @@ export type AcpRoleProgressEvent =
   | { type: "prompt_started"; roleId: string; issueId: string; runtimeId: string }
   | { type: "text_delta"; roleId: string; issueId: string; runtimeId: string; delta: string }
   | { type: "thinking_delta"; roleId: string; issueId: string; runtimeId: string; delta: string }
+  | { type: "token_usage"; roleId: string; issueId: string; runtimeId: string; usage: RuntimeTokenUsage }
   | { type: "tool_start"; roleId: string; issueId: string; runtimeId: string; tool: string }
   | { type: "tool_end"; roleId: string; issueId: string; runtimeId: string; tool: string }
   | {
@@ -87,7 +90,7 @@ const defaultConnector: AcpRuntimeConnector = async (input) =>
 
 const runtimeModel = (input: RoleRunInput): string => input.runtime.defaultModel ?? "runtime-default";
 
-const runtimeProvenance = (input: RoleRunInput): RuntimeArtifactProvenance => {
+const runtimeProvenance = (input: RoleRunInput, tokenUsage?: RuntimeTokenUsage): RuntimeArtifactProvenance => {
   const provenance: RuntimeArtifactProvenance = {
     runtimeId: input.runtime.id,
     transport: input.runtime.transport,
@@ -95,7 +98,23 @@ const runtimeProvenance = (input: RoleRunInput): RuntimeArtifactProvenance => {
   };
   if (input.runtime.displayName !== undefined) provenance.runtimeDisplayName = input.runtime.displayName;
   if (input.runtime.command !== undefined) provenance.command = [...input.runtime.command];
+  if (tokenUsage !== undefined) provenance.tokenUsage = tokenUsage;
   return provenance;
+};
+
+const mergeTokenUsage = (
+  current: RuntimeTokenUsage | undefined,
+  next: AcpTokenUsage | undefined,
+): RuntimeTokenUsage | undefined => {
+  if (next === undefined) return current;
+  const merged: RuntimeTokenUsage = { ...(current ?? {}) };
+  if (next.inputTokens !== undefined) merged.inputTokens = next.inputTokens;
+  if (next.outputTokens !== undefined) merged.outputTokens = next.outputTokens;
+  if (next.totalTokens !== undefined) merged.totalTokens = next.totalTokens;
+  if (merged.totalTokens === undefined && merged.inputTokens !== undefined && merged.outputTokens !== undefined) {
+    merged.totalTokens = merged.inputTokens + merged.outputTokens;
+  }
+  return merged;
 };
 
 const buildPrompt = (input: RoleRunInput): string => buildRolePrompt({
@@ -280,15 +299,25 @@ export const createAcpRoleRunner = (
       });
       let streamedText = "";
       let fileReadCount = 0;
+      let tokenUsage: RuntimeTokenUsage | undefined;
       let policyViolation: { reason: "broad_discovery" | "file_read_budget"; detail: string } | undefined;
       const unsubscribe = connection.session.onEvent((event) => {
         if (event.type === "text_delta") {
           streamedText += event.delta;
+          tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
           options.onProgress?.({ type: "text_delta", ...progressBase(input), delta: event.delta });
           return;
         }
         if (event.type === "thinking_delta") {
+          tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
           options.onProgress?.({ type: "thinking_delta", ...progressBase(input), delta: event.delta });
+          return;
+        }
+        if (event.type === "token_usage") {
+          tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
+          if (tokenUsage !== undefined) {
+            options.onProgress?.({ type: "token_usage", ...progressBase(input), usage: tokenUsage });
+          }
           return;
         }
         if (event.type === "tool_start") {
@@ -319,6 +348,7 @@ export const createAcpRoleRunner = (
           return;
         }
         if (event.type === "tool_end") {
+          tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
           options.onProgress?.({ type: "tool_end", ...progressBase(input), tool: event.tool });
           return;
         }
@@ -344,6 +374,7 @@ export const createAcpRoleRunner = (
       try {
         options.onProgress?.({ type: "prompt_started", ...progressBase(input) });
         const promptResult = await connection.session.prompt(buildPrompt(input));
+        tokenUsage = mergeTokenUsage(tokenUsage, extractTokenUsage(promptResult));
         if (policyViolation !== undefined) {
           throw new Error(`Policy violation ${policyViolation.reason}: ${policyViolation.detail}`);
         }
@@ -360,7 +391,7 @@ export const createAcpRoleRunner = (
           source: "agent",
           producerRoleId: input.roleId,
           provenance: {
-            runtime: runtimeProvenance(input),
+            runtime: runtimeProvenance(input, tokenUsage),
           },
           payload: structuredClone(response.payload),
         } satisfies WorkflowArtifact;

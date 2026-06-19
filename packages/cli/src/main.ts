@@ -48,6 +48,29 @@ export const formatDuration = (durationMs: number): string => {
   return formatDistanceStrict(0, boundedMs, { roundingMethod: "round" });
 };
 
+const formattedNumber = (value: number): string => new Intl.NumberFormat("en-US").format(value);
+
+const formatTokenUsage = (result: DemoResult): string => {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let totalTokens = 0;
+  let hasUsage = false;
+  for (const artifact of result.artifacts) {
+    const usage = artifact.provenance?.runtime?.tokenUsage;
+    if (!usage) continue;
+    hasUsage = true;
+    inputTokens += usage.inputTokens ?? 0;
+    outputTokens += usage.outputTokens ?? 0;
+    totalTokens += usage.totalTokens ?? (
+      usage.inputTokens !== undefined && usage.outputTokens !== undefined
+        ? usage.inputTokens + usage.outputTokens
+        : 0
+    );
+  }
+  if (!hasUsage) return "unavailable";
+  return `${formattedNumber(totalTokens)} total (${formattedNumber(inputTokens)} input, ${formattedNumber(outputTokens)} output)`;
+};
+
 export const formatDemoResult = (result: DemoResult): string => {
   const mode = executionPolicyMode(result);
   const isDryRun = mode === "dry_run";
@@ -58,7 +81,7 @@ export const formatDemoResult = (result: DemoResult): string => {
     ...(isDryRun ? ["External side effects: none (workspace, GitHub, and source-of-truth updates simulated)"] : []),
     `Pull request: ${isDryRun ? "simulated " : ""}${result.pullRequest.url}`,
     `Duration: ${formatDuration(result.durationMs)}`,
-    "Token usage: unavailable",
+    `Token usage: ${formatTokenUsage(result)}`,
     "",
     "Timeline:",
     ...result.timeline.map((entry) => `- ${entry.label} (+${formatDuration(entry.elapsedMs)})`),
@@ -79,6 +102,7 @@ export const formatAcpRoleProgress = (event: AcpRoleProgressEvent): string => {
   if (event.type === "prompt_started") return `${prefix} prompt sent`;
   if (event.type === "text_delta") return `${prefix} text: ${event.delta.trimEnd()}`;
   if (event.type === "thinking_delta") return `${prefix} thinking`;
+  if (event.type === "token_usage") return "";
   if (event.type === "tool_start") return `${prefix} tool started: ${event.tool}`;
   if (event.type === "tool_end") return `${prefix} tool finished: ${event.tool}`;
   if (event.type === "policy_violation") {

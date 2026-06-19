@@ -114,6 +114,66 @@ describe("cli formatting", () => {
     expect(output).toContain("Token usage: unavailable");
   });
 
+  it("formats aggregate token usage when runtime provenance includes it", () => {
+    const output = formatDemoResult({
+      issueKey: "LIN-123",
+      finalState: "merged",
+      pullRequest: {
+        id: "aigile/aigile#1",
+        number: 1,
+        url: "https://github.local/aigile/aigile/pull/1",
+        owner: "aigile",
+        repo: "aigile",
+        branch: "aigile/LIN-123",
+        baseBranch: "main",
+        title: "LIN-123 Usage run",
+        body: "Demo PR",
+        comments: [],
+        checks: [],
+      },
+      artifacts: [{
+        id: "agent:LIN-123:architect:architect.plan",
+        kind: "architect.plan",
+        source: "agent",
+        producerRoleId: "architect",
+        provenance: {
+          runtime: {
+            runtimeId: "claude-acp",
+            transport: "stdio",
+            model: "runtime-default",
+            tokenUsage: {
+              inputTokens: 1200,
+              outputTokens: 500,
+              totalTokens: 1700,
+            },
+          },
+        },
+        payload: {},
+      }, {
+        id: "agent:LIN-123:developer:developer.attempt",
+        kind: "developer.attempt",
+        source: "agent",
+        producerRoleId: "developer",
+        provenance: {
+          runtime: {
+            runtimeId: "codex-acp",
+            transport: "stdio",
+            model: "runtime-default",
+            tokenUsage: {
+              inputTokens: 300,
+              outputTokens: 100,
+            },
+          },
+        },
+        payload: {},
+      }],
+      timeline: [],
+      durationMs: 0,
+    });
+
+    expect(output).toContain("Token usage: 2,100 total (1,500 input, 600 output)");
+  });
+
   it("humanizes durations for operator output", () => {
     expect(formatDuration(0)).toBe("0 seconds");
     expect(formatDuration(999)).toBe("1 second");

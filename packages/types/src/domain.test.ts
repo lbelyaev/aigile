@@ -57,6 +57,11 @@ describe("domain schemas", () => {
           transport: "stdio",
           command: ["npx", "-y", "@zed-industries/codex-acp"],
           model: "runtime-default",
+          tokenUsage: {
+            inputTokens: 1200,
+            outputTokens: 500,
+            totalTokens: 1700,
+          },
         },
       },
       payload: { summary: "Plan the change" },

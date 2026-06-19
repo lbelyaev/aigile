@@ -323,6 +323,73 @@ describe("ACP role runner", () => {
     expect(killed).toBe(true);
   });
 
+  it("records runtime token usage in artifact provenance", async () => {
+    let eventHandler: ((event: {
+      type: "token_usage";
+      sessionId: string;
+      usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+    }) => void) | undefined;
+    const connector: AcpRuntimeConnector = async () => ({
+      session: {
+        sessionId: "role-session-1",
+        acpSessionId: "acp-session-1",
+        prompt: async () => {
+          eventHandler?.({
+            type: "token_usage",
+            sessionId: "role-session-1",
+            usage: {
+              inputTokens: 1200,
+              outputTokens: 500,
+              totalTokens: 1700,
+            },
+          });
+          return {
+            artifactKind: "architect.plan",
+            payload: {
+              summary: "Plan from ACP",
+              scope: ["role runner"],
+              acceptanceCriteria: ["artifact is parsed"],
+              verificationCommands: ["bun run check"],
+              risks: [],
+            },
+          };
+        },
+        cancel: () => undefined,
+        onEvent: (handler) => {
+          eventHandler = handler as typeof eventHandler;
+          return () => {
+            eventHandler = undefined;
+          };
+        },
+      },
+      process: {
+        kill: async () => undefined,
+      },
+    });
+    const runner = createAcpRoleRunner({ connector });
+
+    const artifact = await runner.run({
+      roleId: "architect",
+      issueId: "LIN-123",
+      runtime: {
+        id: "runtime-architect",
+        transport: "stdio",
+        command: ["agent-acp"],
+      },
+      assignment: {
+        roleId: "architect",
+        runtimeProfileId: "runtime-architect",
+      },
+      inputArtifacts: [],
+    });
+
+    expect(artifact.provenance?.runtime?.tokenUsage).toEqual({
+      inputTokens: 1200,
+      outputTokens: 500,
+      totalTokens: 1700,
+    });
+  });
+
   it("rejects observed broad-discovery tool starts under execution policy", async () => {
     const progress: string[] = [];
     let killed = false;
