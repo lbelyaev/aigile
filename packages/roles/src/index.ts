@@ -8,6 +8,11 @@ export {
   createAcpRoleRunner,
 } from "./acp-runner.js";
 
+export {
+  buildRolePrompt,
+  getDefaultRoleInstruction,
+} from "./prompts.js";
+
 export type {
   RoleRunInput,
   RoleRunner,
@@ -22,3 +27,7 @@ export type {
   AcpRuntimeConnection,
   AcpRuntimeConnector,
 } from "./acp-runner.js";
+
+export type {
+  BuildRolePromptInput,
+} from "./prompts.js";

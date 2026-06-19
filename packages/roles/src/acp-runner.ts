@@ -1,6 +1,7 @@
 import { connectAcpRuntime, type AcpSession, type ConnectAcpRuntimeInput } from "@aigile/acp";
 import type { WorkflowArtifact } from "@aigile/types";
 import type { RoleRunner, RoleRunInput } from "./runner.js";
+import { buildRolePrompt, getDefaultRoleInstruction } from "./prompts.js";
 
 export interface AcpRuntimeConnection {
   session: Pick<AcpSession, "sessionId" | "acpSessionId" | "prompt" | "cancel" | "onEvent">;
@@ -64,17 +65,15 @@ const defaultConnector: AcpRuntimeConnector = async (input) => {
   return connected;
 };
 
-const buildPrompt = (input: RoleRunInput): string => [
-  `Role: ${input.roleId}`,
-  `Issue: ${input.issueId}`,
-  input.assignment.instructionRef ? `Instruction ref: ${input.assignment.instructionRef}` : undefined,
-  "",
-  "Return only JSON with this shape:",
-  "{\"artifactKind\":\"...\",\"payload\":{...}}",
-  "",
-  "Input artifacts:",
-  JSON.stringify(input.inputArtifacts, null, 2),
-].filter((line): line is string => line !== undefined).join("\n");
+const buildPrompt = (input: RoleRunInput): string => buildRolePrompt({
+  roleId: input.roleId,
+  issueId: input.issueId,
+  instruction: [
+    getDefaultRoleInstruction(input.roleId),
+    input.assignment.instructionRef ? `Instruction reference: ${input.assignment.instructionRef}` : undefined,
+  ].filter((line): line is string => line !== undefined).join("\n"),
+  inputArtifacts: input.inputArtifacts,
+});
 
 export const createAcpRoleRunner = (
   options: AcpRoleRunnerOptions = {},
@@ -95,7 +94,7 @@ export const createAcpRoleRunner = (
         } satisfies WorkflowArtifact;
       } finally {
         await connection.process.kill();
-      }
+}
     },
   };
 };
