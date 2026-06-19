@@ -549,6 +549,83 @@ describe("ACP role runner", () => {
     expect(killed).toBe(true);
   });
 
+  it("allows focused file reads above the dry-run budget for agent-write runs", async () => {
+    const progress: string[] = [];
+    let eventHandler: ((event: {
+      type: "tool_start";
+      sessionId: string;
+      tool: string;
+      params?: unknown;
+    }) => void) | undefined;
+    const connector: AcpRuntimeConnector = async () => ({
+      session: {
+        sessionId: "role-session-1",
+        acpSessionId: "acp-session-1",
+        prompt: async () => {
+          for (let index = 1; index <= 6; index += 1) {
+            eventHandler?.({
+              type: "tool_start",
+              sessionId: "role-session-1",
+              tool: "Read File",
+              params: { path: `/repo/file-${index}.ts` },
+            });
+          }
+          return {
+            artifactKind: "developer.attempt",
+            payload: {
+              summary: "Agent-write inspected focused files.",
+              changedFiles: [],
+              verificationNotes: "No changes required.",
+            },
+          };
+        },
+        cancel: () => undefined,
+        onEvent: (handler) => {
+          eventHandler = handler as typeof eventHandler;
+          return () => {
+            eventHandler = undefined;
+          };
+        },
+      },
+      process: {
+        kill: async () => undefined,
+      },
+    });
+    const runner = createAcpRoleRunner({
+      connector,
+      onProgress: (event) => progress.push(event.type),
+    });
+
+    await expect(runner.run({
+      roleId: "developer",
+      issueId: "LIN-123",
+      runtime: {
+        id: "runtime-developer",
+        transport: "stdio",
+        command: ["agent-acp"],
+      },
+      assignment: {
+        roleId: "developer",
+        runtimeProfileId: "runtime-developer",
+      },
+      inputArtifacts: [{
+        id: "policy:LIN-123:agent-write",
+        kind: "execution.policy",
+        source: "system",
+        payload: {
+          mode: "agent_write",
+          fileWrites: "allowed",
+          commits: "forbidden",
+          shellCommands: "workspace",
+        },
+      }],
+    })).resolves.toMatchObject({
+      kind: "developer.attempt",
+    });
+    expect(progress).not.toContain("policy_violation");
+    expect(progress).toContain("artifact_parsed");
+  });
+
   it("parses artifact JSON from streamed ACP text events", async () => {
     let eventHandler: ((event: { type: "text_delta"; sessionId: string; delta: string }) => void) | undefined;
     const connector: AcpRuntimeConnector = async () => ({

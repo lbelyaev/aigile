@@ -39,7 +39,8 @@ describe("role prompt builder", () => {
     expect(prompt).toContain("\"acceptanceCriteria\": [");
     expect(prompt).toContain("\"verificationCommands\": [");
     expect(prompt).toContain("\"risks\": [");
-    expect(prompt).toContain("Read at most 5 files");
+    expect(prompt).toContain("In dry_run mode, read at most 5 files");
+    expect(prompt).toContain("In agent_write mode, keep file reads focused");
     expect(prompt).toContain("Execution policy artifacts are authoritative");
     expect(prompt).toContain("Do not edit files");
     expect(prompt).toContain("No Markdown");

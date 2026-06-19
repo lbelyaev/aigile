@@ -323,7 +323,8 @@ export const createAcpRoleRunner = (
         if (event.type === "tool_start") {
           options.onProgress?.({ type: "tool_start", ...progressBase(input), tool: event.tool });
           const command = toolCommand(event.tool, event.params);
-          if (executionPolicyMode(input) !== undefined && isBroadDiscoveryCommand(command)) {
+          const mode = executionPolicyMode(input);
+          if (mode !== undefined && isBroadDiscoveryCommand(command)) {
             policyViolation = { reason: "broad_discovery", detail: command };
             options.onProgress?.({
               type: "policy_violation",
@@ -333,7 +334,7 @@ export const createAcpRoleRunner = (
             });
             return;
           }
-          if (executionPolicyMode(input) !== undefined && isFileReadCommand(command)) {
+          if (mode === "dry_run" && isFileReadCommand(command)) {
             fileReadCount += 1;
             if (fileReadCount > 5 && policyViolation === undefined) {
               policyViolation = { reason: "file_read_budget", detail: `${fileReadCount}/5 ${command}` };
