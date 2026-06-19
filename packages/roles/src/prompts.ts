@@ -9,20 +9,26 @@ export interface BuildRolePromptInput {
 
 const DEFAULT_ROLE_INSTRUCTIONS: Record<string, string> = {
   architect: [
-    "Produce the Definition of Ready for the issue.",
+    "Produce the Definition of Ready for the issue as architect.plan.",
     "Define scope, non-goals, implementation plan, risks, and executable acceptance criteria.",
-    "Do not modify code.",
+    "Do not edit files. Read at most 5 files. Avoid shell commands unless a listed acceptance criterion requires them.",
   ].join(" "),
   developer: [
-    "Implement the approved plan and return an implementation artifact.",
+    "Implement the approved plan and return developer.attempt.",
     "Summarize changed files, verification expectations, and any unresolved issues.",
     "Do not claim verification passed unless a verifier artifact says so.",
   ].join(" "),
   checker: [
     "Review the plan, implementation artifact, and verification result.",
-    "Return a verdict of pass, changes_requested, or escalate with grounded reasons.",
-    "Do not merge or update source-of-truth systems directly.",
+    "Return checker.verdict with a verdict of pass, changes_requested, or escalate and grounded reasons.",
+    "Do not edit files, merge, or update source-of-truth systems directly.",
   ].join(" "),
+};
+
+const ARTIFACT_KIND_BY_ROLE: Record<string, string> = {
+  architect: "architect.plan",
+  developer: "developer.attempt",
+  checker: "checker.verdict",
 };
 
 export const getDefaultRoleInstruction = (roleId: string): string =>
@@ -31,16 +37,27 @@ export const getDefaultRoleInstruction = (roleId: string): string =>
     "Return a typed artifact for the workflow runner.",
   ].join(" ");
 
+const artifactKindForRole = (roleId: string): string =>
+  ARTIFACT_KIND_BY_ROLE[roleId] ?? `${roleId}.artifact`;
+
 export const buildRolePrompt = (input: BuildRolePromptInput): string => [
   `Role: ${input.roleId}`,
   `Issue: ${input.issueId}`,
   "",
+  "Execution limits:",
+  "- Stay focused on the supplied issue and artifacts.",
+  "- Read at most 5 files total unless the prompt explicitly says otherwise.",
+  "- Do not edit files unless this is the developer role and the plan requires it.",
+  "- Do not run broad repository discovery commands.",
+  "- No Markdown, no prose, no commentary outside the final JSON object.",
+  "",
   "Instructions:",
   input.instruction,
   "",
+  `Required artifactKind: ${artifactKindForRole(input.roleId)}`,
   "Return only valid JSON with this shape:",
   JSON.stringify({
-    artifactKind: `${input.roleId}.artifact`,
+    artifactKind: artifactKindForRole(input.roleId),
     payload: {},
   }),
   "",

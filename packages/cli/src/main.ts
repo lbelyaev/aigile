@@ -77,6 +77,9 @@ export const selectDemoMode = (args: readonly string[]): DemoMode =>
 export interface CliArgs {
   mode: DemoMode;
   issueKey?: string;
+  title?: string;
+  description?: string;
+  acceptanceCriteria?: string[];
   runtimeConfigPath?: string;
   repoPath?: string;
   worktreesPath?: string;
@@ -91,14 +94,31 @@ const optionValue = (args: readonly string[], name: string): string | undefined 
   return value;
 };
 
+const optionValues = (args: readonly string[], name: string): string[] => {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== name) continue;
+    const value = args[index + 1];
+    if (!value) throw new Error(`${name} requires a value`);
+    values.push(value);
+  }
+  return values;
+};
+
 export const parseCliArgs = (args: readonly string[]): CliArgs => {
   if (args[0] === "run") {
     const issueKey = args[1];
     if (!issueKey) throw new Error("run requires an issue key");
     const parsed: CliArgs = { mode: "run", issueKey };
+    const title = optionValue(args, "--title");
+    const description = optionValue(args, "--description");
+    const acceptanceCriteria = optionValues(args, "--acceptance");
     const runtimeConfigPath = optionValue(args, "--runtime-config");
     const repoPath = optionValue(args, "--repo");
     const worktreesPath = optionValue(args, "--worktrees");
+    if (title !== undefined) parsed.title = title;
+    if (description !== undefined) parsed.description = description;
+    if (acceptanceCriteria.length > 0) parsed.acceptanceCriteria = acceptanceCriteria;
     if (runtimeConfigPath !== undefined) parsed.runtimeConfigPath = runtimeConfigPath;
     if (repoPath !== undefined) parsed.repoPath = repoPath;
     if (worktreesPath !== undefined) parsed.worktreesPath = worktreesPath;
@@ -117,6 +137,9 @@ const main = async (): Promise<void> => {
     issue: {
       ...defaultIssue,
       key: args.issueKey ?? defaultIssue.key,
+      title: args.title ?? defaultIssue.title,
+      description: args.description ?? defaultIssue.description,
+      acceptanceCriteria: args.acceptanceCriteria ?? defaultIssue.acceptanceCriteria,
     },
     repoPath: args.repoPath ?? process.cwd(),
     worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,

@@ -76,4 +76,28 @@ describe("cli formatting", () => {
       dryRun: true,
     });
   });
+
+  it("parses concrete task fields for real runs", () => {
+    expect(parseCliArgs([
+      "run",
+      "LIN-456",
+      "--title",
+      "Bound ACP role runs",
+      "--description",
+      "Keep live agent hand tests focused.",
+      "--acceptance",
+      "Architect returns a plan without broad repo discovery",
+      "--acceptance",
+      "CLI streams role progress",
+    ])).toEqual({
+      mode: "run",
+      issueKey: "LIN-456",
+      title: "Bound ACP role runs",
+      description: "Keep live agent hand tests focused.",
+      acceptanceCriteria: [
+        "Architect returns a plan without broad repo discovery",
+        "CLI streams role progress",
+      ],
+    });
+  });
 });
