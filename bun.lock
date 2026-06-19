@@ -45,7 +45,9 @@
         "@aigile/adapters": "workspace:*",
         "@aigile/roles": "workspace:*",
         "@aigile/types": "workspace:*",
+        "@aigile/verifier": "workspace:*",
         "@aigile/workflow": "workspace:*",
+        "@aigile/workspace": "workspace:*",
       },
     },
     "packages/roles": {

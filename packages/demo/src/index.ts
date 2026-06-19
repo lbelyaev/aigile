@@ -3,6 +3,7 @@ export {
   runDemoIssue,
   runDemoIssueWithAcpRoles,
   runDemoIssueWithRoles,
+  runDemoIssueWithWorkspace,
 } from "./run.js";
 
 export type {
@@ -10,4 +11,5 @@ export type {
   DemoResult,
   DemoWithAcpRolesInput,
   DemoWithRolesInput,
+  DemoWorkspaceInput,
 } from "./run.js";

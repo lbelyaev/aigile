@@ -11,6 +11,8 @@
     "@aigile/roles": "workspace:*",
     "@aigile/types": "workspace:*",
     "@aigile/workflow": "workspace:*",
-    "@aigile/acp": "workspace:*"
+    "@aigile/acp": "workspace:*",
+    "@aigile/verifier": "workspace:*",
+    "@aigile/workspace": "workspace:*"
   }
 }

@@ -16,6 +16,8 @@ import {
   type RoleRuntimeRegistry,
 } from "@aigile/roles";
 import type { WorkflowArtifact, WorkflowEvent, WorkflowState } from "@aigile/types";
+import { createLocalVerifier } from "@aigile/verifier";
+import { createGitWorkspaceAdapter, type ExecCommand } from "@aigile/workspace";
 import {
   initialWorkflowSnapshot,
   transitionWorkflow,
@@ -29,10 +31,20 @@ export interface DemoIssueInput {
 export interface DemoWithRolesInput extends DemoIssueInput {
   registry: RoleRuntimeRegistry;
   runner: RoleRunner;
+  initialArtifacts?: WorkflowArtifact[];
+  verificationArtifact?: WorkflowArtifact;
+  beforeVerification?: (artifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact[]>;
 }
 
 export interface DemoWithAcpRolesInput extends DemoIssueInput {
   connector?: AcpRuntimeConnector;
+}
+
+export interface DemoWorkspaceInput extends DemoIssueInput {
+  repoPath: string;
+  worktreesPath: string;
+  baseBranch?: string;
+  exec?: ExecCommand;
 }
 
 export interface DemoResult {
@@ -62,6 +74,20 @@ const artifactByKind = (
   return artifact;
 };
 
+const workspaceToArtifact = (payload: unknown, issueKey: string): WorkflowArtifact => ({
+  id: `workspace:${issueKey}:worktree`,
+  kind: "workspace.issue_worktree",
+  source: "system",
+  payload,
+});
+
+const diffToArtifact = (summary: string, issueKey: string): WorkflowArtifact => ({
+  id: `workspace:${issueKey}:diff`,
+  kind: "workspace.diff",
+  source: "system",
+  payload: { summary },
+});
+
 const createDemoRegistry = (): RoleRuntimeRegistry => createRoleRuntimeRegistry({
   runtimes: [
     { id: "demo-architect", transport: "stdio", command: ["aigile-demo-acp"] },
@@ -79,7 +105,7 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
   const issueTracker = createFakeIssueTrackerAdapter([input.issue]);
   const codeHost = createFakeCodeHostAdapter();
   const issue = await issueTracker.getIssue(input.issue.key);
-  const artifacts: WorkflowArtifact[] = [issueToArtifact(issue)];
+  const artifacts: WorkflowArtifact[] = [issueToArtifact(issue), ...(input.initialArtifacts ?? [])];
   const timeline: string[] = [];
   let snapshot = initialWorkflowSnapshot(issue.key);
 
@@ -124,7 +150,11 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     artifactId: attempt.id,
   }, timeline);
 
-  const verification: WorkflowArtifact = {
+  if (input.beforeVerification) {
+    artifacts.push(...await input.beforeVerification(artifacts));
+  }
+
+  const verification: WorkflowArtifact = input.verificationArtifact ?? {
     id: `verifier:${issue.key}:local-check`,
     kind: "verification.result",
     source: "verifier",
@@ -278,3 +308,63 @@ export const runDemoIssueWithAcpRoles = async (
   registry: createDemoRegistry(),
   runner: createAcpRoleRunner({ connector: input.connector ?? createMockAcpConnector() }),
 });
+
+export const runDemoIssueWithWorkspace = async (
+  input: DemoWorkspaceInput,
+): Promise<DemoResult> => {
+  const workspaceOptions = {
+    repoPath: input.repoPath,
+    worktreesPath: input.worktreesPath,
+  };
+  const workspaceAdapter = createGitWorkspaceAdapter(input.exec === undefined
+    ? workspaceOptions
+    : { ...workspaceOptions, exec: input.exec });
+  const workspace = await workspaceAdapter.createIssueWorkspace({
+    issueKey: input.issue.key,
+    baseBranch: input.baseBranch ?? "main",
+  });
+  const verifier = createLocalVerifier(input.exec === undefined ? {} : { exec: input.exec });
+  const verificationArtifact = await verifier.verify({
+    issueKey: input.issue.key,
+    workspacePath: workspace.worktreePath,
+    commands: [["bun", "run", "check"]],
+  });
+
+  return runDemoIssueWithRoles({
+    issue: input.issue,
+    registry: createDemoRegistry(),
+    runner: createScriptedRoleRunner({
+      architect: {
+        artifactKind: "architect.plan",
+        payload: {
+          summary: `Plan for ${input.issue.key}: ${input.issue.title}`,
+          scope: ["local workspace"],
+          acceptanceCriteria: input.issue.acceptanceCriteria,
+          verificationCommands: ["bun run check"],
+          risks: [],
+        },
+      },
+      developer: {
+        artifactKind: "developer.attempt",
+        payload: {
+          summary: "Workspace implementation completed for local demo.",
+          changedFiles: ["packages/demo/src/run.ts"],
+          verificationNotes: "Verifier runs in the issue worktree.",
+        },
+      },
+      checker: {
+        artifactKind: "checker.verdict",
+        payload: {
+          verdict: "pass",
+          summary: "Checker accepts workspace demo artifacts.",
+          reasons: [],
+        },
+      },
+    }),
+    initialArtifacts: [workspaceToArtifact(workspace, input.issue.key)],
+    verificationArtifact,
+    beforeVerification: async () => [
+      diffToArtifact(await workspaceAdapter.diffSummary(workspace), input.issue.key),
+    ],
+  });
+};
