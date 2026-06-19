@@ -1,4 +1,4 @@
-import type { IssueRecord, IssueTrackerAdapter } from "./contracts.js";
+import type { IssueRecord, IssueTrackerAdapter, ReadyIssueSource } from "./contracts.js";
 
 export type LinearFetchGraphql = (
   query: string,
@@ -9,6 +9,16 @@ export type LinearFetchGraphql = (
 export interface LinearGraphqlIssueTrackerAdapterOptions {
   apiKey: string;
   endpoint?: string;
+  teamKey?: string;
+  fetchGraphql?: LinearFetchGraphql;
+}
+
+export interface LinearGraphqlReadyIssueSourceOptions {
+  apiKey: string;
+  teamKey: string;
+  readyStatus: string;
+  endpoint?: string;
+  first?: number;
   fetchGraphql?: LinearFetchGraphql;
 }
 
@@ -21,6 +31,24 @@ interface LinearIssueResponse {
     priority?: unknown;
     state?: { name?: unknown };
     comments?: { nodes?: Array<{ body?: unknown }> };
+  };
+}
+
+interface LinearIssuesResponse {
+  issues?: {
+    nodes?: unknown[];
+  };
+}
+
+interface LinearWorkflowStatesResponse {
+  workflowStates?: {
+    nodes?: Array<{ id?: unknown; name?: unknown }>;
+  };
+}
+
+interface LinearIssueIdResponse {
+  issue?: {
+    id?: unknown;
   };
 }
 
@@ -60,9 +88,7 @@ const asString = (value: unknown, field: string): string => {
   return value;
 };
 
-const toIssueRecord = (value: unknown, key: string): IssueRecord => {
-  const response = value as LinearIssueResponse;
-  const issue = response.issue;
+const toIssueRecordFromIssue = (issue: LinearIssueResponse["issue"], key: string): IssueRecord => {
   if (!issue) throw new Error(`Linear issue not found: ${key}`);
   const description = typeof issue.description === "string" ? issue.description : "";
   const record: IssueRecord = {
@@ -80,6 +106,22 @@ const toIssueRecord = (value: unknown, key: string): IssueRecord => {
   return record;
 };
 
+const toIssueRecord = (value: unknown, key: string): IssueRecord => {
+  const response = value as LinearIssueResponse;
+  return toIssueRecordFromIssue(response.issue, key);
+};
+
+const toIssueRecords = (value: unknown): IssueRecord[] => {
+  const response = value as LinearIssuesResponse;
+  return (response.issues?.nodes ?? []).map((issue) => toIssueRecordFromIssue(
+    issue as LinearIssueResponse["issue"],
+    "ready issue",
+  ));
+};
+
+const looksLikeUuid = (value: string): boolean =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
 export const createLinearGraphqlIssueTrackerAdapter = (
   options: LinearGraphqlIssueTrackerAdapterOptions,
 ): IssueTrackerAdapter => {
@@ -87,6 +129,35 @@ export const createLinearGraphqlIssueTrackerAdapter = (
   const fetchGraphql = options.fetchGraphql ?? defaultFetchGraphql;
   const request = (query: string, variables: Record<string, unknown>): Promise<unknown> =>
     fetchGraphql(query, variables, { apiKey: options.apiKey, endpoint });
+  const resolveIssueId = async (key: string): Promise<string> => {
+    if (options.teamKey === undefined || looksLikeUuid(key)) return key;
+    const response = await request(`
+      query IssueIdByKey($key: String!) {
+        issue(id: $key) { id }
+      }
+    `, { key });
+    const issueId = (response as LinearIssueIdResponse).issue?.id;
+    if (typeof issueId !== "string" || issueId.length === 0) {
+      throw new Error(`Linear issue not found: ${key}`);
+    }
+    return issueId;
+  };
+  const resolveWorkflowStateId = async (status: string): Promise<string> => {
+    if (options.teamKey === undefined || looksLikeUuid(status)) return status;
+    const response = await request(`
+      query WorkflowStateByName($teamKey: String!, $name: String!) {
+        workflowStates(filter: { team: { key: { eq: $teamKey } }, name: { eq: $name } }, first: 1) {
+          nodes { id name }
+        }
+      }
+    `, { teamKey: options.teamKey, name: status });
+    const nodes = (response as LinearWorkflowStatesResponse).workflowStates?.nodes ?? [];
+    const stateId = nodes[0]?.id;
+    if (typeof stateId !== "string" || stateId.length === 0) {
+      throw new Error(`Linear workflow state not found for team ${options.teamKey}: ${status}`);
+    }
+    return stateId;
+  };
 
   return {
     getIssue: async (key) => toIssueRecord(await request(`
@@ -103,18 +174,58 @@ export const createLinearGraphqlIssueTrackerAdapter = (
       }
     `, { key }), key),
     updateIssueStatus: async (key, status) => {
+      const stateId = await resolveWorkflowStateId(status);
+      const issueId = await resolveIssueId(key);
       await request(`
         mutation UpdateIssueStatus($key: String!, $status: String!) {
           issueUpdate(id: $key, input: { stateId: $status }) { success }
         }
-      `, { key, status });
+      `, { key: issueId, status: stateId });
     },
     appendIssueComment: async (key, body) => {
+      const issueId = await resolveIssueId(key);
       await request(`
         mutation CreateIssueComment($key: String!, $body: String!) {
           commentCreate(input: { issueId: $key, body: $body }) { success }
         }
-      `, { key, body });
+      `, { key: issueId, body });
     },
+  };
+};
+
+export const createLinearGraphqlReadyIssueSource = (
+  options: LinearGraphqlReadyIssueSourceOptions,
+): ReadyIssueSource => {
+  const endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
+  const fetchGraphql = options.fetchGraphql ?? defaultFetchGraphql;
+  const request = (query: string, variables: Record<string, unknown>): Promise<unknown> =>
+    fetchGraphql(query, variables, { apiKey: options.apiKey, endpoint });
+
+  return {
+    listReadyIssues: async () => toIssueRecords(await request(`
+      query ReadyIssues($teamKey: String!, $readyStatus: String!, $first: Int!) {
+        issues(
+          filter: {
+            team: { key: { eq: $teamKey } }
+            state: { name: { eq: $readyStatus } }
+          }
+          first: $first
+        ) {
+          nodes {
+            id
+            identifier
+            title
+            description
+            priority
+            state { name }
+            comments { nodes { body } }
+          }
+        }
+      }
+    `, {
+      teamKey: options.teamKey,
+      readyStatus: options.readyStatus,
+      first: options.first ?? 1,
+    })),
   };
 };

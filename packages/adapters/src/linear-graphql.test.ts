@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { createLinearGraphqlIssueTrackerAdapter } from "./index.js";
+import {
+  createLinearGraphqlIssueTrackerAdapter,
+  createLinearGraphqlReadyIssueSource,
+} from "./index.js";
 
 describe("Linear GraphQL issue tracker adapter", () => {
   it("fetches a Linear issue by key", async () => {
@@ -50,5 +53,72 @@ describe("Linear GraphQL issue tracker adapter", () => {
     expect(calls[0]!.variables).toEqual({ key: "LIN-123", status: "In Progress" });
     expect(calls[1]!.query).toContain("commentCreate");
     expect(calls[1]!.variables).toEqual({ key: "LIN-123", body: "Plan drafted" });
+  });
+
+  it("resolves Linear state names to ids before updating status", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const adapter = createLinearGraphqlIssueTrackerAdapter({
+      apiKey: "test-key",
+      teamKey: "ENG",
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-in-progress", name: "In Progress" }] } };
+        }
+        if (query.includes("IssueIdByKey")) {
+          return { issue: { id: "issue-id" } };
+        }
+        return {};
+      },
+    });
+
+    await adapter.updateIssueStatus("LIN-123", "In Progress");
+
+    expect(calls[0]!.query).toContain("WorkflowStateByName");
+    expect(calls[0]!.variables).toEqual({ teamKey: "ENG", name: "In Progress" });
+    expect(calls[1]!.query).toContain("IssueIdByKey");
+    expect(calls[1]!.variables).toEqual({ key: "LIN-123" });
+    expect(calls[2]!.query).toContain("issueUpdate");
+    expect(calls[2]!.variables).toEqual({ key: "issue-id", status: "state-in-progress" });
+  });
+
+  it("lists ready Linear issues by team key and state name", async () => {
+    const source = createLinearGraphqlReadyIssueSource({
+      apiKey: "test-key",
+      teamKey: "ENG",
+      readyStatus: "Ready for Aigile",
+      fetchGraphql: async (query, variables) => {
+        expect(query).toContain("ReadyIssues");
+        expect(variables).toEqual({
+          teamKey: "ENG",
+          readyStatus: "Ready for Aigile",
+          first: 1,
+        });
+        return {
+          issues: {
+            nodes: [{
+              id: "issue-id",
+              identifier: "LIN-900",
+              title: "Watcher skeleton",
+              description: "Acceptance:\n- Claim it",
+              priority: 1,
+              state: { name: "Ready for Aigile" },
+              comments: { nodes: [] },
+            }],
+          },
+        };
+      },
+    });
+
+    await expect(source.listReadyIssues()).resolves.toEqual([{
+      id: "issue-id",
+      key: "LIN-900",
+      title: "Watcher skeleton",
+      description: "Acceptance:\n- Claim it",
+      acceptanceCriteria: ["Claim it"],
+      priority: 1,
+      status: "Ready for Aigile",
+      comments: [],
+    }]);
   });
 });

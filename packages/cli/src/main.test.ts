@@ -7,6 +7,7 @@ import {
   formatDuration,
   parseGitHubRepoFromRemoteUrl,
   parseCliArgs,
+  runLinearWatchOnceCli,
   runWatchOnceCli,
   runRunModePreflight,
   runPublishPreflight,
@@ -465,6 +466,30 @@ describe("cli formatting", () => {
     });
   });
 
+  it("parses Linear watch-once arguments", () => {
+    expect(parseCliArgs([
+      "watch",
+      "--once",
+      "--linear",
+      "--linear-team",
+      "ENG",
+      "--ready-status",
+      "Ready for Aigile",
+      "--claim-status",
+      "In Progress",
+      "--linear-api-key-env",
+      "AIGILE_LINEAR_API_KEY",
+    ])).toEqual({
+      mode: "watch",
+      once: true,
+      linear: true,
+      linearTeam: "ENG",
+      readyStatus: "Ready for Aigile",
+      claimStatus: "In Progress",
+      linearApiKeyEnv: "AIGILE_LINEAR_API_KEY",
+    });
+  });
+
   it("rejects watch without an explicit once pass", () => {
     expect(() => parseCliArgs(["watch"])).toThrow(/requires --once/i);
   });
@@ -488,6 +513,70 @@ describe("cli formatting", () => {
     expect(output).toContain("Status: aigile:claimed");
     expect(output).toContain("Comment: Aigile claimed this issue for local processing.");
     expect(output).toContain("Agents: not started");
+  });
+
+  it("claims one ready Linear issue without starting agents", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+
+    const output = await runLinearWatchOnceCli({
+      apiKey: "test-key",
+      teamKey: "ENG",
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("ReadyIssues")) {
+          return {
+            issues: {
+              nodes: [{
+                id: "issue-id",
+                identifier: "LIN-900",
+                title: "Watcher skeleton",
+                description: "Acceptance:\n- Claim it",
+                state: { name: "Ready for Aigile" },
+                comments: { nodes: [] },
+              }],
+            },
+          };
+        }
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-in-progress", name: "In Progress" }] } };
+        }
+        if (query.includes("IssueIdByKey")) {
+          return { issue: { id: "issue-id" } };
+        }
+        if (query.includes("issueUpdate")) return {};
+        if (query.includes("commentCreate")) return {};
+        if (query.includes("IssueByKey")) {
+          return {
+            issue: {
+              id: "issue-id",
+              identifier: "LIN-900",
+              title: "Watcher skeleton",
+              description: "Acceptance:\n- Claim it",
+              state: { name: "In Progress" },
+              comments: { nodes: [{ body: "Aigile claimed this issue for local processing." }] },
+            },
+          };
+        }
+        throw new Error(`unexpected query: ${query}`);
+      },
+    });
+
+    expect(output).toContain("Aigile watch: once");
+    expect(output).toContain("Provider: linear");
+    expect(output).toContain("Team: ENG");
+    expect(output).toContain("Ready issues: 1");
+    expect(output).toContain("Claimed: LIN-900");
+    expect(output).toContain("Status: In Progress");
+    expect(output).toContain("Agents: not started");
+    expect(calls.map((call) => call.variables)).toEqual([
+      { teamKey: "ENG", readyStatus: "Ready for Aigile", first: 1 },
+      { teamKey: "ENG", name: "In Progress" },
+      { key: "LIN-900" },
+      { key: "issue-id", status: "state-in-progress" },
+      { key: "LIN-900" },
+      { key: "issue-id", body: "Aigile claimed this issue for local processing." },
+      { key: "LIN-900" },
+    ]);
   });
 
   it("infers GitHub repos from common remote URL forms", () => {

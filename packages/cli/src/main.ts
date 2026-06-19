@@ -5,6 +5,8 @@ import {
   createFakeIssueTrackerAdapter,
   createFakeReadyIssueSource,
   createGitHubCliCodeHostAdapter,
+  createLinearGraphqlIssueTrackerAdapter,
+  createLinearGraphqlReadyIssueSource,
 } from "@aigile/adapters";
 import { loadRuntimeConfigFromJson, runtimeConfigToRegistry } from "@aigile/config";
 import {
@@ -17,7 +19,7 @@ import {
   type DemoWorkspaceInput,
   type DemoResult,
 } from "@aigile/demo";
-import type { IssueRecord } from "@aigile/adapters";
+import type { IssueRecord, IssueTrackerAdapter, LinearFetchGraphql, ReadyIssueSource } from "@aigile/adapters";
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
 import { defaultClaimComment, watchOnce } from "@aigile/watch";
 import {
@@ -236,6 +238,9 @@ export interface CliArgs {
   once?: boolean;
   readyStatus?: string;
   claimStatus?: string;
+  linear?: boolean;
+  linearTeam?: string;
+  linearApiKeyEnv?: string;
 }
 
 export interface PublishPreflightInput {
@@ -397,31 +402,28 @@ export const runRunModePreflight = async (input: RunModePreflightInput): Promise
 };
 
 export interface WatchOnceCliInput {
-  issue: IssueRecord;
+  issue?: IssueRecord;
+  source?: ReadyIssueSource;
+  tracker?: IssueTrackerAdapter;
   readyStatus?: string;
   claimStatus?: string;
+  provider?: string;
+  team?: string;
 }
 
-export const runWatchOnceCli = async (input: WatchOnceCliInput): Promise<string> => {
-  const issue = {
-    ...input.issue,
-    status: input.readyStatus ?? "ready",
-  };
-  const tracker = createFakeIssueTrackerAdapter([issue]);
-  const watchInput = {
-    source: createFakeReadyIssueSource([issue], issue.status),
-    tracker,
-  };
-  const result = await watchOnce(input.claimStatus === undefined
-    ? watchInput
-    : { ...watchInput, claimStatus: input.claimStatus });
-
+const formatWatchOnceResult = async (
+  result: Awaited<ReturnType<typeof watchOnce>>,
+  tracker: IssueTrackerAdapter,
+  context: { provider?: string; team?: string } = {},
+): Promise<string> => {
   const claimedIssue = result.claimedIssue === undefined
     ? undefined
     : await tracker.getIssue(result.claimedIssue.key);
 
   return [
     "Aigile watch: once",
+    ...(context.provider === undefined ? [] : [`Provider: ${context.provider}`]),
+    ...(context.team === undefined ? [] : [`Team: ${context.team}`]),
     `Ready issues: ${result.readyCount}`,
     `Claimed: ${claimedIssue?.key ?? "none"}`,
     ...(claimedIssue === undefined ? [] : [
@@ -430,6 +432,60 @@ export const runWatchOnceCli = async (input: WatchOnceCliInput): Promise<string>
     ]),
     "Agents: not started",
   ].join("\n");
+};
+
+export const runWatchOnceCli = async (input: WatchOnceCliInput): Promise<string> => {
+  const issue = input.issue === undefined
+    ? undefined
+    : {
+      ...input.issue,
+      status: input.readyStatus ?? "ready",
+    };
+  const tracker = input.tracker ?? createFakeIssueTrackerAdapter(issue === undefined ? [] : [issue]);
+  const source = input.source ?? createFakeReadyIssueSource(issue === undefined ? [] : [issue], issue?.status ?? "ready");
+  const watchInput = { source, tracker };
+  const result = await watchOnce(input.claimStatus === undefined
+    ? watchInput
+    : { ...watchInput, claimStatus: input.claimStatus });
+
+  const context: { provider?: string; team?: string } = {};
+  if (input.provider !== undefined) context.provider = input.provider;
+  if (input.team !== undefined) context.team = input.team;
+  return formatWatchOnceResult(result, tracker, context);
+};
+
+export interface LinearWatchOnceCliInput {
+  apiKey: string;
+  teamKey: string;
+  readyStatus?: string;
+  claimStatus?: string;
+  fetchGraphql?: LinearFetchGraphql;
+}
+
+export const runLinearWatchOnceCli = async (input: LinearWatchOnceCliInput): Promise<string> => {
+  const fetchGraphql = input.fetchGraphql;
+  const trackerOptions = {
+    apiKey: input.apiKey,
+    teamKey: input.teamKey,
+  };
+  const sourceOptions = {
+    apiKey: input.apiKey,
+    teamKey: input.teamKey,
+    readyStatus: input.readyStatus ?? "Ready for Aigile",
+  };
+  const tracker = createLinearGraphqlIssueTrackerAdapter(fetchGraphql === undefined
+    ? trackerOptions
+    : { ...trackerOptions, fetchGraphql });
+  const source = createLinearGraphqlReadyIssueSource(fetchGraphql === undefined
+    ? sourceOptions
+    : { ...sourceOptions, fetchGraphql });
+  return runWatchOnceCli({
+    source,
+    tracker,
+    claimStatus: input.claimStatus ?? "In Progress",
+    provider: "linear",
+    team: input.teamKey,
+  });
 };
 
 export const createDryRunExec = (): ExecCommand => async (command, commandArgs, options) => {
@@ -474,12 +530,17 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     const acceptanceCriteria = optionValues(args, "--acceptance");
     const readyStatus = optionValue(args, "--ready-status");
     const claimStatus = optionValue(args, "--claim-status");
+    const linearTeam = optionValue(args, "--linear-team");
+    const linearApiKeyEnv = optionValue(args, "--linear-api-key-env");
     if (issueKey !== undefined) parsed.issueKey = issueKey;
     if (title !== undefined) parsed.title = title;
     if (description !== undefined) parsed.description = description;
     if (acceptanceCriteria.length > 0) parsed.acceptanceCriteria = acceptanceCriteria;
     if (readyStatus !== undefined) parsed.readyStatus = readyStatus;
     if (claimStatus !== undefined) parsed.claimStatus = claimStatus;
+    if (args.includes("--linear")) parsed.linear = true;
+    if (linearTeam !== undefined) parsed.linearTeam = linearTeam;
+    if (linearApiKeyEnv !== undefined) parsed.linearApiKeyEnv = linearApiKeyEnv;
     return parsed;
   }
   if (args[0] === "status") {
@@ -556,6 +617,21 @@ const main = async (): Promise<void> => {
     return;
   }
   if (args.mode === "watch") {
+    if (args.linear) {
+      if (args.linearTeam === undefined) throw new Error("watch --linear requires --linear-team");
+      const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
+      const apiKey = process.env[apiKeyEnv];
+      if (!apiKey) throw new Error(`watch --linear requires ${apiKeyEnv} to be set`);
+      const linearInput: LinearWatchOnceCliInput = {
+        apiKey,
+        teamKey: args.linearTeam,
+      };
+      if (args.readyStatus !== undefined) linearInput.readyStatus = args.readyStatus;
+      if (args.claimStatus !== undefined) linearInput.claimStatus = args.claimStatus;
+      const output = await runLinearWatchOnceCli(linearInput);
+      process.stdout.write(`${output}\n`);
+      return;
+    }
     const watchInput: WatchOnceCliInput = { issue: runInput.issue };
     if (args.readyStatus !== undefined) watchInput.readyStatus = args.readyStatus;
     if (args.claimStatus !== undefined) watchInput.claimStatus = args.claimStatus;
