@@ -87,12 +87,17 @@ const EXPECTED_ARTIFACT_KIND_BY_ROLE: Record<string, string> = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const hasDryRunPolicy = (input: RoleRunInput): boolean =>
-  input.inputArtifacts.some((artifact) =>
-    artifact.kind === "execution.policy"
-    && isRecord(artifact.payload)
-    && artifact.payload.mode === "dry_run"
-  );
+type ExecutionPolicyMode = "dry_run" | "agent_write";
+
+const executionPolicyMode = (input: RoleRunInput): ExecutionPolicyMode | undefined => {
+  for (const artifact of input.inputArtifacts) {
+    if (artifact.kind !== "execution.policy" || !isRecord(artifact.payload)) continue;
+    if (artifact.payload.mode === "dry_run" || artifact.payload.mode === "agent_write") {
+      return artifact.payload.mode;
+    }
+  }
+  return undefined;
+};
 
 const extractCommand = (request: AcpPermissionRequest): string => {
   try {
@@ -115,6 +120,11 @@ const isWriteLikePermission = (request: AcpPermissionRequest): boolean => {
   ].some((pattern) => pattern.test(command));
 };
 
+const isCommitLikePermission = (request: AcpPermissionRequest): boolean => {
+  const command = extractCommand(request).trim().toLowerCase();
+  return /^git\s+(add|commit|push|merge|rebase|reset)\b/.test(command);
+};
+
 const isReadOnlyPermission = (request: AcpPermissionRequest): boolean => {
   const command = extractCommand(request).trim().toLowerCase();
   return [
@@ -134,11 +144,23 @@ const isReadOnlyPermission = (request: AcpPermissionRequest): boolean => {
 const buildExecutionPolicyPermissionDecision = (
   input: RoleRunInput,
 ): ((request: AcpPermissionRequest) => PermissionDecision | undefined) | undefined => {
-  if (!hasDryRunPolicy(input)) return undefined;
+  const mode = executionPolicyMode(input);
+  if (mode === undefined) return undefined;
   return (request) => {
-    if (isWriteLikePermission(request)) return "reject_once";
-    if (request.tool.toLowerCase() === "bash" && isReadOnlyPermission(request)) return "allow_once";
-    return "reject_once";
+    if (mode === "dry_run") {
+      if (isWriteLikePermission(request)) return "reject_once";
+      if (request.tool.toLowerCase() === "bash" && isReadOnlyPermission(request)) return "allow_once";
+      return "reject_once";
+    }
+    if (isCommitLikePermission(request)) return "reject_once";
+    if (/(^|\s)(edit|write|multiedit|notebookedit)(\s|$)/.test(request.tool.toLowerCase())) {
+      return "allow_once";
+    }
+    if (request.tool.toLowerCase() === "bash") {
+      if (isWriteLikePermission(request)) return "reject_once";
+      return "allow_once";
+    }
+    return undefined;
   };
 };
 

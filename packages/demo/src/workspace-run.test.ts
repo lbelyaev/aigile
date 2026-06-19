@@ -36,6 +36,7 @@ describe("workspace-aware demo orchestration", () => {
     expect(result.artifacts.map((artifact) => artifact.kind)).toEqual([
       "linear.issue",
       "workspace.issue_worktree",
+      "execution.policy",
       "architect.plan",
       "developer.attempt",
       "workspace.diff",
@@ -46,6 +47,11 @@ describe("workspace-aware demo orchestration", () => {
     expect(result.artifacts.find((artifact) => artifact.kind === "workspace.issue_worktree")?.payload).toMatchObject({
       branchName: "aigile/LIN-123",
       worktreePath: "/repo/aigile/.worktrees/LIN-123",
+    });
+    expect(result.artifacts.find((artifact) => artifact.kind === "execution.policy")?.payload).toMatchObject({
+      mode: "agent_write",
+      fileWrites: "allowed",
+      commits: "forbidden",
     });
   });
 

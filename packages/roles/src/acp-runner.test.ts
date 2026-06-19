@@ -151,6 +151,48 @@ describe("ACP role runner", () => {
     })).toBe("allow_once");
   });
 
+  it("allows edits but blocks commits for agent-write execution policy", () => {
+    const connectInput = buildAcpRuntimeConnectInput({
+      roleId: "developer",
+      issueId: "LIN-123",
+      runtime: {
+        id: "runtime-developer",
+        transport: "stdio",
+        command: ["agent-acp"],
+      },
+      assignment: {
+        roleId: "developer",
+        runtimeProfileId: "runtime-developer",
+      },
+      inputArtifacts: [{
+        id: "policy:LIN-123:agent-write",
+        kind: "execution.policy",
+        source: "system",
+        payload: {
+          mode: "agent_write",
+          fileWrites: "allowed",
+          commits: "forbidden",
+          shellCommands: "workspace",
+        },
+      }],
+    });
+
+    expect(connectInput.decidePermission?.({
+      sessionId: "LIN-123:developer",
+      requestId: "tool-1",
+      tool: "Edit",
+      description: "/repo/README.md",
+      options: [],
+    })).toBe("allow_once");
+    expect(connectInput.decidePermission?.({
+      sessionId: "LIN-123:developer",
+      requestId: "tool-2",
+      tool: "Bash",
+      description: JSON.stringify({ command: "git commit -m test" }),
+      options: [],
+    })).toBe("reject_once");
+  });
+
   it("runs a role through an ACP runtime and returns an artifact", async () => {
     const prompts: string[] = [];
     let killed = false;

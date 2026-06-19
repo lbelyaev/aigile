@@ -126,11 +126,11 @@ const diffToArtifact = (summary: string, issueKey: string): WorkflowArtifact => 
   payload: { summary },
 });
 
-const dryRunPolicyToArtifact = (issueKey: string): WorkflowArtifact => ({
-  id: `policy:${issueKey}:dry-run`,
+const executionPolicyToArtifact = (issueKey: string, dryRun: boolean): WorkflowArtifact => ({
+  id: `policy:${issueKey}:${dryRun ? "dry-run" : "agent-write"}`,
   kind: "execution.policy",
   source: "system",
-  payload: {
+  payload: dryRun ? {
     mode: "dry_run",
     fileWrites: "forbidden",
     commits: "forbidden",
@@ -140,6 +140,18 @@ const dryRunPolicyToArtifact = (issueKey: string): WorkflowArtifact => ({
       "Do not create commits.",
       "Do not push branches or open pull requests.",
       "Return the required role artifact describing the intended work or review.",
+    ],
+  } : {
+    mode: "agent_write",
+    fileWrites: "allowed",
+    commits: "forbidden",
+    pushes: "forbidden",
+    shellCommands: "workspace",
+    instructions: [
+      "You may edit files in the issue worktree to implement the approved plan.",
+      "Do not create commits.",
+      "Do not push branches or open pull requests.",
+      "Aigile will commit, push, and open the pull request after verification and checker approval.",
     ],
   },
 });
@@ -426,7 +438,7 @@ export const runDemoIssueWithWorkspace = async (
     }),
     initialArtifacts: [
       workspaceToArtifact(workspace, input.issue.key),
-      ...(input.dryRun ? [dryRunPolicyToArtifact(input.issue.key)] : []),
+      executionPolicyToArtifact(input.issue.key, input.dryRun === true),
     ],
     verificationArtifact,
     beforeVerification: async () => [
