@@ -36,6 +36,7 @@ import {
 
 export interface DemoIssueInput {
   issue: IssueRecord;
+  now?: () => number;
 }
 
 export interface DemoWithRolesInput extends DemoIssueInput {
@@ -90,16 +91,26 @@ export interface DemoResult {
   finalState: WorkflowState;
   pullRequest: PullRequestRecord;
   artifacts: WorkflowArtifact[];
-  timeline: string[];
+  timeline: DemoTimelineEntry[];
+  durationMs: number;
+}
+
+export interface DemoTimelineEntry {
+  label: string;
+  elapsedMs: number;
 }
 
 const pushTransition = (
   snapshot: WorkflowSnapshot,
   event: WorkflowEvent,
-  timeline: string[],
+  timeline: DemoTimelineEntry[],
+  elapsedSinceLast: () => number,
 ): WorkflowSnapshot => {
   const result = transitionWorkflow(snapshot, event);
-  timeline.push(`${event.type} -> ${result.snapshot.state}`);
+  timeline.push({
+    label: `${event.type} -> ${result.snapshot.state}`,
+    elapsedMs: elapsedSinceLast(),
+  });
   return result.snapshot;
 };
 
@@ -187,14 +198,23 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
   const codeHost = input.codeHost ?? createFakeCodeHostAdapter();
   const issue = await issueTracker.getIssue(input.issue.key);
   const artifacts: WorkflowArtifact[] = [issueToArtifact(issue), ...(input.initialArtifacts ?? [])];
-  const timeline: string[] = [];
+  const now = input.now ?? Date.now;
+  const startedAt = now();
+  let lastTimelineAt = startedAt;
+  const elapsedSinceLast = (): number => {
+    const current = now();
+    const elapsedMs = Math.max(0, current - lastTimelineAt);
+    lastTimelineAt = current;
+    return elapsedMs;
+  };
+  const timeline: DemoTimelineEntry[] = [];
   let snapshot = initialWorkflowSnapshot(issue.key);
 
   snapshot = pushTransition(snapshot, {
     type: "issue_received",
     issueId: issue.key,
     artifactId: artifacts[0]!.id,
-  }, timeline);
+  }, timeline, elapsedSinceLast);
 
   await issueTracker.updateIssueStatus(issue.key, "planning");
   const plan = await runAssignedRole({
@@ -209,12 +229,12 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     type: "plan_drafted",
     issueId: issue.key,
     artifactId: plan.id,
-  }, timeline);
+  }, timeline, elapsedSinceLast);
 
   snapshot = pushTransition(snapshot, {
     type: "plan_approved",
     issueId: issue.key,
-  }, timeline);
+  }, timeline, elapsedSinceLast);
 
   await issueTracker.updateIssueStatus(issue.key, "developing");
   const attempt = await runAssignedRole({
@@ -229,7 +249,7 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     type: "developer_finished",
     issueId: issue.key,
     artifactId: attempt.id,
-  }, timeline);
+  }, timeline, elapsedSinceLast);
 
   if (input.beforeVerification) {
     artifacts.push(...await input.beforeVerification(artifacts));
@@ -250,7 +270,7 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     type: "verification_passed",
     issueId: issue.key,
     artifactId: verification.id,
-  }, timeline);
+  }, timeline, elapsedSinceLast);
 
   const verdict = await runAssignedRole({
     roleId: "checker",
@@ -264,7 +284,7 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     type: "checker_passed",
     issueId: issue.key,
     artifactId: verdict.id,
-  }, timeline);
+  }, timeline, elapsedSinceLast);
 
   artifactByKind(artifacts, "developer.attempt");
   await input.beforePullRequest?.(artifacts);
@@ -297,7 +317,7 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     type: "merge_completed",
     issueId: issue.key,
     artifactId: pullRequestArtifact.id,
-  }, timeline);
+  }, timeline, elapsedSinceLast);
   await issueTracker.updateIssueStatus(issue.key, "merged");
 
   return {
@@ -306,6 +326,7 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     pullRequest: pullRequestArtifact.payload,
     artifacts,
     timeline,
+    durationMs: timeline.reduce((total, entry) => total + entry.elapsedMs, 0),
   };
 };
 
@@ -391,11 +412,15 @@ export const runDemoIssue = async (input: DemoIssueInput): Promise<DemoResult> =
 
 export const runDemoIssueWithAcpRoles = async (
   input: DemoWithAcpRolesInput,
-): Promise<DemoResult> => runDemoIssueWithRoles({
-  issue: input.issue,
-  registry: createDemoRegistry(),
-  runner: createAcpRoleRunner({ connector: input.connector ?? createMockAcpConnector() }),
-});
+): Promise<DemoResult> => {
+  const roleInput: DemoWithRolesInput = {
+    issue: input.issue,
+    registry: createDemoRegistry(),
+    runner: createAcpRoleRunner({ connector: input.connector ?? createMockAcpConnector() }),
+  };
+  if (input.now !== undefined) roleInput.now = input.now;
+  return runDemoIssueWithRoles(roleInput);
+};
 
 export const runDemoIssueWithWorkspace = async (
   input: DemoWorkspaceInput,
@@ -458,6 +483,7 @@ export const runDemoIssueWithWorkspace = async (
       diffToArtifact(await workspaceAdapter.diffSummary(workspace), input.issue.key),
     ],
   };
+  if (input.now !== undefined) roleInput.now = input.now;
   if (input.codeHost !== undefined) roleInput.codeHost = input.codeHost;
   if (input.pullRequestTarget !== undefined) roleInput.pullRequestTarget = input.pullRequestTarget;
   if (input.publish) {
@@ -476,41 +502,45 @@ export const runDemoIssueWithWorkspace = async (
 
 export const runDemoIssueWithGitHub = async (
   input: DemoGitHubInput,
-): Promise<DemoResult> => runDemoIssueWithRoles({
-  issue: input.issue,
-  registry: createDemoRegistry(),
-  runner: createScriptedRoleRunner({
-    architect: {
-      artifactKind: "architect.plan",
-      payload: {
-        summary: `Plan for ${input.issue.key}: ${input.issue.title}`,
-        scope: ["github demo"],
-        acceptanceCriteria: input.issue.acceptanceCriteria,
-        verificationCommands: ["bun run check"],
-        risks: [],
+): Promise<DemoResult> => {
+  const roleInput: DemoWithRolesInput = {
+    issue: input.issue,
+    registry: createDemoRegistry(),
+    runner: createScriptedRoleRunner({
+      architect: {
+        artifactKind: "architect.plan",
+        payload: {
+          summary: `Plan for ${input.issue.key}: ${input.issue.title}`,
+          scope: ["github demo"],
+          acceptanceCriteria: input.issue.acceptanceCriteria,
+          verificationCommands: ["bun run check"],
+          risks: [],
+        },
       },
-    },
-    developer: {
-      artifactKind: "developer.attempt",
-      payload: {
-        summary: "GitHub demo implementation completed.",
-        changedFiles: ["packages/demo/src/run.ts"],
-        verificationNotes: "Verifier result is represented as PR feedback.",
+      developer: {
+        artifactKind: "developer.attempt",
+        payload: {
+          summary: "GitHub demo implementation completed.",
+          changedFiles: ["packages/demo/src/run.ts"],
+          verificationNotes: "Verifier result is represented as PR feedback.",
+        },
       },
-    },
-    checker: {
-      artifactKind: "checker.verdict",
-      payload: {
-        verdict: "pass",
-        summary: "Checker accepts GitHub demo artifacts.",
-        reasons: [],
+      checker: {
+        artifactKind: "checker.verdict",
+        payload: {
+          verdict: "pass",
+          summary: "Checker accepts GitHub demo artifacts.",
+          reasons: [],
+        },
       },
-    },
-  }),
-  codeHost: createGitHubCliCodeHostAdapter(input.cwd === undefined
-    ? { exec: input.ghExec }
-    : { exec: input.ghExec, cwd: input.cwd }),
-});
+    }),
+    codeHost: createGitHubCliCodeHostAdapter(input.cwd === undefined
+      ? { exec: input.ghExec }
+      : { exec: input.ghExec, cwd: input.cwd }),
+  };
+  if (input.now !== undefined) roleInput.now = input.now;
+  return runDemoIssueWithRoles(roleInput);
+};
 
 export const runDemoIssueFromLinear = async (
   input: DemoLinearInput,

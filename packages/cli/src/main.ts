@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
+import { formatDistanceStrict } from "date-fns";
 import { createGitHubCliCodeHostAdapter } from "@aigile/adapters";
 import { loadRuntimeConfigFromJson, runtimeConfigToRegistry } from "@aigile/config";
 import {
@@ -42,6 +43,11 @@ const executionPolicyMode = (result: DemoResult): string | undefined => {
   return typeof mode === "string" && mode.length > 0 ? mode : undefined;
 };
 
+export const formatDuration = (durationMs: number): string => {
+  const boundedMs = Math.max(0, Math.round(durationMs));
+  return formatDistanceStrict(0, boundedMs, { roundingMethod: "round" });
+};
+
 export const formatDemoResult = (result: DemoResult): string => {
   const mode = executionPolicyMode(result);
   const isDryRun = mode === "dry_run";
@@ -51,9 +57,11 @@ export const formatDemoResult = (result: DemoResult): string => {
     `${isDryRun ? "Workflow state" : "Final state"}: ${result.finalState}`,
     ...(isDryRun ? ["External side effects: none (workspace, GitHub, and source-of-truth updates simulated)"] : []),
     `Pull request: ${isDryRun ? "simulated " : ""}${result.pullRequest.url}`,
+    `Duration: ${formatDuration(result.durationMs)}`,
+    "Token usage: unavailable",
     "",
     "Timeline:",
-    ...result.timeline.map((entry) => `- ${entry}`),
+    ...result.timeline.map((entry) => `- ${entry.label} (+${formatDuration(entry.elapsedMs)})`),
     "",
     "Artifacts:",
     ...result.artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.id}`),

@@ -3,6 +3,7 @@ import {
   createDryRunExec,
   formatAcpRoleProgress,
   formatDemoResult,
+  formatDuration,
   parseGitHubRepoFromRemoteUrl,
   parseCliArgs,
   runRunModePreflight,
@@ -29,7 +30,11 @@ describe("cli formatting", () => {
         checks: [],
       },
       artifacts: [],
-      timeline: ["issue_received -> planning", "merge_completed -> merged"],
+      timeline: [
+        { label: "issue_received -> planning", elapsedMs: 0 },
+        { label: "merge_completed -> merged", elapsedMs: 1250 },
+      ],
+      durationMs: 1250,
     })).toContain("Final state: merged");
   });
 
@@ -61,7 +66,11 @@ describe("cli formatting", () => {
           shellCommands: "read_only",
         },
       }],
-      timeline: ["issue_received -> planning", "merge_completed -> merged"],
+      timeline: [
+        { label: "issue_received -> planning", elapsedMs: 0 },
+        { label: "merge_completed -> merged", elapsedMs: 61_200 },
+      ],
+      durationMs: 61_200,
     });
 
     expect(output).toContain("Mode: dry_run (simulated)");
@@ -69,6 +78,47 @@ describe("cli formatting", () => {
     expect(output).toContain("External side effects: none (workspace, GitHub, and source-of-truth updates simulated)");
     expect(output).toContain("Pull request: simulated https://github.local/aigile/aigile/pull/1");
     expect(output).not.toContain("Final state: merged");
+  });
+
+  it("formats timeline durations and unavailable token usage", () => {
+    const output = formatDemoResult({
+      issueKey: "LIN-123",
+      finalState: "merged",
+      pullRequest: {
+        id: "aigile/aigile#1",
+        number: 1,
+        url: "https://github.local/aigile/aigile/pull/1",
+        owner: "aigile",
+        repo: "aigile",
+        branch: "aigile/LIN-123",
+        baseBranch: "main",
+        title: "LIN-123 Timed run",
+        body: "Demo PR",
+        comments: [],
+        checks: [],
+      },
+      artifacts: [],
+      timeline: [
+        { label: "issue_received -> planning", elapsedMs: 0 },
+        { label: "plan_drafted -> awaiting_plan_approval", elapsedMs: 42_100 },
+        { label: "merge_completed -> merged", elapsedMs: 1_250 },
+      ],
+      durationMs: 43_350,
+    });
+
+    expect(output).toContain("- issue_received -> planning (+0 seconds)");
+    expect(output).toContain("- plan_drafted -> awaiting_plan_approval (+42 seconds)");
+    expect(output).toContain("- merge_completed -> merged (+1 second)");
+    expect(output).toContain("Duration: 43 seconds");
+    expect(output).toContain("Token usage: unavailable");
+  });
+
+  it("humanizes durations for operator output", () => {
+    expect(formatDuration(0)).toBe("0 seconds");
+    expect(formatDuration(999)).toBe("1 second");
+    expect(formatDuration(1_250)).toBe("1 second");
+    expect(formatDuration(42_100)).toBe("42 seconds");
+    expect(formatDuration(61_200)).toBe("1 minute");
   });
 
   it("formats ACP role progress for hand testing", () => {
