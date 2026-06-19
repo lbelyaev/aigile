@@ -14,7 +14,8 @@
     "demo:agents": "bun run packages/cli/src/main.ts demo:agents",
     "demo:workspace": "bun run packages/cli/src/main.ts demo:workspace",
     "demo:github": "bun run packages/cli/src/main.ts demo:github",
-    "demo:linear": "bun run packages/cli/src/main.ts demo:linear"
+    "demo:linear": "bun run packages/cli/src/main.ts demo:linear",
+    "restate:service": "bun run packages/restate/src/main.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.2.21",

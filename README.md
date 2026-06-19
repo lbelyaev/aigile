@@ -11,6 +11,27 @@ bun install
 bun run check
 ```
 
+## Hand-Test Commands
+
+```bash
+bun run demo
+bun run demo:agents
+bun run demo:workspace
+bun run demo:github
+bun run demo:linear
+bun run packages/cli/src/main.ts run LIN-123 --repo /tmp/aigile-demo-repo --worktrees /tmp/aigile-demo-repo/.worktrees --dry-run
+```
+
+## Restate
+
+The workflow rules remain in pure TypeScript. The Restate package exposes a service scaffold:
+
+```bash
+bun run restate:service
+```
+
+The service wrapper is ready to be registered with a local Restate server once the server/runtime is installed for the target environment.
+
 ## Architecture Bias
 
 - Roles are stable: architect, developer, checker, verifier.
