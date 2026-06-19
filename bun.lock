@@ -67,6 +67,10 @@
         "@aigile/types": "workspace:*",
       },
     },
+    "packages/workspace": {
+      "name": "@aigile/workspace",
+      "version": "0.0.0",
+    },
   },
   "packages": {
     "@aigile/acp": ["@aigile/acp@workspace:packages/acp"],
@@ -84,6 +88,8 @@
     "@aigile/types": ["@aigile/types@workspace:packages/types"],
 
     "@aigile/workflow": ["@aigile/workflow@workspace:packages/workflow"],
+
+    "@aigile/workspace": ["@aigile/workspace@workspace:packages/workspace"],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 
