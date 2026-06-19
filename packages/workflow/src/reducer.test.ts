@@ -26,14 +26,7 @@ describe("workflow reducer", () => {
       issueId,
       state: "merged",
       developerAttempts: 1,
-      artifactIds: [
-        "linear-issue",
-        "plan-1",
-        "attempt-1",
-        "verify-1",
-        "verdict-1",
-        "pr-1",
-      ],
+      artifactIds: ["linear-issue", "plan-1", "attempt-1", "verify-1", "verdict-1", "pr-1"],
     });
     expect(result.commandLog.map(commandTypes)).toEqual([
       ["start_architect_plan"],
@@ -47,17 +40,21 @@ describe("workflow reducer", () => {
   });
 
   it("rejects events for the wrong issue", () => {
-    expect(() => transitionWorkflow(initialWorkflowSnapshot("LIN-123"), {
-      type: "issue_received",
-      issueId: "LIN-999",
-    })).toThrow(/does not match workflow issue/i);
+    expect(() =>
+      transitionWorkflow(initialWorkflowSnapshot("LIN-123"), {
+        type: "issue_received",
+        issueId: "LIN-999",
+      }),
+    ).toThrow(/does not match workflow issue/i);
   });
 
   it("rejects illegal transitions", () => {
-    expect(() => transitionWorkflow(initialWorkflowSnapshot("LIN-123"), {
-      type: "plan_approved",
-      issueId: "LIN-123",
-    })).toThrow(/illegal transition/i);
+    expect(() =>
+      transitionWorkflow(initialWorkflowSnapshot("LIN-123"), {
+        type: "plan_approved",
+        issueId: "LIN-123",
+      }),
+    ).toThrow(/illegal transition/i);
   });
 
   it("loops verification failures back to development until the attempt cap is reached", () => {
@@ -69,11 +66,15 @@ describe("workflow reducer", () => {
       { type: "developer_finished", issueId },
     ]).snapshot;
 
-    const firstFailure = transitionWorkflow(started, {
-      type: "verification_failed",
-      issueId,
-      artifactId: "verify-failed-1",
-    }, { maxDeveloperAttempts: 2 });
+    const firstFailure = transitionWorkflow(
+      started,
+      {
+        type: "verification_failed",
+        issueId,
+        artifactId: "verify-failed-1",
+      },
+      { maxDeveloperAttempts: 2 },
+    );
 
     expect(firstFailure.snapshot.state).toBe("developing");
     expect(firstFailure.snapshot.developerAttempts).toBe(2);
@@ -85,11 +86,15 @@ describe("workflow reducer", () => {
       artifactId: "attempt-2",
     });
 
-    const secondFailure = transitionWorkflow(secondVerification.snapshot, {
-      type: "verification_failed",
-      issueId,
-      artifactId: "verify-failed-2",
-    }, { maxDeveloperAttempts: 2 });
+    const secondFailure = transitionWorkflow(
+      secondVerification.snapshot,
+      {
+        type: "verification_failed",
+        issueId,
+        artifactId: "verify-failed-2",
+      },
+      { maxDeveloperAttempts: 2 },
+    );
 
     expect(secondFailure.snapshot.state).toBe("escalated");
     expect(secondFailure.snapshot.developerAttempts).toBe(2);
@@ -136,5 +141,28 @@ describe("workflow reducer", () => {
     expect(result.snapshot.state).toBe("satisfied");
     expect(result.snapshot.artifactIds).toContain("verdict-pass");
     expect(commandTypes(result.commands)).toEqual(["sync_sources_of_truth"]);
+  });
+
+  it("routes publish failures from merge-ready to human attention", () => {
+    const issueId = "LIN-123";
+    const mergeReady = replayWorkflow(initialWorkflowSnapshot(issueId), [
+      { type: "issue_received", issueId },
+      { type: "plan_drafted", issueId },
+      { type: "plan_approved", issueId },
+      { type: "developer_finished", issueId },
+      { type: "verification_passed", issueId },
+      { type: "checker_passed", issueId },
+    ]).snapshot;
+
+    const result = transitionWorkflow(mergeReady, {
+      type: "publish_failed",
+      issueId,
+      artifactId: "pr-1",
+      reason: "gh pr comment failed: 401 Unauthorized",
+    });
+
+    expect(result.snapshot.state).toBe("escalated");
+    expect(result.snapshot.artifactIds).toContain("pr-1");
+    expect(commandTypes(result.commands)).toEqual(["request_human_attention"]);
   });
 });

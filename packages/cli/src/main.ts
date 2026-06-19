@@ -22,7 +22,13 @@ import {
   type DemoResult,
   type PullRequestTarget,
 } from "@aigile/demo";
-import type { CodeHostAdapter, IssueRecord, IssueTrackerAdapter, LinearFetchGraphql, ReadyIssueSource } from "@aigile/adapters";
+import type {
+  CodeHostAdapter,
+  IssueRecord,
+  IssueTrackerAdapter,
+  LinearFetchGraphql,
+  ReadyIssueSource,
+} from "@aigile/adapters";
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
 import { isArchitectPlanPayload, type WorkflowArtifact } from "@aigile/types";
 import { defaultClaimComment, watchLoop, watchOnce, type WatchLoopEvent } from "@aigile/watch";
@@ -53,7 +59,12 @@ const defaultIssue: IssueRecord = {
 
 const executionPolicyMode = (result: DemoResult): string | undefined => {
   const policy = result.artifacts.find((artifact) => artifact.kind === "execution.policy");
-  if (!policy || typeof policy.payload !== "object" || policy.payload === null || Array.isArray(policy.payload)) {
+  if (
+    !policy ||
+    typeof policy.payload !== "object" ||
+    policy.payload === null ||
+    Array.isArray(policy.payload)
+  ) {
     return undefined;
   }
   const mode = (policy.payload as { mode?: unknown }).mode;
@@ -95,8 +106,16 @@ export const formatDemoResult = (result: DemoResult): string => {
     `Aigile demo run: ${result.issueKey}`,
     ...(mode === undefined ? [] : [`Mode: ${isDryRun ? "dry_run (simulated)" : mode}`]),
     `${isDryRun ? "Workflow state" : "Final state"}: ${result.finalState}`,
-    ...(isDryRun ? ["External side effects: none (workspace, GitHub, and source-of-truth updates simulated)"] : []),
+    ...(isDryRun
+      ? ["External side effects: none (workspace, GitHub, and source-of-truth updates simulated)"]
+      : []),
     `Pull request: ${result.pullRequest === undefined ? "none" : `${isDryRun ? "simulated " : ""}${result.pullRequest.url}`}`,
+    ...(result.publicationFailure === undefined
+      ? []
+      : [
+          `Publication failure: ${result.publicationFailure.operation}`,
+          `Publication detail: ${result.publicationFailure.message}`,
+        ]),
     `Duration: ${formatDuration(result.durationMs)}`,
     `Token usage: ${formatTokenUsage(result)}`,
     "",
@@ -142,8 +161,9 @@ export interface AcpRoleProgressFormatterOptions {
   textFlushThreshold?: number;
 }
 
-const progressKey = (event: Pick<AcpRoleProgressEvent, "issueId" | "roleId" | "runtimeId">): string =>
-  `${event.issueId}\0${event.roleId}\0${event.runtimeId}`;
+const progressKey = (
+  event: Pick<AcpRoleProgressEvent, "issueId" | "roleId" | "runtimeId">,
+): string => `${event.issueId}\0${event.roleId}\0${event.runtimeId}`;
 
 const formatBufferedText = (
   event: Pick<AcpRoleProgressEvent, "issueId" | "roleId">,
@@ -172,10 +192,9 @@ export const createAcpRoleProgressFormatter = (
     format: (event) => {
       const key = progressKey(event);
       if (event.type !== "text_delta") {
-        return [
-          ...flushKey(key),
-          formatAcpRoleProgress(event),
-        ].filter((line) => line.trim().length > 0);
+        return [...flushKey(key), formatAcpRoleProgress(event)].filter(
+          (line) => line.trim().length > 0,
+        );
       }
 
       const existing = buffers.get(key)?.text ?? "";
@@ -210,7 +229,15 @@ export const createAcpRoleProgressFormatter = (
   };
 };
 
-export type DemoMode = "scripted" | "agents" | "workspace" | "github" | "linear" | "run" | "status" | "watch";
+export type DemoMode =
+  | "scripted"
+  | "agents"
+  | "workspace"
+  | "github"
+  | "linear"
+  | "run"
+  | "status"
+  | "watch";
 
 export const selectDemoMode = (args: readonly string[]): DemoMode =>
   args.includes("demo:agents") || args.includes("--agents")
@@ -265,7 +292,9 @@ export interface PublishPreflightResult {
 
 const assertPreflightSuccess = (result: ExecResult, operation: string): void => {
   if (result.exitCode !== 0) {
-    throw new Error(`publish preflight ${operation} failed (${result.exitCode}): ${result.stderr || result.stdout}`);
+    throw new Error(
+      `publish preflight ${operation} failed (${result.exitCode}): ${result.stderr || result.stdout}`,
+    );
   }
 };
 
@@ -283,22 +312,25 @@ const resolveGitHubRepo = (explicitRepo: string | undefined, remoteUrl: string):
   if (explicitRepo !== undefined) return explicitRepo;
   const inferredRepo = parseGitHubRepoFromRemoteUrl(remoteUrl);
   if (!inferredRepo) {
-    throw new Error("--publish requires --github-repo owner/repo when the git remote is not a GitHub URL");
+    throw new Error(
+      "--publish requires --github-repo owner/repo when the git remote is not a GitHub URL",
+    );
   }
   return inferredRepo;
 };
 
-export const runPublishPreflight = async (input: PublishPreflightInput): Promise<PublishPreflightResult> => {
+export const runPublishPreflight = async (
+  input: PublishPreflightInput,
+): Promise<PublishPreflightResult> => {
   const exec = input.exec ?? defaultExecCommand;
   assertPreflightSuccess(
     await exec("gh", ["auth", "status"], { cwd: input.repoPath }),
     "gh auth status",
   );
-  const remoteUrlResult = await exec("git", ["remote", "get-url", input.remote], { cwd: input.repoPath });
-  assertPreflightSuccess(
-    remoteUrlResult,
-    `git remote get-url ${input.remote}`,
-  );
+  const remoteUrlResult = await exec("git", ["remote", "get-url", input.remote], {
+    cwd: input.repoPath,
+  });
+  assertPreflightSuccess(remoteUrlResult, `git remote get-url ${input.remote}`);
   const remoteUrl = remoteUrlResult.stdout.trim();
   const githubRepo = resolveGitHubRepo(input.githubRepo, remoteUrl);
   assertPreflightSuccess(
@@ -340,12 +372,10 @@ const workspaceStateLabel = (status: IssueWorkspaceStatus): string => {
 };
 
 export const formatIssueWorkspaceStatus = (status: IssueWorkspaceStatus): string => {
-  const changedFiles = status.changedFiles.length === 0
-    ? ["Changed files: none"]
-    : [
-      "Changed files:",
-      ...status.changedFiles.map((line) => `- ${line.trimStart()}`),
-    ];
+  const changedFiles =
+    status.changedFiles.length === 0
+      ? ["Changed files: none"]
+      : ["Changed files:", ...status.changedFiles.map((line) => `- ${line.trimStart()}`)];
   const details = [
     `Aigile status: ${status.workspace.issueKey}`,
     `Workspace: ${status.workspace.worktreePath}`,
@@ -363,7 +393,9 @@ export const formatIssueWorkspaceStatus = (status: IssueWorkspaceStatus): string
   return details.join("\n");
 };
 
-export const runIssueWorkspaceStatus = async (input: IssueWorkspaceStatusInput): Promise<string> => {
+export const runIssueWorkspaceStatus = async (
+  input: IssueWorkspaceStatusInput,
+): Promise<string> => {
   const status = await createGitWorkspaceAdapter({
     repoPath: input.repoPath,
     worktreesPath: input.worktreesPath,
@@ -423,9 +455,8 @@ const formatWatchOnceResult = async (
   tracker: IssueTrackerAdapter,
   context: { provider?: string; team?: string } = {},
 ): Promise<string> => {
-  const claimedIssue = result.claimedIssue === undefined
-    ? undefined
-    : await tracker.getIssue(result.claimedIssue.key);
+  const claimedIssue =
+    result.claimedIssue === undefined ? undefined : await tracker.getIssue(result.claimedIssue.key);
 
   return [
     "Aigile watch: once",
@@ -433,27 +464,35 @@ const formatWatchOnceResult = async (
     ...(context.team === undefined ? [] : [`Team: ${context.team}`]),
     `Ready issues: ${result.readyCount}`,
     `Claimed: ${claimedIssue?.key ?? "none"}`,
-    ...(claimedIssue === undefined ? [] : [
-      `Status: ${claimedIssue.status}`,
-      `Comment: ${claimedIssue.comments.at(-1) ?? defaultClaimComment}`,
-    ]),
+    ...(claimedIssue === undefined
+      ? []
+      : [
+          `Status: ${claimedIssue.status}`,
+          `Comment: ${claimedIssue.comments.at(-1) ?? defaultClaimComment}`,
+        ]),
     "Agents: not started",
   ].join("\n");
 };
 
 export const runWatchOnceCli = async (input: WatchOnceCliInput): Promise<string> => {
-  const issue = input.issue === undefined
-    ? undefined
-    : {
-      ...input.issue,
-      status: input.readyStatus ?? "ready",
-    };
-  const tracker = input.tracker ?? createFakeIssueTrackerAdapter(issue === undefined ? [] : [issue]);
-  const source = input.source ?? createFakeReadyIssueSource(issue === undefined ? [] : [issue], issue?.status ?? "ready");
+  const issue =
+    input.issue === undefined
+      ? undefined
+      : {
+          ...input.issue,
+          status: input.readyStatus ?? "ready",
+        };
+  const tracker =
+    input.tracker ?? createFakeIssueTrackerAdapter(issue === undefined ? [] : [issue]);
+  const source =
+    input.source ??
+    createFakeReadyIssueSource(issue === undefined ? [] : [issue], issue?.status ?? "ready");
   const watchInput = { source, tracker };
-  const result = await watchOnce(input.claimStatus === undefined
-    ? watchInput
-    : { ...watchInput, claimStatus: input.claimStatus });
+  const result = await watchOnce(
+    input.claimStatus === undefined
+      ? watchInput
+      : { ...watchInput, claimStatus: input.claimStatus },
+  );
 
   const context: { provider?: string; team?: string } = {};
   if (input.provider !== undefined) context.provider = input.provider;
@@ -512,22 +551,24 @@ export interface LinearIssueWorkflowCliInput {
 const artifactIdByKind = (result: DemoResult, kind: string): string =>
   result.artifacts.find((artifact) => artifact.kind === kind)?.id ?? "unavailable";
 
-const alreadySatisfiedComment = (result: DemoResult): string => [
-  "Aigile verified this issue is already satisfied. No code changes were required.",
-  "",
-  `Final state: ${result.finalState}`,
-  `Verification: ${artifactIdByKind(result, "verification.result")}`,
-  `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
-].join("\n");
+const alreadySatisfiedComment = (result: DemoResult): string =>
+  [
+    "Aigile verified this issue is already satisfied. No code changes were required.",
+    "",
+    `Final state: ${result.finalState}`,
+    `Verification: ${artifactIdByKind(result, "verification.result")}`,
+    `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
+  ].join("\n");
 
-const publishedComment = (result: DemoResult): string => [
-  "Aigile completed this issue and published the result to GitHub.",
-  "",
-  `Final state: ${result.finalState}`,
-  `Pull request: ${result.pullRequest?.url ?? "unavailable"}`,
-  `Verification: ${artifactIdByKind(result, "verification.result")}`,
-  `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
-].join("\n");
+const publishedComment = (result: DemoResult): string =>
+  [
+    "Aigile completed this issue and published the result to GitHub.",
+    "",
+    `Final state: ${result.finalState}`,
+    `Pull request: ${result.pullRequest?.url ?? "unavailable"}`,
+    `Verification: ${artifactIdByKind(result, "verification.result")}`,
+    `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
+  ].join("\n");
 
 const formatListSection = (items: readonly string[]): string[] =>
   items.length === 0 ? ["- None."] : items.map((item) => `- ${item}`);
@@ -566,16 +607,18 @@ const syncLinearIssueWorkflowResult = async (
   const shouldSyncPublished = input.publish === true && result.finalState === "merged";
   if (!shouldSyncSatisfied && !shouldSyncPublished) return;
 
-  const tracker = createLinearGraphqlIssueTrackerAdapter(input.fetchGraphql === undefined
-    ? {
-      apiKey: input.apiKey,
-      ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
-    }
-    : {
-      apiKey: input.apiKey,
-      fetchGraphql: input.fetchGraphql,
-      ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
-    });
+  const tracker = createLinearGraphqlIssueTrackerAdapter(
+    input.fetchGraphql === undefined
+      ? {
+          apiKey: input.apiKey,
+          ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
+        }
+      : {
+          apiKey: input.apiKey,
+          fetchGraphql: input.fetchGraphql,
+          ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
+        },
+  );
   if (input.teamKey !== undefined) {
     await tracker.updateIssueStatus(input.issueKey, "Done");
   }
@@ -586,21 +629,29 @@ const syncLinearIssueWorkflowResult = async (
 };
 
 export const fetchLinearIssueForRun = async (input: LinearRunIssueInput): Promise<IssueRecord> => {
-  const adapter = createLinearGraphqlIssueTrackerAdapter(input.fetchGraphql === undefined
-    ? { apiKey: input.apiKey }
-    : { apiKey: input.apiKey, fetchGraphql: input.fetchGraphql });
+  const adapter = createLinearGraphqlIssueTrackerAdapter(
+    input.fetchGraphql === undefined
+      ? { apiKey: input.apiKey }
+      : { apiKey: input.apiKey, fetchGraphql: input.fetchGraphql },
+  );
   return adapter.getIssue(input.issueKey);
 };
 
-export const runLinearIssueWorkflowCli = async (input: LinearIssueWorkflowCliInput): Promise<string> => {
-  const issue = await fetchLinearIssueForRun(input.fetchGraphql === undefined
-    ? { apiKey: input.apiKey, issueKey: input.issueKey }
-    : { apiKey: input.apiKey, issueKey: input.issueKey, fetchGraphql: input.fetchGraphql });
+export const runLinearIssueWorkflowCli = async (
+  input: LinearIssueWorkflowCliInput,
+): Promise<string> => {
+  const issue = await fetchLinearIssueForRun(
+    input.fetchGraphql === undefined
+      ? { apiKey: input.apiKey, issueKey: input.issueKey }
+      : { apiKey: input.apiKey, issueKey: input.issueKey, fetchGraphql: input.fetchGraphql },
+  );
   const runInput: DemoWorkspaceInput = {
     issue,
     repoPath: input.repoPath,
     worktreesPath: input.worktreesPath,
-    registry: runtimeConfigToRegistry(loadRuntimeConfigFromJson(readFileSync(input.runtimeConfigPath, "utf8"))),
+    registry: runtimeConfigToRegistry(
+      loadRuntimeConfigFromJson(readFileSync(input.runtimeConfigPath, "utf8")),
+    ),
   };
   if (input.baseBranch !== undefined) runInput.baseBranch = input.baseBranch;
   if (input.dryRun === true) {
@@ -666,7 +717,9 @@ export const runLinearWatchOnceCli = async (input: LinearWatchOnceCliInput): Pro
   });
 };
 
-const createLinearWatchAdapters = (input: LinearWatchOnceCliInput): {
+const createLinearWatchAdapters = (
+  input: LinearWatchOnceCliInput,
+): {
   source: ReadyIssueSource;
   tracker: IssueTrackerAdapter;
 } => {
@@ -681,18 +734,19 @@ const createLinearWatchAdapters = (input: LinearWatchOnceCliInput): {
     readyStatus: input.readyStatus ?? "Ready for Aigile",
   };
   return {
-    tracker: createLinearGraphqlIssueTrackerAdapter(fetchGraphql === undefined
-      ? trackerOptions
-      : { ...trackerOptions, fetchGraphql }),
-    source: createLinearGraphqlReadyIssueSource(fetchGraphql === undefined
-      ? sourceOptions
-      : { ...sourceOptions, fetchGraphql }),
+    tracker: createLinearGraphqlIssueTrackerAdapter(
+      fetchGraphql === undefined ? trackerOptions : { ...trackerOptions, fetchGraphql },
+    ),
+    source: createLinearGraphqlReadyIssueSource(
+      fetchGraphql === undefined ? sourceOptions : { ...sourceOptions, fetchGraphql },
+    ),
   };
 };
 
 const formatWatchLoopEvent = (event: WatchLoopEvent): string => {
   if (event.type === "poll_started") return `Poll ${event.poll}: checking for ready issues`;
-  if (event.type === "poll_idle") return `Poll ${event.poll}: idle (ready issues: ${event.readyCount})`;
+  if (event.type === "poll_idle")
+    return `Poll ${event.poll}: idle (ready issues: ${event.readyCount})`;
   if (event.type === "issue_claimed") {
     return `Poll ${event.poll}: claimed ${event.issueKey} (ready issues: ${event.readyCount})`;
   }
@@ -700,7 +754,9 @@ const formatWatchLoopEvent = (event: WatchLoopEvent): string => {
 };
 
 const runResultStateLine = (output: string): string | undefined =>
-  output.split("\n").find((line) => line.startsWith("Final state:") || line.startsWith("Workflow state:"));
+  output
+    .split("\n")
+    .find((line) => line.startsWith("Final state:") || line.startsWith("Workflow state:"));
 
 export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Promise<string> => {
   const { source, tracker } = createLinearWatchAdapters(input);
@@ -726,24 +782,27 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
     ...(input.startRun === undefined
       ? {}
       : {
-        onClaimedIssue: async (issue: IssueRecord) => {
-          emit(`Run ${issue.key}: starting`);
-          const output = await input.startRun!(issue);
-          const stateLine = runResultStateLine(output);
-          if (stateLine !== undefined) emit(`Run ${issue.key}: ${stateLine}`);
-          emit(`Run ${issue.key}: completed`);
-        },
-      }),
+          onClaimedIssue: async (issue: IssueRecord) => {
+            emit(`Run ${issue.key}: starting`);
+            const output = await input.startRun!(issue);
+            const stateLine = runResultStateLine(output);
+            if (stateLine !== undefined) emit(`Run ${issue.key}: ${stateLine}`);
+            emit(`Run ${issue.key}: completed`);
+          },
+        }),
   });
 
   emit(input.startRun === undefined ? "Agents: not started" : "Agents: handled claimed issues");
   return lines.join("\n");
 };
 
-export const runLinearWatchPreflightCli = async (input: LinearWatchPreflightCliInput): Promise<string> => {
-  const sharedOptions = input.fetchGraphql === undefined
-    ? { apiKey: input.apiKey }
-    : { apiKey: input.apiKey, fetchGraphql: input.fetchGraphql };
+export const runLinearWatchPreflightCli = async (
+  input: LinearWatchPreflightCliInput,
+): Promise<string> => {
+  const sharedOptions =
+    input.fetchGraphql === undefined
+      ? { apiKey: input.apiKey }
+      : { apiKey: input.apiKey, fetchGraphql: input.fetchGraphql };
   const teams = await listLinearTeams(sharedOptions);
   const lines = [
     "Aigile watch: preflight",
@@ -753,9 +812,10 @@ export const runLinearWatchPreflightCli = async (input: LinearWatchPreflightCliI
   ];
 
   if (input.teamKey !== undefined) {
-    const workflowStateOptions = input.fetchGraphql === undefined
-      ? { apiKey: input.apiKey, teamKey: input.teamKey }
-      : { apiKey: input.apiKey, teamKey: input.teamKey, fetchGraphql: input.fetchGraphql };
+    const workflowStateOptions =
+      input.fetchGraphql === undefined
+        ? { apiKey: input.apiKey, teamKey: input.teamKey }
+        : { apiKey: input.apiKey, teamKey: input.teamKey, fetchGraphql: input.fetchGraphql };
     const workflowStateNames = await listLinearWorkflowStateNames(workflowStateOptions);
     lines.push(
       `Workflow states (${input.teamKey}):`,
@@ -777,7 +837,11 @@ export const createDryRunExec = (): ExecCommand => async (command, commandArgs, 
   if (command === "git" && commandArgs[0] === "diff") {
     return { stdout: "dry-run diff | 1 +", stderr: "", exitCode: 0 };
   }
-  return { stdout: `${command} ${commandArgs.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+  return {
+    stdout: `${command} ${commandArgs.join(" ")} in ${options.cwd}`,
+    stderr: "",
+    exitCode: 0,
+  };
 };
 
 const optionValue = (args: readonly string[], name: string): string | undefined => {
@@ -867,8 +931,10 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
       throw new Error("choose only one of --dry-run or --agent-write");
     }
     if (parsed.startRun) {
-      if (parsed.pollIntervalMs === undefined) throw new Error("watch --start-run requires --poll-interval");
-      if (parsed.runtimeConfigPath === undefined) throw new Error("watch --start-run requires --runtime-config");
+      if (parsed.pollIntervalMs === undefined)
+        throw new Error("watch --start-run requires --poll-interval");
+      if (parsed.runtimeConfigPath === undefined)
+        throw new Error("watch --start-run requires --runtime-config");
       if (parsed.dryRun !== true && parsed.agentWrite !== true) {
         throw new Error("watch --start-run requires --dry-run or --agent-write");
       }
@@ -931,22 +997,26 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
 
 const main = async (): Promise<void> => {
   const args = parseCliArgs(process.argv.slice(2));
-  const linearIssue = args.mode === "run" && args.linear
-    ? await (async (): Promise<IssueRecord> => {
-      const issueKey = args.issueKey ?? defaultIssue.key;
-      const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
-      const apiKey = process.env[apiKeyEnv];
-      if (!apiKey) throw new Error(`run --linear requires ${apiKeyEnv} to be set`);
-      return fetchLinearIssueForRun({ apiKey, issueKey });
-    })()
-    : undefined;
+  const linearIssue =
+    args.mode === "run" && args.linear
+      ? await (async (): Promise<IssueRecord> => {
+          const issueKey = args.issueKey ?? defaultIssue.key;
+          const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
+          const apiKey = process.env[apiKeyEnv];
+          if (!apiKey) throw new Error(`run --linear requires ${apiKeyEnv} to be set`);
+          return fetchLinearIssueForRun({ apiKey, issueKey });
+        })()
+      : undefined;
   const runInput: DemoWorkspaceInput = {
     issue: {
       ...(linearIssue ?? defaultIssue),
       key: args.issueKey ?? defaultIssue.key,
       title: args.title ?? linearIssue?.title ?? defaultIssue.title,
       description: args.description ?? linearIssue?.description ?? defaultIssue.description,
-      acceptanceCriteria: args.acceptanceCriteria ?? linearIssue?.acceptanceCriteria ?? defaultIssue.acceptanceCriteria,
+      acceptanceCriteria:
+        args.acceptanceCriteria ??
+        linearIssue?.acceptanceCriteria ??
+        defaultIssue.acceptanceCriteria,
     },
     repoPath: args.repoPath ?? process.cwd(),
     worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
@@ -993,11 +1063,15 @@ const main = async (): Promise<void> => {
         if (args.claimStatus !== undefined) loopInput.claimStatus = args.claimStatus;
         if (args.maxPolls !== undefined) loopInput.maxPolls = args.maxPolls;
         if (args.startRun) {
-          if (args.runtimeConfigPath === undefined) throw new Error("watch --start-run requires --runtime-config");
+          if (args.runtimeConfigPath === undefined)
+            throw new Error("watch --start-run requires --runtime-config");
           if (args.dryRun !== true && args.agentWrite !== true) {
             throw new Error("watch --start-run requires --dry-run or --agent-write");
           }
-          const publishRunInput: Pick<LinearIssueWorkflowCliInput, "publish" | "remote" | "pullRequestTarget" | "codeHost"> = {};
+          const publishRunInput: Pick<
+            LinearIssueWorkflowCliInput,
+            "publish" | "remote" | "pullRequestTarget" | "codeHost"
+          > = {};
           if (args.publish === true && args.dryRun !== true) {
             const remote = args.remote ?? "origin";
             const baseBranch = args.baseBranch ?? "main";
@@ -1022,19 +1096,20 @@ const main = async (): Promise<void> => {
             publishRunInput.publish = true;
             publishRunInput.remote = args.remote ?? "origin";
           }
-          loopInput.startRun = async (issue) => runLinearIssueWorkflowCli({
-            apiKey,
-            issueKey: issue.key,
-            ...(args.linearTeam === undefined ? {} : { teamKey: args.linearTeam }),
-            repoPath: args.repoPath ?? process.cwd(),
-            worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
-            runtimeConfigPath: args.runtimeConfigPath!,
-            ...(args.baseBranch === undefined ? {} : { baseBranch: args.baseBranch }),
-            ...(args.dryRun === true ? { dryRun: true } : {}),
-            ...(args.agentWrite === true ? { agentWrite: true } : {}),
-            ...publishRunInput,
-            onProgressLine: (line) => process.stderr.write(`${line}\n`),
-          });
+          loopInput.startRun = async (issue) =>
+            runLinearIssueWorkflowCli({
+              apiKey,
+              issueKey: issue.key,
+              ...(args.linearTeam === undefined ? {} : { teamKey: args.linearTeam }),
+              repoPath: args.repoPath ?? process.cwd(),
+              worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
+              runtimeConfigPath: args.runtimeConfigPath!,
+              ...(args.baseBranch === undefined ? {} : { baseBranch: args.baseBranch }),
+              ...(args.dryRun === true ? { dryRun: true } : {}),
+              ...(args.agentWrite === true ? { agentWrite: true } : {}),
+              ...publishRunInput,
+              onProgressLine: (line) => process.stderr.write(`${line}\n`),
+            });
         }
         await runLinearWatchLoopCli(loopInput);
         return;
@@ -1074,7 +1149,13 @@ const main = async (): Promise<void> => {
     runInput.dryRun = true;
     runInput.exec = createDryRunExec();
   }
-  if (args.mode === "run" && args.runtimeConfigPath && !args.preflightOnly && !args.dryRun && !args.agentWrite) {
+  if (
+    args.mode === "run" &&
+    args.runtimeConfigPath &&
+    !args.preflightOnly &&
+    !args.dryRun &&
+    !args.agentWrite
+  ) {
     throw new Error("run with --runtime-config requires --dry-run or --agent-write");
   }
   if (args.mode === "run" && args.agentWrite && !args.publish) {
@@ -1106,7 +1187,9 @@ const main = async (): Promise<void> => {
     });
   }
   if (args.mode === "run" && args.runtimeConfigPath) {
-    runInput.registry = runtimeConfigToRegistry(loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8")));
+    runInput.registry = runtimeConfigToRegistry(
+      loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8")),
+    );
     const progressFormatter = createAcpRoleProgressFormatter();
     runInput.runner = createAcpRoleRunner({
       onProgress: (event) => {
@@ -1116,56 +1199,69 @@ const main = async (): Promise<void> => {
       },
     });
   }
-  const result = args.mode === "run"
-    ? await runDemoIssueWithWorkspace(runInput)
-    : args.mode === "agents"
-    ? args.runtimeConfigPath
-      ? await runDemoIssueWithRoles({
-        issue: defaultIssue,
-        registry: runtimeConfigToRegistry(loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8"))),
-        runner: createAcpRoleRunner(),
-      })
-      : await runDemoIssueWithAcpRoles({ issue: defaultIssue })
-    : args.mode === "workspace"
-      ? await runDemoIssueWithWorkspace({
-        issue: defaultIssue,
-        repoPath: "/tmp/aigile-demo-repo",
-        worktreesPath: "/tmp/aigile-demo-repo/.worktrees",
-        exec: async (command, args, options) => {
-          if (command === "git" && args[0] === "worktree") return { stdout: "", stderr: "", exitCode: 0 };
-          if (command === "git" && args[0] === "diff") {
-            return { stdout: "packages/demo/src/run.ts | 4 ++++", stderr: "", exitCode: 0 };
-          }
-          return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
-        },
-      })
-      : args.mode === "github"
-        ? await runDemoIssueWithGitHub({
-          issue: defaultIssue,
-          ghExec: async (_command, args) => {
-            if (args[0] === "pr" && args[1] === "create") {
-              return { stdout: "https://github.com/aigile/aigile/pull/1", stderr: "", exitCode: 0 };
-            }
-            return { stdout: "", stderr: "", exitCode: 0 };
-          },
-        })
-        : args.mode === "linear"
-          ? await runDemoIssueFromLinear({
-            issueKey: "LIN-123",
-            linearApiKey: "demo-key",
-            fetchGraphql: async () => ({
-              issue: {
-                id: "issue-demo-1",
-                identifier: "LIN-123",
-                title: "Build hand-testable pipeline",
-                description: "Acceptance:\n- Architect plan exists\n- Verifier passes\n- Pull request artifact exists",
-                priority: 1,
-                state: { name: "Todo" },
-                comments: { nodes: [] },
+  const result =
+    args.mode === "run"
+      ? await runDemoIssueWithWorkspace(runInput)
+      : args.mode === "agents"
+        ? args.runtimeConfigPath
+          ? await runDemoIssueWithRoles({
+              issue: defaultIssue,
+              registry: runtimeConfigToRegistry(
+                loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8")),
+              ),
+              runner: createAcpRoleRunner(),
+            })
+          : await runDemoIssueWithAcpRoles({ issue: defaultIssue })
+        : args.mode === "workspace"
+          ? await runDemoIssueWithWorkspace({
+              issue: defaultIssue,
+              repoPath: "/tmp/aigile-demo-repo",
+              worktreesPath: "/tmp/aigile-demo-repo/.worktrees",
+              exec: async (command, args, options) => {
+                if (command === "git" && args[0] === "worktree")
+                  return { stdout: "", stderr: "", exitCode: 0 };
+                if (command === "git" && args[0] === "diff") {
+                  return { stdout: "packages/demo/src/run.ts | 4 ++++", stderr: "", exitCode: 0 };
+                }
+                return {
+                  stdout: `${command} ${args.join(" ")} in ${options.cwd}`,
+                  stderr: "",
+                  exitCode: 0,
+                };
               },
-            }),
-          })
-      : await runDemoIssue({ issue: defaultIssue });
+            })
+          : args.mode === "github"
+            ? await runDemoIssueWithGitHub({
+                issue: defaultIssue,
+                ghExec: async (_command, args) => {
+                  if (args[0] === "pr" && args[1] === "create") {
+                    return {
+                      stdout: "https://github.com/aigile/aigile/pull/1",
+                      stderr: "",
+                      exitCode: 0,
+                    };
+                  }
+                  return { stdout: "", stderr: "", exitCode: 0 };
+                },
+              })
+            : args.mode === "linear"
+              ? await runDemoIssueFromLinear({
+                  issueKey: "LIN-123",
+                  linearApiKey: "demo-key",
+                  fetchGraphql: async () => ({
+                    issue: {
+                      id: "issue-demo-1",
+                      identifier: "LIN-123",
+                      title: "Build hand-testable pipeline",
+                      description:
+                        "Acceptance:\n- Architect plan exists\n- Verifier passes\n- Pull request artifact exists",
+                      priority: 1,
+                      state: { name: "Todo" },
+                      comments: { nodes: [] },
+                    },
+                  }),
+                })
+              : await runDemoIssue({ issue: defaultIssue });
   process.stdout.write(`${formatDemoResult(result)}\n`);
 };
 

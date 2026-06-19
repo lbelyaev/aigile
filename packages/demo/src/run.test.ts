@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { CodeHostAdapter, PullRequestRecord } from "@aigile/adapters";
 import { createRoleRuntimeRegistry, createScriptedRoleRunner, type RoleRunner } from "@aigile/roles";
 import { runDemoIssue, runDemoIssueWithRoles } from "./index.js";
 
@@ -90,6 +91,85 @@ describe("demo orchestration", () => {
     expect(result.durationMs).toBe(74_100);
   });
 
+  it("publishes a readable pull request body, developer update, checker review, and final summary", async () => {
+    const result = await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner: runnerWithCheckerVerdict("pass"),
+    });
+
+    expect(result.pullRequest?.body).toContain("## LIN-123: Build hand-testable pipeline");
+    expect(result.pullRequest?.body).toContain("### Summary");
+    expect(result.pullRequest?.body).toContain("### Implementation");
+    expect(result.pullRequest?.body).toContain("### Checker");
+    expect(result.pullRequest?.comments).toEqual([
+      expect.stringContaining("## Aigile developer update"),
+      expect.stringContaining("## Aigile final summary"),
+    ]);
+    expect(result.pullRequest?.checks).toEqual([
+      {
+        name: "aigile/verifier",
+        status: "passed",
+        summary: "Local scripted verifier passed.",
+      },
+    ]);
+    expect(result.pullRequest?.reviews).toEqual([
+      {
+        event: "approve",
+        body: expect.stringContaining("## Aigile checker review"),
+      },
+    ]);
+  });
+
+  it("returns an escalated result when PR evidence publication fails after PR creation", async () => {
+    let pullRequest: PullRequestRecord | undefined;
+    const codeHost: CodeHostAdapter = {
+      createPullRequest: async (input) => {
+        pullRequest = {
+          ...input,
+          id: "aigile/aigile#99",
+          number: 99,
+          url: "https://github.local/aigile/aigile/pull/99",
+          comments: [],
+          checks: [],
+          reviews: [],
+        };
+        return structuredClone(pullRequest);
+      },
+      getPullRequest: async () => {
+        if (pullRequest === undefined) throw new Error("pull request missing");
+        return structuredClone(pullRequest);
+      },
+      appendPullRequestComment: async (_id, comment) => {
+        if (pullRequest === undefined) throw new Error("pull request missing");
+        pullRequest.comments.push(comment);
+      },
+      recordCheckResult: async () => {
+        throw new Error("gh pr comment failed (1): 401 Unauthorized");
+      },
+      submitPullRequestReview: async () => {
+        throw new Error("review should not run after check publication fails");
+      },
+    };
+
+    const result = await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner: runnerWithCheckerVerdict("pass"),
+      codeHost,
+    });
+
+    expect(result.finalState).toBe("escalated");
+    expect(result.pullRequest?.url).toBe("https://github.local/aigile/aigile/pull/99");
+    expect(result.publicationFailure).toEqual({
+      operation: "publish_pull_request_evidence",
+      message: "gh pr comment failed (1): 401 Unauthorized",
+      pullRequestUrl: "https://github.local/aigile/aigile/pull/99",
+    });
+    expect(result.timeline.map((entry) => entry.label)).toContain("publish_failed -> escalated");
+    expect(result.artifacts.map((artifact) => artifact.kind)).toContain("github.pull_request");
+  });
+
   it("routes checker escalation to escalated and publishes a comment review", async () => {
     const result = await runDemoIssueWithRoles({
       issue,
@@ -98,10 +178,12 @@ describe("demo orchestration", () => {
     });
 
     expect(result.finalState).toBe("escalated");
-    expect(result.pullRequest?.reviews).toEqual([{
-      event: "comment",
-      body: "Checker escalate",
-    }]);
+    expect(result.pullRequest?.reviews).toEqual([
+      {
+        event: "comment",
+        body: expect.stringContaining("## Aigile checker review"),
+      },
+    ]);
     expect(result.artifacts.map((artifact) => artifact.kind)).toContain("github.pull_request");
     expect(result.timeline.map((entry) => entry.label)).toContain("checker_escalated -> escalated");
     expect(result.timeline.map((entry) => entry.label)).not.toContain("merge_completed -> merged");
@@ -115,10 +197,12 @@ describe("demo orchestration", () => {
     });
 
     expect(result.finalState).toBe("developing");
-    expect(result.pullRequest?.reviews).toEqual([{
-      event: "request_changes",
-      body: "Checker changes_requested",
-    }]);
+    expect(result.pullRequest?.reviews).toEqual([
+      {
+        event: "request_changes",
+        body: expect.stringContaining("## Aigile checker review"),
+      },
+    ]);
     expect(result.artifacts.map((artifact) => artifact.kind)).toContain("github.pull_request");
     expect(result.timeline.map((entry) => entry.label)).toContain("checker_requested_changes -> developing");
     expect(result.timeline.map((entry) => entry.label)).not.toContain("merge_completed -> merged");
@@ -205,13 +289,15 @@ describe("demo orchestration", () => {
         source: "verifier",
         payload: {
           status: "failed",
-          commands: [{
-            command: "bun",
-            args: ["run", "check"],
-            exitCode: 1,
-            stdout: "",
-            stderr: "failing test",
-          }],
+          commands: [
+            {
+              command: "bun",
+              args: ["run", "check"],
+              exitCode: 1,
+              stdout: "",
+              stderr: "failing test",
+            },
+          ],
         },
       },
     });
@@ -220,7 +306,9 @@ describe("demo orchestration", () => {
     expect(result.pullRequest).toBeUndefined();
     expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("checker.verdict");
     expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("github.pull_request");
-    expect(result.timeline.map((entry) => entry.label)).toContain("verification_failed -> developing");
+    expect(result.timeline.map((entry) => entry.label)).toContain(
+      "verification_failed -> developing",
+    );
   });
 
   it("publishes the architect plan after approval and before developer starts", async () => {

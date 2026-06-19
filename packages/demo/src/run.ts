@@ -22,6 +22,7 @@ import {
   type RoleRuntimeRegistry,
 } from "@aigile/roles";
 import {
+  isArchitectPlanPayload,
   isCheckerVerdictPayload,
   isDeveloperAttemptPayload,
   type WorkflowArtifact,
@@ -102,6 +103,11 @@ export interface DemoResult {
   issueKey: string;
   finalState: WorkflowState;
   pullRequest?: PullRequestRecord;
+  publicationFailure?: {
+    operation: string;
+    message: string;
+    pullRequestUrl?: string;
+  };
   artifacts: WorkflowArtifact[];
   timeline: DemoTimelineEntry[];
   durationMs: number;
@@ -126,10 +132,7 @@ const pushTransition = (
   return result.snapshot;
 };
 
-const artifactByKind = (
-  artifacts: WorkflowArtifact[],
-  kind: string,
-): WorkflowArtifact => {
+const artifactByKind = (artifacts: WorkflowArtifact[], kind: string): WorkflowArtifact => {
   const artifact = artifacts.find((candidate) => candidate.kind === kind);
   if (!artifact) throw new Error(`Missing artifact: ${kind}`);
   return artifact;
@@ -166,30 +169,32 @@ const executionPolicyToArtifact = (issueKey: string, dryRun: boolean): WorkflowA
   id: `policy:${issueKey}:${dryRun ? "dry-run" : "agent-write"}`,
   kind: "execution.policy",
   source: "system",
-  payload: dryRun ? {
-    mode: "dry_run",
-    fileWrites: "forbidden",
-    commits: "forbidden",
-    shellCommands: "read_only",
-    instructions: [
-      "Do not edit files.",
-      "Do not create commits.",
-      "Do not push branches or open pull requests.",
-      "Return the required role artifact describing the intended work or review.",
-    ],
-  } : {
-    mode: "agent_write",
-    fileWrites: "allowed",
-    commits: "forbidden",
-    pushes: "forbidden",
-    shellCommands: "workspace",
-    instructions: [
-      "You may edit files in the issue worktree to implement the approved plan.",
-      "Do not create commits.",
-      "Do not push branches or open pull requests.",
-      "Aigile will commit, push, and open the pull request after verification and checker approval.",
-    ],
-  },
+  payload: dryRun
+    ? {
+        mode: "dry_run",
+        fileWrites: "forbidden",
+        commits: "forbidden",
+        shellCommands: "read_only",
+        instructions: [
+          "Do not edit files.",
+          "Do not create commits.",
+          "Do not push branches or open pull requests.",
+          "Return the required role artifact describing the intended work or review.",
+        ],
+      }
+    : {
+        mode: "agent_write",
+        fileWrites: "allowed",
+        commits: "forbidden",
+        pushes: "forbidden",
+        shellCommands: "workspace",
+        instructions: [
+          "You may edit files in the issue worktree to implement the approved plan.",
+          "Do not create commits.",
+          "Do not push branches or open pull requests.",
+          "Aigile will commit, push, and open the pull request after verification and checker approval.",
+        ],
+      },
 });
 
 const checkerEventForVerdict = (artifact: WorkflowArtifact): WorkflowEvent["type"] => {
@@ -212,7 +217,11 @@ const checkerReviewForVerdict = (artifact: WorkflowArtifact): PullRequestReviewI
 };
 
 const verificationEventForResult = (artifact: WorkflowArtifact): WorkflowEvent["type"] => {
-  if (typeof artifact.payload !== "object" || artifact.payload === null || Array.isArray(artifact.payload)) {
+  if (
+    typeof artifact.payload !== "object" ||
+    artifact.payload === null ||
+    Array.isArray(artifact.payload)
+  ) {
     return "verification_passed";
   }
   const status = (artifact.payload as { status?: unknown }).status;
@@ -226,18 +235,136 @@ const developerAttemptHasChanges = (artifact: WorkflowArtifact): boolean => {
   return artifact.payload.changedFiles.length > 0;
 };
 
-const createDemoRegistry = (): RoleRuntimeRegistry => createRoleRuntimeRegistry({
-  runtimes: [
-    { id: "demo-architect", transport: "stdio", command: ["aigile-demo-acp"] },
-    { id: "demo-developer", transport: "stdio", command: ["aigile-demo-acp"] },
-    { id: "demo-checker", transport: "stdio", command: ["aigile-demo-acp"] },
-  ],
-  assignments: [
-    { roleId: "architect", runtimeProfileId: "demo-architect" },
-    { roleId: "developer", runtimeProfileId: "demo-developer" },
-    { roleId: "checker", runtimeProfileId: "demo-checker" },
-  ],
-});
+const markdownList = (items: readonly string[]): string[] =>
+  items.length === 0 ? ["- None"] : items.map((item) => `- ${item}`);
+
+const verificationSummary = (artifact: WorkflowArtifact): string => {
+  const payload = artifact.payload;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return artifact.id;
+  const status = (payload as { status?: unknown }).status;
+  const summary = (payload as { summary?: unknown }).summary;
+  if (typeof summary === "string" && summary.trim().length > 0) {
+    return typeof status === "string" ? `${status}: ${summary}` : summary;
+  }
+  return typeof status === "string" ? status : artifact.id;
+};
+
+const formatPullRequestBody = (
+  issue: IssueRecord,
+  plan: WorkflowArtifact,
+  attempt: WorkflowArtifact,
+  verification: WorkflowArtifact,
+  verdict: WorkflowArtifact,
+): string => {
+  if (!isArchitectPlanPayload(plan.payload))
+    throw new Error(`Architect plan payload is invalid: ${plan.id}`);
+  if (!isDeveloperAttemptPayload(attempt.payload))
+    throw new Error(`Developer artifact payload is invalid: ${attempt.id}`);
+  if (!isCheckerVerdictPayload(verdict.payload))
+    throw new Error(`Checker artifact payload is invalid: ${verdict.id}`);
+
+  return [
+    `## ${issue.key}: ${issue.title}`,
+    "",
+    "### Summary",
+    plan.payload.summary,
+    "",
+    "### Acceptance Criteria",
+    ...markdownList(
+      issue.acceptanceCriteria.length > 0
+        ? issue.acceptanceCriteria
+        : plan.payload.acceptanceCriteria,
+    ),
+    "",
+    "### Implementation",
+    attempt.payload.summary,
+    "",
+    "### Changed Files",
+    ...markdownList(attempt.payload.changedFiles),
+    "",
+    "### Verification",
+    verificationSummary(verification),
+    "",
+    "### Checker",
+    `${verdict.payload.verdict}: ${verdict.payload.summary}`,
+    "",
+    "### Artifacts",
+    `- Plan: ${plan.id}`,
+    `- Developer: ${attempt.id}`,
+    `- Verification: ${verification.id}`,
+    `- Checker: ${verdict.id}`,
+  ].join("\n");
+};
+
+const formatDeveloperAttemptComment = (attempt: WorkflowArtifact): string => {
+  if (!isDeveloperAttemptPayload(attempt.payload)) {
+    throw new Error(`Developer artifact payload is invalid: ${attempt.id}`);
+  }
+  return [
+    "## Aigile developer update",
+    "",
+    attempt.payload.summary,
+    "",
+    "### Changed Files",
+    ...markdownList(attempt.payload.changedFiles),
+    "",
+    "### Verification Notes",
+    attempt.payload.verificationNotes,
+  ].join("\n");
+};
+
+const formatFinalPullRequestSummary = (
+  verification: WorkflowArtifact,
+  verdict: WorkflowArtifact,
+): string => {
+  if (!isCheckerVerdictPayload(verdict.payload))
+    throw new Error(`Checker artifact payload is invalid: ${verdict.id}`);
+  return [
+    "## Aigile final summary",
+    "",
+    `Verification: ${verificationSummary(verification)}`,
+    `Checker verdict: ${verdict.payload.verdict}`,
+    "",
+    verdict.payload.summary,
+    "",
+    "### Checker Reasons",
+    ...markdownList(verdict.payload.reasons),
+  ].join("\n");
+};
+
+const checkerReviewForVerdict = (artifact: WorkflowArtifact): PullRequestReviewInput => {
+  if (!isCheckerVerdictPayload(artifact.payload)) {
+    throw new Error(`Checker artifact payload is invalid: ${artifact.id}`);
+  }
+  const body = [
+    "## Aigile checker review",
+    "",
+    artifact.payload.summary,
+    "",
+    "### Reasons",
+    ...markdownList(artifact.payload.reasons),
+  ].join("\n");
+  if (artifact.payload.verdict === "pass") return { event: "approve", body };
+  if (artifact.payload.verdict === "changes_requested") return { event: "request_changes", body };
+  return { event: "comment", body };
+};
+
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const createDemoRegistry = (): RoleRuntimeRegistry =>
+  createRoleRuntimeRegistry({
+    runtimes: [
+      { id: "demo-architect", transport: "stdio", command: ["aigile-demo-acp"] },
+      { id: "demo-developer", transport: "stdio", command: ["aigile-demo-acp"] },
+      { id: "demo-checker", transport: "stdio", command: ["aigile-demo-acp"] },
+    ],
+    assignments: [
+      { roleId: "architect", runtimeProfileId: "demo-architect" },
+      { roleId: "developer", runtimeProfileId: "demo-developer" },
+      { roleId: "checker", runtimeProfileId: "demo-checker" },
+    ],
+  });
 
 export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<DemoResult> => {
   const issueTracker = createFakeIssueTrackerAdapter([input.issue]);
@@ -256,11 +383,16 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
   const timeline: DemoTimelineEntry[] = [];
   let snapshot = initialWorkflowSnapshot(issue.key);
 
-  snapshot = pushTransition(snapshot, {
-    type: "issue_received",
-    issueId: issue.key,
-    artifactId: artifacts[0]!.id,
-  }, timeline, elapsedSinceLast);
+  snapshot = pushTransition(
+    snapshot,
+    {
+      type: "issue_received",
+      issueId: issue.key,
+      artifactId: artifacts[0]!.id,
+    },
+    timeline,
+    elapsedSinceLast,
+  );
 
   await issueTracker.updateIssueStatus(issue.key, "planning");
   const plan = await runAssignedRole({
@@ -271,16 +403,26 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     runner: input.runner,
   });
   artifacts.push(plan);
-  snapshot = pushTransition(snapshot, {
-    type: "plan_drafted",
-    issueId: issue.key,
-    artifactId: plan.id,
-  }, timeline, elapsedSinceLast);
+  snapshot = pushTransition(
+    snapshot,
+    {
+      type: "plan_drafted",
+      issueId: issue.key,
+      artifactId: plan.id,
+    },
+    timeline,
+    elapsedSinceLast,
+  );
 
-  snapshot = pushTransition(snapshot, {
-    type: "plan_approved",
-    issueId: issue.key,
-  }, timeline, elapsedSinceLast);
+  snapshot = pushTransition(
+    snapshot,
+    {
+      type: "plan_approved",
+      issueId: issue.key,
+    },
+    timeline,
+    elapsedSinceLast,
+  );
 
   await input.publishPlan?.(plan);
   await issueTracker.updateIssueStatus(issue.key, "developing");
@@ -292,36 +434,47 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     runner: input.runner,
   });
   artifacts.push(attempt);
-  snapshot = pushTransition(snapshot, {
-    type: "developer_finished",
-    issueId: issue.key,
-    artifactId: attempt.id,
-  }, timeline, elapsedSinceLast);
+  snapshot = pushTransition(
+    snapshot,
+    {
+      type: "developer_finished",
+      issueId: issue.key,
+      artifactId: attempt.id,
+    },
+    timeline,
+    elapsedSinceLast,
+  );
 
   if (input.beforeVerification) {
-    artifacts.push(...await input.beforeVerification(artifacts));
+    artifacts.push(...(await input.beforeVerification(artifacts)));
   }
 
-  const verification: WorkflowArtifact = input.verificationArtifact
-    ?? (input.verify
+  const verification: WorkflowArtifact =
+    input.verificationArtifact ??
+    (input.verify
       ? await input.verify(artifacts)
       : {
-        id: `verifier:${issue.key}:local-check`,
-        kind: "verification.result",
-        source: "verifier",
-        payload: {
-          status: "passed",
-          command: "bun run check",
-          summary: "Local scripted verifier passed.",
-        },
-      });
+          id: `verifier:${issue.key}:local-check`,
+          kind: "verification.result",
+          source: "verifier",
+          payload: {
+            status: "passed",
+            command: "bun run check",
+            summary: "Local scripted verifier passed.",
+          },
+        });
   artifacts.push(verification);
   const verificationEvent = verificationEventForResult(verification);
-  snapshot = pushTransition(snapshot, {
-    type: verificationEvent,
-    issueId: issue.key,
-    artifactId: verification.id,
-  }, timeline, elapsedSinceLast);
+  snapshot = pushTransition(
+    snapshot,
+    {
+      type: verificationEvent,
+      issueId: issue.key,
+      artifactId: verification.id,
+    },
+    timeline,
+    elapsedSinceLast,
+  );
   if (verificationEvent === "verification_failed") {
     await issueTracker.updateIssueStatus(issue.key, snapshot.state);
     return {
@@ -344,11 +497,13 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
   const checkerEvent = checkerEventForVerdict(verdict);
   const developerChangedFiles = developerAttemptHasChanges(attempt);
   const checkerWorkflowEvent: WorkflowEvent = {
-    type: checkerEvent === "checker_passed" && !developerChangedFiles ? "work_satisfied" : checkerEvent,
+    type:
+      checkerEvent === "checker_passed" && !developerChangedFiles ? "work_satisfied" : checkerEvent,
     issueId: issue.key,
     artifactId: verdict.id,
   };
-  if (isCheckerVerdictPayload(verdict.payload)) checkerWorkflowEvent.reason = verdict.payload.summary;
+  if (isCheckerVerdictPayload(verdict.payload))
+    checkerWorkflowEvent.reason = verdict.payload.summary;
   snapshot = pushTransition(snapshot, checkerWorkflowEvent, timeline, elapsedSinceLast);
   if (checkerWorkflowEvent.type === "work_satisfied") {
     await issueTracker.updateIssueStatus(issue.key, snapshot.state);
@@ -384,19 +539,51 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     branch: `aigile/${issue.key}`,
     baseBranch: pullRequestTarget.baseBranch ?? "main",
     title: `${issue.key} ${issue.title}`,
-    body: [
-      `Plan: ${plan.id}`,
-      `Verification: ${verification.id}`,
-      `Checker: ${verdict.id}`,
-    ].join("\n"),
+    body: formatPullRequestBody(issue, plan, attempt, verification, verdict),
   });
-  await codeHost.recordCheckResult(pullRequest.id, {
-    name: "aigile/verifier",
-    status: "passed",
-    summary: "Local scripted verifier passed.",
-  });
-  await codeHost.submitPullRequestReview(pullRequest.id, checkerReviewForVerdict(verdict));
-  const pullRequestArtifact = pullRequestToArtifact(await codeHost.getPullRequest(pullRequest.id));
+  let pullRequestArtifact = pullRequestToArtifact(await codeHost.getPullRequest(pullRequest.id));
+  try {
+    await codeHost.appendPullRequestComment(pullRequest.id, formatDeveloperAttemptComment(attempt));
+    await codeHost.recordCheckResult(pullRequest.id, {
+      name: "aigile/verifier",
+      status: "passed",
+      summary: "Local scripted verifier passed.",
+    });
+    await codeHost.submitPullRequestReview(pullRequest.id, checkerReviewForVerdict(verdict));
+    await codeHost.appendPullRequestComment(
+      pullRequest.id,
+      formatFinalPullRequestSummary(verification, verdict),
+    );
+    pullRequestArtifact = pullRequestToArtifact(await codeHost.getPullRequest(pullRequest.id));
+  } catch (error) {
+    artifacts.push(pullRequestArtifact);
+    const message = errorMessage(error);
+    snapshot = pushTransition(
+      snapshot,
+      {
+        type: "publish_failed",
+        issueId: issue.key,
+        artifactId: pullRequestArtifact.id,
+        reason: message,
+      },
+      timeline,
+      elapsedSinceLast,
+    );
+    await issueTracker.updateIssueStatus(issue.key, snapshot.state);
+    return {
+      issueKey: issue.key,
+      finalState: snapshot.state,
+      pullRequest: pullRequestArtifact.payload,
+      publicationFailure: {
+        operation: "publish_pull_request_evidence",
+        message,
+        pullRequestUrl: pullRequestArtifact.payload.url,
+      },
+      artifacts,
+      timeline,
+      durationMs: timeline.reduce((total, entry) => total + entry.elapsedMs, 0),
+    };
+  }
   artifacts.push(pullRequestArtifact);
   if (checkerEvent !== "checker_passed") {
     await issueTracker.updateIssueStatus(issue.key, snapshot.state);
@@ -409,11 +596,16 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
       durationMs: timeline.reduce((total, entry) => total + entry.elapsedMs, 0),
     };
   }
-  snapshot = pushTransition(snapshot, {
-    type: "merge_completed",
-    issueId: issue.key,
-    artifactId: pullRequestArtifact.id,
-  }, timeline, elapsedSinceLast);
+  snapshot = pushTransition(
+    snapshot,
+    {
+      type: "merge_completed",
+      issueId: issue.key,
+      artifactId: pullRequestArtifact.id,
+    },
+    timeline,
+    elapsedSinceLast,
+  );
   await issueTracker.updateIssueStatus(issue.key, "merged");
 
   return {
@@ -518,16 +710,14 @@ export const runDemoIssueWithAcpRoles = async (
   return runDemoIssueWithRoles(roleInput);
 };
 
-export const runDemoIssueWithWorkspace = async (
-  input: DemoWorkspaceInput,
-): Promise<DemoResult> => {
+export const runDemoIssueWithWorkspace = async (input: DemoWorkspaceInput): Promise<DemoResult> => {
   const workspaceOptions = {
     repoPath: input.repoPath,
     worktreesPath: input.worktreesPath,
   };
-  const workspaceAdapter = createGitWorkspaceAdapter(input.exec === undefined
-    ? workspaceOptions
-    : { ...workspaceOptions, exec: input.exec });
+  const workspaceAdapter = createGitWorkspaceAdapter(
+    input.exec === undefined ? workspaceOptions : { ...workspaceOptions, exec: input.exec },
+  );
   const workspace = await workspaceAdapter.createIssueWorkspace({
     issueKey: input.issue.key,
     baseBranch: input.baseBranch ?? "main",
@@ -537,34 +727,36 @@ export const runDemoIssueWithWorkspace = async (
   const roleInput: DemoWithRolesInput = {
     issue: input.issue,
     registry: input.registry ?? createDemoRegistry(),
-    runner: input.runner ?? createScriptedRoleRunner({
-      architect: {
-        artifactKind: "architect.plan",
-        payload: {
-          summary: `Plan for ${input.issue.key}: ${input.issue.title}`,
-          scope: ["local workspace"],
-          acceptanceCriteria: input.issue.acceptanceCriteria,
-          verificationCommands: ["bun run check"],
-          risks: [],
+    runner:
+      input.runner ??
+      createScriptedRoleRunner({
+        architect: {
+          artifactKind: "architect.plan",
+          payload: {
+            summary: `Plan for ${input.issue.key}: ${input.issue.title}`,
+            scope: ["local workspace"],
+            acceptanceCriteria: input.issue.acceptanceCriteria,
+            verificationCommands: ["bun run check"],
+            risks: [],
+          },
         },
-      },
-      developer: {
-        artifactKind: "developer.attempt",
-        payload: {
-          summary: "Workspace implementation completed for local demo.",
-          changedFiles: ["packages/demo/src/run.ts"],
-          verificationNotes: "Verifier runs in the issue worktree.",
+        developer: {
+          artifactKind: "developer.attempt",
+          payload: {
+            summary: "Workspace implementation completed for local demo.",
+            changedFiles: ["packages/demo/src/run.ts"],
+            verificationNotes: "Verifier runs in the issue worktree.",
+          },
         },
-      },
-      checker: {
-        artifactKind: "checker.verdict",
-        payload: {
-          verdict: "pass",
-          summary: "Checker accepts workspace demo artifacts.",
-          reasons: [],
+        checker: {
+          artifactKind: "checker.verdict",
+          payload: {
+            verdict: "pass",
+            summary: "Checker accepts workspace demo artifacts.",
+            reasons: [],
+          },
         },
-      },
-    }),
+      }),
     initialArtifacts: [
       workspaceToArtifact(workspaceRolePayload(workspace, input), input.issue.key),
       executionPolicyToArtifact(input.issue.key, input.dryRun === true),
@@ -572,11 +764,12 @@ export const runDemoIssueWithWorkspace = async (
     beforeVerification: async () => [
       diffToArtifact(await workspaceAdapter.diffSummary(workspace), input.issue.key),
     ],
-    verify: async () => verifier.verify({
-      issueKey: input.issue.key,
-      workspacePath: workspace.worktreePath,
-      commands: [["bun", "run", "check"]],
-    }),
+    verify: async () =>
+      verifier.verify({
+        issueKey: input.issue.key,
+        workspacePath: workspace.worktreePath,
+        commands: [["bun", "run", "check"]],
+      }),
   };
   if (input.now !== undefined) roleInput.now = input.now;
   if (input.codeHost !== undefined) roleInput.codeHost = input.codeHost;
@@ -585,7 +778,8 @@ export const runDemoIssueWithWorkspace = async (
   if (input.publishPlan !== undefined) roleInput.publishPlan = input.publishPlan;
   if (input.publish) {
     roleInput.beforePullRequest = async () => {
-      const publisher = input.publisher ?? createGitPublisher(input.exec === undefined ? {} : { exec: input.exec });
+      const publisher =
+        input.publisher ?? createGitPublisher(input.exec === undefined ? {} : { exec: input.exec });
       await publisher.publish({
         worktreePath: workspace.worktreePath,
         branchName: workspace.branchName,
@@ -597,9 +791,7 @@ export const runDemoIssueWithWorkspace = async (
   return runDemoIssueWithRoles(roleInput);
 };
 
-export const runDemoIssueWithGitHub = async (
-  input: DemoGitHubInput,
-): Promise<DemoResult> => {
+export const runDemoIssueWithGitHub = async (input: DemoGitHubInput): Promise<DemoResult> => {
   const roleInput: DemoWithRolesInput = {
     issue: input.issue,
     registry: createDemoRegistry(),
@@ -631,20 +823,20 @@ export const runDemoIssueWithGitHub = async (
         },
       },
     }),
-    codeHost: createGitHubCliCodeHostAdapter(input.cwd === undefined
-      ? { exec: input.ghExec }
-      : { exec: input.ghExec, cwd: input.cwd }),
+    codeHost: createGitHubCliCodeHostAdapter(
+      input.cwd === undefined ? { exec: input.ghExec } : { exec: input.ghExec, cwd: input.cwd },
+    ),
   };
   if (input.now !== undefined) roleInput.now = input.now;
   return runDemoIssueWithRoles(roleInput);
 };
 
-export const runDemoIssueFromLinear = async (
-  input: DemoLinearInput,
-): Promise<DemoResult> => {
-  const issueTracker = createLinearGraphqlIssueTrackerAdapter(input.fetchGraphql === undefined
-    ? { apiKey: input.linearApiKey }
-    : { apiKey: input.linearApiKey, fetchGraphql: input.fetchGraphql });
+export const runDemoIssueFromLinear = async (input: DemoLinearInput): Promise<DemoResult> => {
+  const issueTracker = createLinearGraphqlIssueTrackerAdapter(
+    input.fetchGraphql === undefined
+      ? { apiKey: input.linearApiKey }
+      : { apiKey: input.linearApiKey, fetchGraphql: input.fetchGraphql },
+  );
   return runDemoIssue({
     issue: await issueTracker.getIssue(input.issueKey),
   });

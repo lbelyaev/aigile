@@ -1,7 +1,4 @@
-export {
-  issueToArtifact,
-  pullRequestToArtifact,
-} from "./contracts.js";
+export { issueToArtifact, pullRequestToArtifact } from "./contracts.js";
 
 export {
   compareReadyIssues,
@@ -14,9 +11,7 @@ export {
   createFakeReadyIssueSource,
 } from "./fakes.js";
 
-export {
-  createGitHubCliCodeHostAdapter,
-} from "./github-cli.js";
+export { createGitHubCliCodeHostAdapter } from "./github-cli.js";
 
 export {
   createLinearGraphqlIssueTrackerAdapter,

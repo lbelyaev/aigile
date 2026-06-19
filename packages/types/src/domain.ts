@@ -28,6 +28,7 @@ export const WORKFLOW_EVENT_TYPES = [
   "checker_requested_changes",
   "checker_escalated",
   "work_satisfied",
+  "publish_failed",
   "human_cancelled",
   "merge_completed",
   "timeout_elapsed",
@@ -120,8 +121,8 @@ const isKnownValue = <T extends readonly string[]>(values: T, value: unknown): v
   typeof value === "string" && values.includes(value);
 
 const isCapabilities = (value: unknown): value is AcpRuntimeCapabilities =>
-  isRecord(value)
-  && ["streaming", "permissionRequests", "sessionResume", "multimodal"].every((key) => {
+  isRecord(value) &&
+  ["streaming", "permissionRequests", "sessionResume", "multimodal"].every((key) => {
     const entry = value[key];
     return entry === undefined || typeof entry === "boolean";
   });
@@ -148,45 +149,45 @@ export const isAcpRuntimeProfile = (value: unknown): value is AcpRuntimeProfile 
 };
 
 export const isRoleAssignment = (value: unknown): value is RoleAssignment =>
-  isRecord(value)
-  && isNonEmptyString(value.roleId)
-  && isNonEmptyString(value.runtimeProfileId)
-  && (value.instructionRef === undefined || isNonEmptyString(value.instructionRef));
+  isRecord(value) &&
+  isNonEmptyString(value.roleId) &&
+  isNonEmptyString(value.runtimeProfileId) &&
+  (value.instructionRef === undefined || isNonEmptyString(value.instructionRef));
 
 const isRuntimeArtifactProvenance = (value: unknown): value is RuntimeArtifactProvenance =>
-  isRecord(value)
-  && isNonEmptyString(value.runtimeId)
-  && (value.runtimeDisplayName === undefined || isNonEmptyString(value.runtimeDisplayName))
-  && isKnownValue(["stdio", "http", "websocket"] as const, value.transport)
-  && (value.command === undefined || (Array.isArray(value.command) && value.command.every(isNonEmptyString)))
-  && isNonEmptyString(value.model)
-  && (value.tokenUsage === undefined || isRuntimeTokenUsage(value.tokenUsage));
+  isRecord(value) &&
+  isNonEmptyString(value.runtimeId) &&
+  (value.runtimeDisplayName === undefined || isNonEmptyString(value.runtimeDisplayName)) &&
+  isKnownValue(["stdio", "http", "websocket"] as const, value.transport) &&
+  (value.command === undefined ||
+    (Array.isArray(value.command) && value.command.every(isNonEmptyString))) &&
+  isNonEmptyString(value.model) &&
+  (value.tokenUsage === undefined || isRuntimeTokenUsage(value.tokenUsage));
 
 const isNonNegativeNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0;
 
 const isRuntimeTokenUsage = (value: unknown): value is RuntimeTokenUsage =>
-  isRecord(value)
-  && (value.inputTokens === undefined || isNonNegativeNumber(value.inputTokens))
-  && (value.outputTokens === undefined || isNonNegativeNumber(value.outputTokens))
-  && (value.totalTokens === undefined || isNonNegativeNumber(value.totalTokens));
+  isRecord(value) &&
+  (value.inputTokens === undefined || isNonNegativeNumber(value.inputTokens)) &&
+  (value.outputTokens === undefined || isNonNegativeNumber(value.outputTokens)) &&
+  (value.totalTokens === undefined || isNonNegativeNumber(value.totalTokens));
 
 const isArtifactProvenance = (value: unknown): value is ArtifactProvenance =>
-  isRecord(value)
-  && (value.runtime === undefined || isRuntimeArtifactProvenance(value.runtime));
+  isRecord(value) && (value.runtime === undefined || isRuntimeArtifactProvenance(value.runtime));
 
 export const isWorkflowArtifact = (value: unknown): value is WorkflowArtifact =>
-  isRecord(value)
-  && isNonEmptyString(value.id)
-  && isNonEmptyString(value.kind)
-  && isKnownValue(ARTIFACT_SOURCES, value.source)
-  && (value.producerRoleId === undefined || isNonEmptyString(value.producerRoleId))
-  && (value.provenance === undefined || isArtifactProvenance(value.provenance))
-  && "payload" in value;
+  isRecord(value) &&
+  isNonEmptyString(value.id) &&
+  isNonEmptyString(value.kind) &&
+  isKnownValue(ARTIFACT_SOURCES, value.source) &&
+  (value.producerRoleId === undefined || isNonEmptyString(value.producerRoleId)) &&
+  (value.provenance === undefined || isArtifactProvenance(value.provenance)) &&
+  "payload" in value;
 
 export const isWorkflowEvent = (value: unknown): value is WorkflowEvent =>
-  isRecord(value)
-  && isKnownValue(WORKFLOW_EVENT_TYPES, value.type)
-  && isNonEmptyString(value.issueId)
-  && (value.artifactId === undefined || isNonEmptyString(value.artifactId))
-  && (value.reason === undefined || isNonEmptyString(value.reason));
+  isRecord(value) &&
+  isKnownValue(WORKFLOW_EVENT_TYPES, value.type) &&
+  isNonEmptyString(value.issueId) &&
+  (value.artifactId === undefined || isNonEmptyString(value.artifactId)) &&
+  (value.reason === undefined || isNonEmptyString(value.reason));

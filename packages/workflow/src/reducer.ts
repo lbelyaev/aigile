@@ -51,18 +51,10 @@ export const initialWorkflowSnapshot = (issueId: string): WorkflowSnapshot => ({
   artifactIds: [],
 });
 
-const command = (
-  type: WorkflowCommandType,
-  issueId: string,
-  reason?: string,
-): WorkflowCommand => (
-  reason === undefined ? { type, issueId } : { type, issueId, reason }
-);
+const command = (type: WorkflowCommandType, issueId: string, reason?: string): WorkflowCommand =>
+  reason === undefined ? { type, issueId } : { type, issueId, reason };
 
-const withArtifact = (
-  snapshot: WorkflowSnapshot,
-  event: WorkflowEvent,
-): WorkflowSnapshot => {
+const withArtifact = (snapshot: WorkflowSnapshot, event: WorkflowEvent): WorkflowSnapshot => {
   if (event.artifactId === undefined) return snapshot;
   return {
     ...snapshot,
@@ -91,7 +83,9 @@ const illegalTransition = (state: WorkflowState, event: WorkflowEvent): never =>
 
 const ensureIssueMatches = (snapshot: WorkflowSnapshot, event: WorkflowEvent): void => {
   if (snapshot.issueId !== event.issueId) {
-    throw new Error(`Event issue "${event.issueId}" does not match workflow issue "${snapshot.issueId}"`);
+    throw new Error(
+      `Event issue "${event.issueId}" does not match workflow issue "${snapshot.issueId}"`,
+    );
   }
 };
 
@@ -109,15 +103,22 @@ const retryDevelopmentOrEscalate = (
   policy: Required<WorkflowPolicy>,
 ): TransitionResult => {
   if (!shouldRetryDevelopment(snapshot, policy)) {
-    return moveTo(snapshot, "escalated", [
-      command("request_human_attention", snapshot.issueId, event.reason),
-    ], event);
+    return moveTo(
+      snapshot,
+      "escalated",
+      [command("request_human_attention", snapshot.issueId, event.reason)],
+      event,
+    );
   }
 
   const nextAttempt = snapshot.developerAttempts + 1;
-  return moveTo(snapshot, "developing", [
-    command("start_developer_attempt", snapshot.issueId, event.reason),
-  ], event, nextAttempt);
+  return moveTo(
+    snapshot,
+    "developing",
+    [command("start_developer_attempt", snapshot.issueId, event.reason)],
+    event,
+    nextAttempt,
+  );
 };
 
 export const transitionWorkflow = (
@@ -134,61 +135,86 @@ export const transitionWorkflow = (
   }
 
   if (event.type === "human_cancelled") {
-    return moveTo(snapshot, "cancelled", [
-      command("sync_sources_of_truth", snapshot.issueId, event.reason),
-    ], event);
+    return moveTo(
+      snapshot,
+      "cancelled",
+      [command("sync_sources_of_truth", snapshot.issueId, event.reason)],
+      event,
+    );
   }
 
   if (event.type === "timeout_elapsed" || event.type === "budget_exceeded") {
-    return moveTo(snapshot, "escalated", [
-      command("request_human_attention", snapshot.issueId, event.reason),
-    ], event);
+    return moveTo(
+      snapshot,
+      "escalated",
+      [command("request_human_attention", snapshot.issueId, event.reason)],
+      event,
+    );
   }
 
   switch (snapshot.state) {
     case "new":
       if (event.type === "issue_received") {
-        return moveTo(snapshot, "planning", [
-          command("start_architect_plan", snapshot.issueId),
-        ], event);
+        return moveTo(
+          snapshot,
+          "planning",
+          [command("start_architect_plan", snapshot.issueId)],
+          event,
+        );
       }
       return illegalTransition(snapshot.state, event);
 
     case "planning":
       if (event.type === "plan_drafted") {
-        return moveTo(snapshot, "awaiting_plan_approval", [
-          command("request_plan_approval", snapshot.issueId),
-        ], event);
+        return moveTo(
+          snapshot,
+          "awaiting_plan_approval",
+          [command("request_plan_approval", snapshot.issueId)],
+          event,
+        );
       }
       return illegalTransition(snapshot.state, event);
 
     case "awaiting_plan_approval":
       if (event.type === "plan_approved") {
-        return moveTo(snapshot, "developing", [
-          command("start_developer_attempt", snapshot.issueId),
-        ], event, snapshot.developerAttempts + 1);
+        return moveTo(
+          snapshot,
+          "developing",
+          [command("start_developer_attempt", snapshot.issueId)],
+          event,
+          snapshot.developerAttempts + 1,
+        );
       }
       if (event.type === "plan_rejected") {
-        return moveTo(snapshot, "planning", [
-          command("start_architect_plan", snapshot.issueId, event.reason),
-        ], event);
+        return moveTo(
+          snapshot,
+          "planning",
+          [command("start_architect_plan", snapshot.issueId, event.reason)],
+          event,
+        );
       }
       return illegalTransition(snapshot.state, event);
 
     case "developing":
     case "changes_requested":
       if (event.type === "developer_finished") {
-        return moveTo(snapshot, "verifying", [
-          command("run_verification", snapshot.issueId),
-        ], event);
+        return moveTo(
+          snapshot,
+          "verifying",
+          [command("run_verification", snapshot.issueId)],
+          event,
+        );
       }
       return illegalTransition(snapshot.state, event);
 
     case "verifying":
       if (event.type === "verification_passed") {
-        return moveTo(snapshot, "checking", [
-          command("start_checker_review", snapshot.issueId),
-        ], event);
+        return moveTo(
+          snapshot,
+          "checking",
+          [command("start_checker_review", snapshot.issueId)],
+          event,
+        );
       }
       if (event.type === "verification_failed") {
         return retryDevelopmentOrEscalate(snapshot, event, policy);
@@ -197,30 +223,50 @@ export const transitionWorkflow = (
 
     case "checking":
       if (event.type === "work_satisfied") {
-        return moveTo(snapshot, "satisfied", [
-          command("sync_sources_of_truth", snapshot.issueId, event.reason),
-        ], event);
+        return moveTo(
+          snapshot,
+          "satisfied",
+          [command("sync_sources_of_truth", snapshot.issueId, event.reason)],
+          event,
+        );
       }
       if (event.type === "checker_passed") {
-        return moveTo(snapshot, "merge_ready", [
-          command("merge_pull_request", snapshot.issueId),
-        ], event);
+        return moveTo(
+          snapshot,
+          "merge_ready",
+          [command("merge_pull_request", snapshot.issueId)],
+          event,
+        );
       }
       if (event.type === "checker_requested_changes") {
         return retryDevelopmentOrEscalate(snapshot, event, policy);
       }
       if (event.type === "checker_escalated") {
-        return moveTo(snapshot, "escalated", [
-          command("request_human_attention", snapshot.issueId, event.reason),
-        ], event);
+        return moveTo(
+          snapshot,
+          "escalated",
+          [command("request_human_attention", snapshot.issueId, event.reason)],
+          event,
+        );
       }
       return illegalTransition(snapshot.state, event);
 
     case "merge_ready":
+      if (event.type === "publish_failed") {
+        return moveTo(
+          snapshot,
+          "escalated",
+          [command("request_human_attention", snapshot.issueId, event.reason)],
+          event,
+        );
+      }
       if (event.type === "merge_completed") {
-        return moveTo(snapshot, "merged", [
-          command("sync_sources_of_truth", snapshot.issueId),
-        ], event);
+        return moveTo(
+          snapshot,
+          "merged",
+          [command("sync_sources_of_truth", snapshot.issueId)],
+          event,
+        );
       }
       return illegalTransition(snapshot.state, event);
 

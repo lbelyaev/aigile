@@ -55,7 +55,7 @@ export interface CodeHostAdapter {
   createPullRequest: (input: PullRequestInput) => Promise<PullRequestRecord>;
   getPullRequest: (id: string) => Promise<PullRequestRecord>;
   appendPullRequestComment: (id: string, comment: string) => Promise<void>;
-  submitPullRequestReview: (id: string, input: PullRequestReviewInput) => Promise<void>;
+  submitPullRequestReview: (id: string, review: PullRequestReviewInput) => Promise<void>;
   recordCheckResult: (id: string, result: CheckResult) => Promise<void>;
 }
 

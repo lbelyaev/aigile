@@ -280,11 +280,13 @@ describe("fake source-of-truth adapters", () => {
 
     expect(await codeHost.getPullRequest(pr.id)).toMatchObject({
       comments: ["Verifier passed"],
-      checks: [{
-        name: "aigile/verifier",
-        status: "passed",
-        summary: "All commands passed",
-      }],
+      checks: [
+        {
+          name: "aigile/verifier",
+          status: "passed",
+          summary: "All commands passed",
+        },
+      ],
       reviews: [
         { event: "approve", body: "Checker passed" },
         { event: "request_changes", body: "Checker requested changes" },

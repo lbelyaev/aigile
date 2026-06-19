@@ -60,30 +60,32 @@ describe("cli formatting", () => {
   });
 
   it("formats demo output for hand testing", () => {
-    expect(formatDemoResult({
-      issueKey: "LIN-123",
-      finalState: "merged",
-      pullRequest: {
-        id: "aigile/aigile#1",
-        number: 1,
-        url: "https://github.local/aigile/aigile/pull/1",
-        owner: "aigile",
-        repo: "aigile",
-        branch: "aigile/LIN-123",
-        baseBranch: "main",
-        title: "LIN-123 Build hand-testable pipeline",
-        body: "Demo PR",
-        comments: [],
-        checks: [],
-        reviews: [],
-      },
-      artifacts: [],
-      timeline: [
-        { label: "issue_received -> planning", elapsedMs: 0 },
-        { label: "merge_completed -> merged", elapsedMs: 1250 },
-      ],
-      durationMs: 1250,
-    })).toContain("Final state: merged");
+    expect(
+      formatDemoResult({
+        issueKey: "LIN-123",
+        finalState: "merged",
+        pullRequest: {
+          id: "aigile/aigile#1",
+          number: 1,
+          url: "https://github.local/aigile/aigile/pull/1",
+          owner: "aigile",
+          repo: "aigile",
+          branch: "aigile/LIN-123",
+          baseBranch: "main",
+          title: "LIN-123 Build hand-testable pipeline",
+          body: "Demo PR",
+          comments: [],
+          checks: [],
+          reviews: [],
+        },
+        artifacts: [],
+        timeline: [
+          { label: "issue_received -> planning", elapsedMs: 0 },
+          { label: "merge_completed -> merged", elapsedMs: 1250 },
+        ],
+        durationMs: 1250,
+      }),
+    ).toContain("Final state: merged");
   });
 
   it("formats runs that stop before pull request creation", () => {
@@ -91,9 +93,7 @@ describe("cli formatting", () => {
       issueKey: "LIN-123",
       finalState: "escalated",
       artifacts: [],
-      timeline: [
-        { label: "checker_escalated -> escalated", elapsedMs: 1_000 },
-      ],
+      timeline: [{ label: "checker_escalated -> escalated", elapsedMs: 1_000 }],
       durationMs: 1_000,
     });
 
@@ -119,17 +119,19 @@ describe("cli formatting", () => {
         checks: [],
         reviews: [],
       },
-      artifacts: [{
-        id: "policy:LIN-456:dry-run",
-        kind: "execution.policy",
-        source: "system",
-        payload: {
-          mode: "dry_run",
-          fileWrites: "forbidden",
-          commits: "forbidden",
-          shellCommands: "read_only",
+      artifacts: [
+        {
+          id: "policy:LIN-456:dry-run",
+          kind: "execution.policy",
+          source: "system",
+          payload: {
+            mode: "dry_run",
+            fileWrites: "forbidden",
+            commits: "forbidden",
+            shellCommands: "read_only",
+          },
         },
-      }],
+      ],
       timeline: [
         { label: "issue_received -> planning", elapsedMs: 0 },
         { label: "merge_completed -> merged", elapsedMs: 61_200 },
@@ -139,7 +141,9 @@ describe("cli formatting", () => {
 
     expect(output).toContain("Mode: dry_run (simulated)");
     expect(output).toContain("Workflow state: merged");
-    expect(output).toContain("External side effects: none (workspace, GitHub, and source-of-truth updates simulated)");
+    expect(output).toContain(
+      "External side effects: none (workspace, GitHub, and source-of-truth updates simulated)",
+    );
     expect(output).toContain("Pull request: simulated https://github.local/aigile/aigile/pull/1");
     expect(output).not.toContain("Final state: merged");
   });
@@ -148,21 +152,21 @@ describe("cli formatting", () => {
     const output = formatDemoResult({
       issueKey: "LIN-794",
       finalState: "merge_ready",
-      artifacts: [{
-        id: "policy:LIN-794:agent-write",
-        kind: "execution.policy",
-        source: "system",
-        payload: {
-          mode: "agent_write",
-          fileWrites: "allowed",
-          commits: "forbidden",
-          pushes: "forbidden",
-          shellCommands: "workspace",
+      artifacts: [
+        {
+          id: "policy:LIN-794:agent-write",
+          kind: "execution.policy",
+          source: "system",
+          payload: {
+            mode: "agent_write",
+            fileWrites: "allowed",
+            commits: "forbidden",
+            pushes: "forbidden",
+            shellCommands: "workspace",
+          },
         },
-      }],
-      timeline: [
-        { label: "checker_passed -> merge_ready", elapsedMs: 1_000 },
       ],
+      timeline: [{ label: "checker_passed -> merge_ready", elapsedMs: 1_000 }],
       durationMs: 1_000,
     });
 
@@ -223,42 +227,45 @@ describe("cli formatting", () => {
         checks: [],
         reviews: [],
       },
-      artifacts: [{
-        id: "agent:LIN-123:architect:architect.plan",
-        kind: "architect.plan",
-        source: "agent",
-        producerRoleId: "architect",
-        provenance: {
-          runtime: {
-            runtimeId: "claude-acp",
-            transport: "stdio",
-            model: "runtime-default",
-            tokenUsage: {
-              inputTokens: 1200,
-              outputTokens: 500,
-              totalTokens: 999_999,
+      artifacts: [
+        {
+          id: "agent:LIN-123:architect:architect.plan",
+          kind: "architect.plan",
+          source: "agent",
+          producerRoleId: "architect",
+          provenance: {
+            runtime: {
+              runtimeId: "claude-acp",
+              transport: "stdio",
+              model: "runtime-default",
+              tokenUsage: {
+                inputTokens: 1200,
+                outputTokens: 500,
+                totalTokens: 999_999,
+              },
             },
           },
+          payload: {},
         },
-        payload: {},
-      }, {
-        id: "agent:LIN-123:developer:developer.attempt",
-        kind: "developer.attempt",
-        source: "agent",
-        producerRoleId: "developer",
-        provenance: {
-          runtime: {
-            runtimeId: "codex-acp",
-            transport: "stdio",
-            model: "runtime-default",
-            tokenUsage: {
-              inputTokens: 300,
-              outputTokens: 100,
+        {
+          id: "agent:LIN-123:developer:developer.attempt",
+          kind: "developer.attempt",
+          source: "agent",
+          producerRoleId: "developer",
+          provenance: {
+            runtime: {
+              runtimeId: "codex-acp",
+              transport: "stdio",
+              model: "runtime-default",
+              tokenUsage: {
+                inputTokens: 300,
+                outputTokens: 100,
+              },
             },
           },
+          payload: {},
         },
-        payload: {},
-      }],
+      ],
       timeline: [],
       durationMs: 0,
     });
@@ -283,46 +290,56 @@ describe("cli formatting", () => {
   });
 
   it("formats ACP role progress for hand testing", () => {
-    expect(formatAcpRoleProgress({
-      type: "runtime_connected",
-      roleId: "architect",
-      issueId: "LIN-123",
-      runtimeId: "claude-acp",
-      model: "runtime-default",
-      acpSessionId: "acp-1",
-    })).toBe("[LIN-123 architect] connected claude-acp model runtime-default session acp-1");
-    expect(formatAcpRoleProgress({
-      type: "tool_start",
-      roleId: "developer",
-      issueId: "LIN-123",
-      runtimeId: "codex-acp",
-      tool: "Bash",
-    })).toBe("[LIN-123 developer] tool started: Bash");
-    expect(formatAcpRoleProgress({
-      type: "permission_decision",
-      roleId: "developer",
-      issueId: "LIN-123",
-      runtimeId: "codex-acp",
-      tool: "Bash",
-      decision: "reject_once",
-      description: JSON.stringify({ command: "git commit -m test" }),
-    })).toBe("[LIN-123 developer] permission reject_once: Bash {\"command\":\"git commit -m test\"}");
-    expect(formatAcpRoleProgress({
-      type: "policy_violation",
-      roleId: "architect",
-      issueId: "LIN-123",
-      runtimeId: "claude-acp",
-      reason: "broad_discovery",
-      detail: "find /repo/aigile -type f",
-    })).toBe("[LIN-123 architect] policy violation broad_discovery: find /repo/aigile -type f");
-    expect(formatAcpRoleProgress({
-      type: "policy_violation",
-      roleId: "architect",
-      issueId: "LIN-123",
-      runtimeId: "claude-acp",
-      reason: "file_read_budget",
-      detail: "6/5 Read File",
-    })).toBe("[LIN-123 architect] policy violation file_read_budget: 6/5 Read File");
+    expect(
+      formatAcpRoleProgress({
+        type: "runtime_connected",
+        roleId: "architect",
+        issueId: "LIN-123",
+        runtimeId: "claude-acp",
+        model: "runtime-default",
+        acpSessionId: "acp-1",
+      }),
+    ).toBe("[LIN-123 architect] connected claude-acp model runtime-default session acp-1");
+    expect(
+      formatAcpRoleProgress({
+        type: "tool_start",
+        roleId: "developer",
+        issueId: "LIN-123",
+        runtimeId: "codex-acp",
+        tool: "Bash",
+      }),
+    ).toBe("[LIN-123 developer] tool started: Bash");
+    expect(
+      formatAcpRoleProgress({
+        type: "permission_decision",
+        roleId: "developer",
+        issueId: "LIN-123",
+        runtimeId: "codex-acp",
+        tool: "Bash",
+        decision: "reject_once",
+        description: JSON.stringify({ command: "git commit -m test" }),
+      }),
+    ).toBe('[LIN-123 developer] permission reject_once: Bash {"command":"git commit -m test"}');
+    expect(
+      formatAcpRoleProgress({
+        type: "policy_violation",
+        roleId: "architect",
+        issueId: "LIN-123",
+        runtimeId: "claude-acp",
+        reason: "broad_discovery",
+        detail: "find /repo/aigile -type f",
+      }),
+    ).toBe("[LIN-123 architect] policy violation broad_discovery: find /repo/aigile -type f");
+    expect(
+      formatAcpRoleProgress({
+        type: "policy_violation",
+        roleId: "architect",
+        issueId: "LIN-123",
+        runtimeId: "claude-acp",
+        reason: "file_read_budget",
+        detail: "6/5 Read File",
+      }),
+    ).toBe("[LIN-123 architect] policy violation file_read_budget: 6/5 Read File");
   });
 
   it("coalesces small ACP text deltas before printing progress", () => {
@@ -333,11 +350,13 @@ describe("cli formatting", () => {
       runtimeId: "codex-acp",
     };
 
-    expect(formatter.format({ type: "text_delta", ...base, delta: "{\"artifact" })).toEqual([]);
-    expect(formatter.format({ type: "text_delta", ...base, delta: "Kind\":\"developer" })).toEqual([]);
-    expect(formatter.format({ type: "text_delta", ...base, delta: ".attempt\"" })).toEqual([]);
+    expect(formatter.format({ type: "text_delta", ...base, delta: '{"artifact' })).toEqual([]);
+    expect(formatter.format({ type: "text_delta", ...base, delta: 'Kind":"developer' })).toEqual(
+      [],
+    );
+    expect(formatter.format({ type: "text_delta", ...base, delta: '.attempt"' })).toEqual([]);
     expect(formatter.format({ type: "tool_start", ...base, tool: "Read File" })).toEqual([
-      "[LIN-123 developer] text: {\"artifactKind\":\"developer.attempt\"",
+      '[LIN-123 developer] text: {"artifactKind":"developer.attempt"',
       "[LIN-123 developer] tool started: Read File",
     ]);
   });
@@ -353,9 +372,7 @@ describe("cli formatting", () => {
     expect(formatter.format({ type: "text_delta", ...base, delta: "line one\nline two" })).toEqual([
       "[LIN-123 architect] text: line one",
     ]);
-    expect(formatter.flush()).toEqual([
-      "[LIN-123 architect] text: line two",
-    ]);
+    expect(formatter.flush()).toEqual(["[LIN-123 architect] text: line two"]);
     expect(formatter.flush()).toEqual([]);
   });
 
@@ -368,24 +385,28 @@ describe("cli formatting", () => {
   });
 
   it("parses runtime config path from argv", () => {
-    expect(parseCliArgs(["demo:agents", "--runtime-config", "config/aigile.runtimes.json"])).toEqual({
+    expect(
+      parseCliArgs(["demo:agents", "--runtime-config", "config/aigile.runtimes.json"]),
+    ).toEqual({
       mode: "agents",
       runtimeConfigPath: "config/aigile.runtimes.json",
     });
   });
 
   it("parses real run arguments", () => {
-    expect(parseCliArgs([
-      "run",
-      "LIN-123",
-      "--runtime-config",
-      "config/aigile.runtimes.json",
-      "--repo",
-      "/repo/aigile",
-      "--worktrees",
-      "/repo/aigile/.worktrees",
-      "--dry-run",
-    ])).toEqual({
+    expect(
+      parseCliArgs([
+        "run",
+        "LIN-123",
+        "--runtime-config",
+        "config/aigile.runtimes.json",
+        "--repo",
+        "/repo/aigile",
+        "--worktrees",
+        "/repo/aigile/.worktrees",
+        "--dry-run",
+      ]),
+    ).toEqual({
       mode: "run",
       issueKey: "LIN-123",
       runtimeConfigPath: "config/aigile.runtimes.json",
@@ -396,16 +417,18 @@ describe("cli formatting", () => {
   });
 
   it("parses Linear-backed run arguments", () => {
-    expect(parseCliArgs([
-      "run",
-      "LBE-5",
-      "--linear",
-      "--linear-team",
-      "LBE",
-      "--linear-api-key-env",
-      "AIGILE_LINEAR_API_KEY",
-      "--agent-write",
-    ])).toEqual({
+    expect(
+      parseCliArgs([
+        "run",
+        "LBE-5",
+        "--linear",
+        "--linear-team",
+        "LBE",
+        "--linear-api-key-env",
+        "AIGILE_LINEAR_API_KEY",
+        "--agent-write",
+      ]),
+    ).toEqual({
       mode: "run",
       issueKey: "LBE-5",
       linear: true,
@@ -416,13 +439,15 @@ describe("cli formatting", () => {
   });
 
   it("parses explicit agent-write run arguments", () => {
-    expect(parseCliArgs([
-      "run",
-      "LIN-124",
-      "--runtime-config",
-      "config/aigile.runtimes.json",
-      "--agent-write",
-    ])).toEqual({
+    expect(
+      parseCliArgs([
+        "run",
+        "LIN-124",
+        "--runtime-config",
+        "config/aigile.runtimes.json",
+        "--agent-write",
+      ]),
+    ).toEqual({
       mode: "run",
       issueKey: "LIN-124",
       runtimeConfigPath: "config/aigile.runtimes.json",
@@ -431,38 +456,46 @@ describe("cli formatting", () => {
   });
 
   it("rejects conflicting run execution modes", () => {
-    expect(() => parseCliArgs([
-      "run",
-      "LIN-124",
-      "--dry-run",
-      "--agent-write",
-    ])).toThrow(/choose only one/i);
+    expect(() => parseCliArgs(["run", "LIN-124", "--dry-run", "--agent-write"])).toThrow(
+      /choose only one/i,
+    );
   });
 
   it("dry-run exec treats workspace collision probes as absent", async () => {
     const exec = createDryRunExec();
 
-    await expect(exec("test", ["-e", "/repo/aigile/.worktrees/LIN-456"], { cwd: "/repo/aigile" }))
-      .resolves.toMatchObject({ exitCode: 1 });
-    await expect(exec("git", ["show-ref", "--verify", "--quiet", "refs/heads/aigile/LIN-456"], { cwd: "/repo/aigile" }))
-      .resolves.toMatchObject({ exitCode: 1 });
-    await expect(exec("git", ["worktree", "add", "-b", "aigile/LIN-456", "/repo/aigile/.worktrees/LIN-456", "main"], { cwd: "/repo/aigile" }))
-      .resolves.toMatchObject({ exitCode: 0 });
+    await expect(
+      exec("test", ["-e", "/repo/aigile/.worktrees/LIN-456"], { cwd: "/repo/aigile" }),
+    ).resolves.toMatchObject({ exitCode: 1 });
+    await expect(
+      exec("git", ["show-ref", "--verify", "--quiet", "refs/heads/aigile/LIN-456"], {
+        cwd: "/repo/aigile",
+      }),
+    ).resolves.toMatchObject({ exitCode: 1 });
+    await expect(
+      exec(
+        "git",
+        ["worktree", "add", "-b", "aigile/LIN-456", "/repo/aigile/.worktrees/LIN-456", "main"],
+        { cwd: "/repo/aigile" },
+      ),
+    ).resolves.toMatchObject({ exitCode: 0 });
   });
 
   it("parses concrete task fields for real runs", () => {
-    expect(parseCliArgs([
-      "run",
-      "LIN-456",
-      "--title",
-      "Bound ACP role runs",
-      "--description",
-      "Keep live agent hand tests focused.",
-      "--acceptance",
-      "Architect returns a plan without broad repo discovery",
-      "--acceptance",
-      "CLI streams role progress",
-    ])).toEqual({
+    expect(
+      parseCliArgs([
+        "run",
+        "LIN-456",
+        "--title",
+        "Bound ACP role runs",
+        "--description",
+        "Keep live agent hand tests focused.",
+        "--acceptance",
+        "Architect returns a plan without broad repo discovery",
+        "--acceptance",
+        "CLI streams role progress",
+      ]),
+    ).toEqual({
       mode: "run",
       issueKey: "LIN-456",
       title: "Bound ACP role runs",
@@ -475,18 +508,20 @@ describe("cli formatting", () => {
   });
 
   it("parses publish arguments for real runs", () => {
-    expect(parseCliArgs([
-      "run",
-      "LIN-789",
-      "--publish",
-      "--preflight-only",
-      "--github-repo",
-      "acme/project",
-      "--remote",
-      "upstream",
-      "--base-branch",
-      "develop",
-    ])).toEqual({
+    expect(
+      parseCliArgs([
+        "run",
+        "LIN-789",
+        "--publish",
+        "--preflight-only",
+        "--github-repo",
+        "acme/project",
+        "--remote",
+        "upstream",
+        "--base-branch",
+        "develop",
+      ]),
+    ).toEqual({
       mode: "run",
       issueKey: "LIN-789",
       publish: true,
@@ -498,16 +533,18 @@ describe("cli formatting", () => {
   });
 
   it("parses status arguments", () => {
-    expect(parseCliArgs([
-      "status",
-      "LIN-795",
-      "--repo",
-      "/repo/aigile",
-      "--worktrees",
-      "/repo/aigile/.worktrees",
-      "--base-branch",
-      "develop",
-    ])).toEqual({
+    expect(
+      parseCliArgs([
+        "status",
+        "LIN-795",
+        "--repo",
+        "/repo/aigile",
+        "--worktrees",
+        "/repo/aigile/.worktrees",
+        "--base-branch",
+        "develop",
+      ]),
+    ).toEqual({
       mode: "status",
       issueKey: "LIN-795",
       repoPath: "/repo/aigile",
@@ -517,20 +554,22 @@ describe("cli formatting", () => {
   });
 
   it("parses watch-once issue arguments", () => {
-    expect(parseCliArgs([
-      "watch",
-      "--once",
-      "--issue",
-      "LIN-900",
-      "--title",
-      "Watcher skeleton",
-      "--description",
-      "Claim a ready issue.",
-      "--acceptance",
-      "Ready issue is claimed",
-      "--claim-status",
-      "aigile:claimed",
-    ])).toEqual({
+    expect(
+      parseCliArgs([
+        "watch",
+        "--once",
+        "--issue",
+        "LIN-900",
+        "--title",
+        "Watcher skeleton",
+        "--description",
+        "Claim a ready issue.",
+        "--acceptance",
+        "Ready issue is claimed",
+        "--claim-status",
+        "aigile:claimed",
+      ]),
+    ).toEqual({
       mode: "watch",
       once: true,
       issueKey: "LIN-900",
@@ -542,19 +581,21 @@ describe("cli formatting", () => {
   });
 
   it("parses Linear watch-once arguments", () => {
-    expect(parseCliArgs([
-      "watch",
-      "--once",
-      "--linear",
-      "--linear-team",
-      "ENG",
-      "--ready-status",
-      "Ready for Aigile",
-      "--claim-status",
-      "In Progress",
-      "--linear-api-key-env",
-      "AIGILE_LINEAR_API_KEY",
-    ])).toEqual({
+    expect(
+      parseCliArgs([
+        "watch",
+        "--once",
+        "--linear",
+        "--linear-team",
+        "ENG",
+        "--ready-status",
+        "Ready for Aigile",
+        "--claim-status",
+        "In Progress",
+        "--linear-api-key-env",
+        "AIGILE_LINEAR_API_KEY",
+      ]),
+    ).toEqual({
       mode: "watch",
       once: true,
       linear: true,
@@ -566,15 +607,17 @@ describe("cli formatting", () => {
   });
 
   it("parses Linear watch preflight arguments without once", () => {
-    expect(parseCliArgs([
-      "watch",
-      "--linear",
-      "--preflight",
-      "--linear-team",
-      "ENG",
-      "--linear-api-key-env",
-      "AIGILE_LINEAR_API_KEY",
-    ])).toEqual({
+    expect(
+      parseCliArgs([
+        "watch",
+        "--linear",
+        "--preflight",
+        "--linear-team",
+        "ENG",
+        "--linear-api-key-env",
+        "AIGILE_LINEAR_API_KEY",
+      ]),
+    ).toEqual({
       mode: "watch",
       preflightOnly: true,
       linear: true,
@@ -584,20 +627,22 @@ describe("cli formatting", () => {
   });
 
   it("parses Linear watch loop arguments without once", () => {
-    expect(parseCliArgs([
-      "watch",
-      "--linear",
-      "--linear-team",
-      "LBE",
-      "--ready-status",
-      "Todo",
-      "--claim-status",
-      "In Progress",
-      "--poll-interval",
-      "30s",
-      "--max-polls",
-      "2",
-    ])).toEqual({
+    expect(
+      parseCliArgs([
+        "watch",
+        "--linear",
+        "--linear-team",
+        "LBE",
+        "--ready-status",
+        "Todo",
+        "--claim-status",
+        "In Progress",
+        "--poll-interval",
+        "30s",
+        "--max-polls",
+        "2",
+      ]),
+    ).toEqual({
       mode: "watch",
       linear: true,
       linearTeam: "LBE",
@@ -609,33 +654,35 @@ describe("cli formatting", () => {
   });
 
   it("parses Linear watch start-run arguments", () => {
-    expect(parseCliArgs([
-      "watch",
-      "--linear",
-      "--linear-team",
-      "LBE",
-      "--ready-status",
-      "Todo",
-      "--claim-status",
-      "In Progress",
-      "--poll-interval",
-      "30s",
-      "--max-polls",
-      "1",
-      "--start-run",
-      "--runtime-config",
-      "config/aigile.runtimes.example.json",
-      "--repo",
-      "/repo/aigile",
-      "--worktrees",
-      "/repo/aigile/.worktrees",
-      "--agent-write",
-      "--publish",
-      "--github-repo",
-      "lbelyaev/aigile",
-      "--remote",
-      "origin",
-    ])).toEqual({
+    expect(
+      parseCliArgs([
+        "watch",
+        "--linear",
+        "--linear-team",
+        "LBE",
+        "--ready-status",
+        "Todo",
+        "--claim-status",
+        "In Progress",
+        "--poll-interval",
+        "30s",
+        "--max-polls",
+        "1",
+        "--start-run",
+        "--runtime-config",
+        "config/aigile.runtimes.example.json",
+        "--repo",
+        "/repo/aigile",
+        "--worktrees",
+        "/repo/aigile/.worktrees",
+        "--agent-write",
+        "--publish",
+        "--github-repo",
+        "lbelyaev/aigile",
+        "--remote",
+        "origin",
+      ]),
+    ).toEqual({
       mode: "watch",
       linear: true,
       linearTeam: "LBE",
@@ -659,41 +706,46 @@ describe("cli formatting", () => {
   });
 
   it("rejects invalid watch loop bounds", () => {
-    expect(() => parseCliArgs([
-      "watch",
-      "--linear",
-      "--linear-team",
-      "LBE",
-      "--poll-interval",
-      "30s",
-      "--max-polls",
-      "never",
-    ])).toThrow(/--max-polls must be a positive integer/i);
+    expect(() =>
+      parseCliArgs([
+        "watch",
+        "--linear",
+        "--linear-team",
+        "LBE",
+        "--poll-interval",
+        "30s",
+        "--max-polls",
+        "never",
+      ]),
+    ).toThrow(/--max-polls must be a positive integer/i);
   });
 
   it("rejects start-run without runtime config or execution mode", () => {
-    expect(() => parseCliArgs([
-      "watch",
-      "--linear",
-      "--linear-team",
-      "LBE",
-      "--poll-interval",
-      "30s",
-      "--start-run",
-    ])).toThrow(/requires --runtime-config/i);
-    expect(() => parseCliArgs([
-      "watch",
-      "--linear",
-      "--linear-team",
-      "LBE",
-      "--poll-interval",
-      "30s",
-      "--start-run",
-      "--runtime-config",
-      "config/aigile.runtimes.example.json",
-    ])).toThrow(/requires --dry-run or --agent-write/i);
+    expect(() =>
+      parseCliArgs([
+        "watch",
+        "--linear",
+        "--linear-team",
+        "LBE",
+        "--poll-interval",
+        "30s",
+        "--start-run",
+      ]),
+    ).toThrow(/requires --runtime-config/i);
+    expect(() =>
+      parseCliArgs([
+        "watch",
+        "--linear",
+        "--linear-team",
+        "LBE",
+        "--poll-interval",
+        "30s",
+        "--start-run",
+        "--runtime-config",
+        "config/aigile.runtimes.example.json",
+      ]),
+    ).toThrow(/requires --dry-run or --agent-write/i);
   });
-
 
   it("runs a local watch-once claim without starting agents", async () => {
     const output = await runWatchOnceCli({
@@ -727,14 +779,16 @@ describe("cli formatting", () => {
         if (query.includes("ReadyIssues")) {
           return {
             issues: {
-              nodes: [{
-                id: "issue-id",
-                identifier: "LIN-900",
-                title: "Watcher skeleton",
-                description: "Acceptance:\n- Claim it",
-                state: { name: "Ready for Aigile" },
-                comments: { nodes: [] },
-              }],
+              nodes: [
+                {
+                  id: "issue-id",
+                  identifier: "LIN-900",
+                  title: "Watcher skeleton",
+                  description: "Acceptance:\n- Claim it",
+                  state: { name: "Ready for Aigile" },
+                  comments: { nodes: [] },
+                },
+              ],
             },
           };
         }
@@ -798,14 +852,16 @@ describe("cli formatting", () => {
       },
     });
 
-    expect(output).toBe([
-      "Aigile watch: preflight",
-      "Provider: linear",
-      "Teams:",
-      "- ENG (Engineering)",
-      "- OPS (Operations)",
-      "Agents: not started",
-    ].join("\n"));
+    expect(output).toBe(
+      [
+        "Aigile watch: preflight",
+        "Provider: linear",
+        "Teams:",
+        "- ENG (Engineering)",
+        "- OPS (Operations)",
+        "Agents: not started",
+      ].join("\n"),
+    );
     expect(calls.map((call) => call.variables)).toEqual([{ first: 100 }]);
     expect(calls.some((call) => call.query.includes("mutation"))).toBe(false);
     expect(calls.some((call) => call.query.includes("issueUpdate"))).toBe(false);
@@ -823,19 +879,14 @@ describe("cli formatting", () => {
         if (query.includes("LinearTeams")) {
           return {
             teams: {
-              nodes: [
-                { key: "ENG", name: "Engineering" },
-              ],
+              nodes: [{ key: "ENG", name: "Engineering" }],
             },
           };
         }
         if (query.includes("WorkflowStatesByTeam")) {
           return {
             workflowStates: {
-              nodes: [
-                { name: "Ready for Aigile" },
-                { name: "In Progress" },
-              ],
+              nodes: [{ name: "Ready for Aigile" }, { name: "In Progress" }],
             },
           };
         }
@@ -843,16 +894,18 @@ describe("cli formatting", () => {
       },
     });
 
-    expect(output).toBe([
-      "Aigile watch: preflight",
-      "Provider: linear",
-      "Teams:",
-      "- ENG (Engineering)",
-      "Workflow states (ENG):",
-      "- Ready for Aigile",
-      "- In Progress",
-      "Agents: not started",
-    ].join("\n"));
+    expect(output).toBe(
+      [
+        "Aigile watch: preflight",
+        "Provider: linear",
+        "Teams:",
+        "- ENG (Engineering)",
+        "Workflow states (ENG):",
+        "- Ready for Aigile",
+        "- In Progress",
+        "Agents: not started",
+      ].join("\n"),
+    );
     expect(calls.map((call) => call.variables)).toEqual([
       { first: 100 },
       { teamKey: "ENG", first: 100 },
@@ -876,14 +929,16 @@ describe("cli formatting", () => {
         if (query.includes("ReadyIssues")) {
           return {
             issues: {
-              nodes: [{
-                id: "issue-id",
-                identifier: "LBE-5",
-                title: "Add Linear watch preflight",
-                description: "Acceptance:\n- It runs",
-                state: { name: "Todo" },
-                comments: { nodes: [] },
-              }],
+              nodes: [
+                {
+                  id: "issue-id",
+                  identifier: "LBE-5",
+                  title: "Add Linear watch preflight",
+                  description: "Acceptance:\n- It runs",
+                  state: { name: "Todo" },
+                  comments: { nodes: [] },
+                },
+              ],
             },
           };
         }
@@ -943,14 +998,16 @@ describe("cli formatting", () => {
         if (query.includes("ReadyIssues")) {
           return {
             issues: {
-              nodes: [{
-                id: "issue-id",
-                identifier: "LBE-6",
-                title: "Start Linear-claimed issues automatically",
-                description: "Acceptance:\n- Starts run",
-                state: { name: "Todo" },
-                comments: { nodes: [] },
-              }],
+              nodes: [
+                {
+                  id: "issue-id",
+                  identifier: "LBE-6",
+                  title: "Start Linear-claimed issues automatically",
+                  description: "Acceptance:\n- Starts run",
+                  state: { name: "Todo" },
+                  comments: { nodes: [] },
+                },
+              ],
             },
           };
         }
@@ -1096,21 +1153,24 @@ describe("cli formatting", () => {
       runWorkspace: async (input) => ({
         issueKey: input.issue.key,
         finalState: "satisfied",
-        artifacts: [{
-          id: "verifier:LBE-6:local",
-          kind: "verification.result",
-          source: "verifier",
-          payload: { status: "passed", commands: [] },
-        }, {
-          id: "agent:LBE-6:checker:checker.verdict",
-          kind: "checker.verdict",
-          source: "agent",
-          payload: {
-            verdict: "pass",
-            summary: "Existing implementation satisfies the issue.",
-            reasons: ["No code changes required"],
+        artifacts: [
+          {
+            id: "verifier:LBE-6:local",
+            kind: "verification.result",
+            source: "verifier",
+            payload: { status: "passed", commands: [] },
           },
-        }],
+          {
+            id: "agent:LBE-6:checker:checker.verdict",
+            kind: "checker.verdict",
+            source: "agent",
+            payload: {
+              verdict: "pass",
+              summary: "Existing implementation satisfies the issue.",
+              reasons: ["No code changes required"],
+            },
+          },
+        ],
         timeline: [{ label: "work_satisfied -> satisfied", elapsedMs: 1 }],
         durationMs: 1,
       }),
@@ -1187,21 +1247,24 @@ describe("cli formatting", () => {
           checks: [],
           reviews: [],
         },
-        artifacts: [{
-          id: "verifier:LBE-7:local",
-          kind: "verification.result",
-          source: "verifier",
-          payload: { status: "passed", commands: [] },
-        }, {
-          id: "agent:LBE-7:checker:checker.verdict",
-          kind: "checker.verdict",
-          source: "agent",
-          payload: {
-            verdict: "pass",
-            summary: "Change is verified.",
-            reasons: ["Tests pass"],
+        artifacts: [
+          {
+            id: "verifier:LBE-7:local",
+            kind: "verification.result",
+            source: "verifier",
+            payload: { status: "passed", commands: [] },
           },
-        }],
+          {
+            id: "agent:LBE-7:checker:checker.verdict",
+            kind: "checker.verdict",
+            source: "agent",
+            payload: {
+              verdict: "pass",
+              summary: "Change is verified.",
+              reasons: ["Tests pass"],
+            },
+          },
+        ],
         timeline: [{ label: "merge_completed -> merged", elapsedMs: 1 }],
         durationMs: 1,
       }),
@@ -1422,9 +1485,15 @@ describe("cli formatting", () => {
   });
 
   it("infers GitHub repos from common remote URL forms", () => {
-    expect(parseGitHubRepoFromRemoteUrl("git@github.com:lbelyaev/aigile.git")).toBe("lbelyaev/aigile");
-    expect(parseGitHubRepoFromRemoteUrl("https://github.com/lbelyaev/aigile.git")).toBe("lbelyaev/aigile");
-    expect(parseGitHubRepoFromRemoteUrl("ssh://git@github.com/lbelyaev/aigile.git")).toBe("lbelyaev/aigile");
+    expect(parseGitHubRepoFromRemoteUrl("git@github.com:lbelyaev/aigile.git")).toBe(
+      "lbelyaev/aigile",
+    );
+    expect(parseGitHubRepoFromRemoteUrl("https://github.com/lbelyaev/aigile.git")).toBe(
+      "lbelyaev/aigile",
+    );
+    expect(parseGitHubRepoFromRemoteUrl("ssh://git@github.com/lbelyaev/aigile.git")).toBe(
+      "lbelyaev/aigile",
+    );
     expect(parseGitHubRepoFromRemoteUrl("git@gitlab.com:lbelyaev/aigile.git")).toBeUndefined();
   });
 
@@ -1442,21 +1511,32 @@ describe("cli formatting", () => {
       exec: async (command, args, options) => {
         calls.push({ command, args: [...args], cwd: options.cwd });
         if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
-        if (command === "git" && args[0] === "show-ref") return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "show-ref")
+          return { stdout: "", stderr: "", exitCode: 1 };
         return { stdout: "", stderr: "", exitCode: 0 };
       },
     });
 
     expect(output).toContain("Aigile preflight: LIN-789");
-    expect(output).toContain("Workspace: available /repo/aigile/.worktrees/LIN-789 on aigile/LIN-789 from develop");
+    expect(output).toContain(
+      "Workspace: available /repo/aigile/.worktrees/LIN-789 on aigile/LIN-789 from develop",
+    );
     expect(output).toContain("Publish: ready acme/project via upstream -> develop");
     expect(output).toContain("Agents: not started");
     expect(calls).toEqual([
       { command: "test", args: ["-e", "/repo/aigile/.worktrees/LIN-789"], cwd: "/repo/aigile" },
-      { command: "git", args: ["show-ref", "--verify", "--quiet", "refs/heads/aigile/LIN-789"], cwd: "/repo/aigile" },
+      {
+        command: "git",
+        args: ["show-ref", "--verify", "--quiet", "refs/heads/aigile/LIN-789"],
+        cwd: "/repo/aigile",
+      },
       { command: "gh", args: ["auth", "status"], cwd: "/repo/aigile" },
       { command: "git", args: ["remote", "get-url", "upstream"], cwd: "/repo/aigile" },
-      { command: "gh", args: ["repo", "view", "acme/project", "--json", "name"], cwd: "/repo/aigile" },
+      {
+        command: "gh",
+        args: ["repo", "view", "acme/project", "--json", "name"],
+        cwd: "/repo/aigile",
+      },
       { command: "git", args: ["rev-parse", "--verify", "develop"], cwd: "/repo/aigile" },
     ]);
   });
@@ -1474,7 +1554,8 @@ describe("cli formatting", () => {
       exec: async (command, args, options) => {
         calls.push({ command, args: [...args], cwd: options.cwd });
         if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
-        if (command === "git" && args[0] === "show-ref") return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "show-ref")
+          return { stdout: "", stderr: "", exitCode: 1 };
         if (command === "git" && args[0] === "remote") {
           return { stdout: "git@github.com:lbelyaev/aigile.git\n", stderr: "", exitCode: 0 };
         }
@@ -1526,7 +1607,11 @@ describe("cli formatting", () => {
     expect(output).toContain("run LIN-795 --publish");
     expect(calls).toEqual([
       { command: "test", args: ["-e", "/repo/aigile/.worktrees/LIN-795"], cwd: "/repo/aigile" },
-      { command: "git", args: ["rev-parse", "--abbrev-ref", "HEAD"], cwd: "/repo/aigile/.worktrees/LIN-795" },
+      {
+        command: "git",
+        args: ["rev-parse", "--abbrev-ref", "HEAD"],
+        cwd: "/repo/aigile/.worktrees/LIN-795",
+      },
       { command: "git", args: ["status", "--short"], cwd: "/repo/aigile/.worktrees/LIN-795" },
     ]);
   });
@@ -1565,7 +1650,11 @@ describe("cli formatting", () => {
     expect(calls).toEqual([
       { command: "gh", args: ["auth", "status"], cwd: "/repo/aigile" },
       { command: "git", args: ["remote", "get-url", "upstream"], cwd: "/repo/aigile" },
-      { command: "gh", args: ["repo", "view", "acme/project", "--json", "name"], cwd: "/repo/aigile" },
+      {
+        command: "gh",
+        args: ["repo", "view", "acme/project", "--json", "name"],
+        cwd: "/repo/aigile",
+      },
       { command: "git", args: ["rev-parse", "--verify", "develop"], cwd: "/repo/aigile" },
     ]);
   });
@@ -1587,17 +1676,19 @@ describe("cli formatting", () => {
   });
 
   it("fails publish preflight with the failing command context", async () => {
-    await expect(runPublishPreflight({
-      repoPath: "/repo/aigile",
-      githubRepo: "acme/project",
-      remote: "origin",
-      baseBranch: "main",
-      exec: async (command, args) => {
-        if (command === "gh" && args[0] === "auth") {
-          return { stdout: "", stderr: "not logged in", exitCode: 1 };
-        }
-        return { stdout: "", stderr: "", exitCode: 0 };
-      },
-    })).rejects.toThrow(/publish preflight gh auth status failed \(1\): not logged in/i);
+    await expect(
+      runPublishPreflight({
+        repoPath: "/repo/aigile",
+        githubRepo: "acme/project",
+        remote: "origin",
+        baseBranch: "main",
+        exec: async (command, args) => {
+          if (command === "gh" && args[0] === "auth") {
+            return { stdout: "", stderr: "not logged in", exitCode: 1 };
+          }
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+      }),
+    ).rejects.toThrow(/publish preflight gh auth status failed \(1\): not logged in/i);
   });
 });

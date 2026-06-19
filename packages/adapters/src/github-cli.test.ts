@@ -7,9 +7,11 @@ describe("GitHub CLI code host adapter", () => {
     const adapter = createGitHubCliCodeHostAdapter({
       cwd: "/repo/aigile",
       exec: async (command, args, options) => {
-        calls.push(options.cwd === undefined
-          ? { command, args: [...args] }
-          : { command, args: [...args], cwd: options.cwd });
+        calls.push(
+          options.cwd === undefined
+            ? { command, args: [...args] }
+            : { command, args: [...args], cwd: options.cwd },
+        );
         return {
           stdout: "https://github.com/aigile/aigile/pull/42\n",
           stderr: "",
@@ -56,7 +58,7 @@ describe("GitHub CLI code host adapter", () => {
     });
   });
 
-  it("records comments and check results as PR comments", async () => {
+  it("records comments, check results, and PR reviews", async () => {
     const calls: string[][] = [];
     const adapter = createGitHubCliCodeHostAdapter({
       exec: async (_command, args) => {
@@ -82,10 +84,15 @@ describe("GitHub CLI code host adapter", () => {
       status: "passed",
       summary: "All good",
     });
+    await adapter.submitPullRequestReview(pr.id, {
+      event: "approve",
+      body: "Checker approved",
+    });
 
     expect(await adapter.getPullRequest(pr.id)).toMatchObject({
       comments: ["Verifier passed"],
       checks: [{ name: "aigile/verifier", status: "passed", summary: "All good" }],
+      reviews: [{ event: "approve", body: "Checker approved" }],
     });
     expect(calls).toContainEqual([
       "pr",
@@ -104,6 +111,16 @@ describe("GitHub CLI code host adapter", () => {
       "aigile/aigile",
       "--body",
       "### aigile/verifier: passed\n\nAll good",
+    ]);
+    expect(calls).toContainEqual([
+      "pr",
+      "review",
+      "7",
+      "--repo",
+      "aigile/aigile",
+      "--approve",
+      "--body",
+      "Checker approved",
     ]);
   });
 

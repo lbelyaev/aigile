@@ -68,21 +68,25 @@ export const createGitHubCliCodeHostAdapter = (
 
   return {
     createPullRequest: async (input) => {
-      const result = await options.exec("gh", [
-        "pr",
-        "create",
-        "--repo",
-        `${input.owner}/${input.repo}`,
-        "--head",
-        input.branch,
-        "--base",
-        input.baseBranch,
-        "--title",
-        input.title,
-        "--body",
-        input.body,
-        "--draft",
-      ], execOptions(options.cwd));
+      const result = await options.exec(
+        "gh",
+        [
+          "pr",
+          "create",
+          "--repo",
+          `${input.owner}/${input.repo}`,
+          "--head",
+          input.branch,
+          "--base",
+          input.baseBranch,
+          "--title",
+          input.title,
+          "--body",
+          input.body,
+          "--draft",
+        ],
+        execOptions(options.cwd),
+      );
       assertSuccess(result, "gh pr create");
       const parsed = parsePullRequestUrl(result.stdout, input);
       const record: PullRequestRecord = {
@@ -103,47 +107,43 @@ export const createGitHubCliCodeHostAdapter = (
     appendPullRequestComment: async (id, comment) => {
       const record = pullRequests.get(id);
       if (!record) throw new Error(`Pull request not found: ${id}`);
-      const result = await options.exec("gh", [
-        "pr",
-        "comment",
-        prNumberFromId(id),
-        "--repo",
-        repoFromRecord(record),
-        "--body",
-        comment,
-      ], execOptions(options.cwd));
+      const result = await options.exec(
+        "gh",
+        ["pr", "comment", prNumberFromId(id), "--repo", repoFromRecord(record), "--body", comment],
+        execOptions(options.cwd),
+      );
       assertSuccess(result, "gh pr comment");
       record.comments.push(comment);
     },
-    submitPullRequestReview: async (id, input) => {
+    submitPullRequestReview: async (id, review) => {
       const record = pullRequests.get(id);
       if (!record) throw new Error(`Pull request not found: ${id}`);
-      const result = await options.exec("gh", [
-        "pr",
-        "review",
-        prNumberFromId(id),
-        "--repo",
-        repoFromRecord(record),
-        reviewEventFlag(input.event),
-        "--body",
-        input.body,
-      ], execOptions(options.cwd));
+      const result = await options.exec(
+        "gh",
+        [
+          "pr",
+          "review",
+          prNumberFromId(id),
+          "--repo",
+          repoFromRecord(record),
+          reviewEventFlag(review.event),
+          "--body",
+          review.body,
+        ],
+        execOptions(options.cwd),
+      );
       assertSuccess(result, "gh pr review");
-      record.reviews.push(structuredClone(input));
+      record.reviews.push(structuredClone(review));
     },
     recordCheckResult: async (id, check: CheckResult) => {
       const record = pullRequests.get(id);
       if (!record) throw new Error(`Pull request not found: ${id}`);
       const body = `### ${check.name}: ${check.status}\n\n${check.summary}`;
-      const result = await options.exec("gh", [
-        "pr",
-        "comment",
-        prNumberFromId(id),
-        "--repo",
-        repoFromRecord(record),
-        "--body",
-        body,
-      ], execOptions(options.cwd));
+      const result = await options.exec(
+        "gh",
+        ["pr", "comment", prNumberFromId(id), "--repo", repoFromRecord(record), "--body", body],
+        execOptions(options.cwd),
+      );
       assertSuccess(result, "gh pr comment");
       record.checks.push(structuredClone(check));
     },

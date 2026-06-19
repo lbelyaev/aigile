@@ -36,7 +36,11 @@ describe("workspace-aware demo orchestration", () => {
         if (command === "git" && args[0] === "diff") {
           return { stdout: "packages/demo/src/run.ts | 4 ++++", stderr: "", exitCode: 0 };
         }
-        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+        return {
+          stdout: `${command} ${args.join(" ")} in ${options.cwd}`,
+          stderr: "",
+          exitCode: 0,
+        };
       },
     });
 
@@ -52,11 +56,15 @@ describe("workspace-aware demo orchestration", () => {
       "checker.verdict",
       "github.pull_request",
     ]);
-    expect(result.artifacts.find((artifact) => artifact.kind === "workspace.issue_worktree")?.payload).toMatchObject({
+    expect(
+      result.artifacts.find((artifact) => artifact.kind === "workspace.issue_worktree")?.payload,
+    ).toMatchObject({
       branchName: "aigile/LIN-123",
       worktreePath: "/repo/aigile/.worktrees/LIN-123",
     });
-    expect(result.artifacts.find((artifact) => artifact.kind === "execution.policy")?.payload).toMatchObject({
+    expect(
+      result.artifacts.find((artifact) => artifact.kind === "execution.policy")?.payload,
+    ).toMatchObject({
       mode: "agent_write",
       fileWrites: "allowed",
       commits: "forbidden",
@@ -125,14 +133,22 @@ describe("workspace-aware demo orchestration", () => {
         if (command === "git" && args[0] === "diff") {
           return { stdout: "custom.ts | 1 +", stderr: "", exitCode: 0 };
         }
-        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+        return {
+          stdout: `${command} ${args.join(" ")} in ${options.cwd}`,
+          stderr: "",
+          exitCode: 0,
+        };
       },
     });
 
-    expect(result.artifacts.find((artifact) => artifact.kind === "architect.plan")?.payload).toMatchObject({
+    expect(
+      result.artifacts.find((artifact) => artifact.kind === "architect.plan")?.payload,
+    ).toMatchObject({
       summary: "Injected architect plan",
     });
-    expect(result.artifacts.find((artifact) => artifact.kind === "developer.attempt")?.payload).toMatchObject({
+    expect(
+      result.artifacts.find((artifact) => artifact.kind === "developer.attempt")?.payload,
+    ).toMatchObject({
       changedFiles: ["custom.ts"],
     });
   });
@@ -217,11 +233,17 @@ describe("workspace-aware demo orchestration", () => {
         if (command === "git" && args[0] === "diff") {
           return { stdout: "dry-run diff | 1 +", stderr: "", exitCode: 0 };
         }
-        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+        return {
+          stdout: `${command} ${args.join(" ")} in ${options.cwd}`,
+          stderr: "",
+          exitCode: 0,
+        };
       },
     });
 
-    expect(result.artifacts.find((artifact) => artifact.kind === "execution.policy")?.payload).toMatchObject({
+    expect(
+      result.artifacts.find((artifact) => artifact.kind === "execution.policy")?.payload,
+    ).toMatchObject({
       mode: "dry_run",
       fileWrites: "forbidden",
       commits: "forbidden",
@@ -314,7 +336,11 @@ describe("workspace-aware demo orchestration", () => {
           expect(developerFinished).toBe(true);
           return { stdout: "ok", stderr: "", exitCode: 0 };
         }
-        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+        return {
+          stdout: `${command} ${args.join(" ")} in ${options.cwd}`,
+          stderr: "",
+          exitCode: 0,
+        };
       },
     });
   });
@@ -331,7 +357,10 @@ describe("workspace-aware demo orchestration", () => {
     });
     const runner: RoleRunner = {
       run: async (input) => {
-        seenWorkspaceArtifacts.push(input.inputArtifacts.find((artifact) => artifact.kind === "workspace.issue_worktree")?.payload);
+        seenWorkspaceArtifacts.push(
+          input.inputArtifacts.find((artifact) => artifact.kind === "workspace.issue_worktree")
+            ?.payload,
+        );
         if (input.roleId === "architect") {
           return {
             id: "agent:LIN-123:architect:architect.plan",
@@ -399,15 +428,21 @@ describe("workspace-aware demo orchestration", () => {
         if (command === "git" && args[0] === "diff") {
           return { stdout: "dry-run diff | 1 +", stderr: "", exitCode: 0 };
         }
-        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+        return {
+          stdout: `${command} ${args.join(" ")} in ${options.cwd}`,
+          stderr: "",
+          exitCode: 0,
+        };
       },
     });
 
-    expect(seenWorkspaceArtifacts).toContainEqual(expect.objectContaining({
-      worktreePath: "/repo/aigile",
-      simulatedWorktreePath: "/repo/aigile/.worktrees/LIN-123",
-      mode: "dry_run",
-    }));
+    expect(seenWorkspaceArtifacts).toContainEqual(
+      expect.objectContaining({
+        worktreePath: "/repo/aigile",
+        simulatedWorktreePath: "/repo/aigile/.worktrees/LIN-123",
+        mode: "dry_run",
+      }),
+    );
   });
 
   it("can publish a workspace branch before creating the pull request", async () => {
@@ -472,7 +507,11 @@ describe("workspace-aware demo orchestration", () => {
         if (command === "git" && args[0] === "diff") {
           return { stdout: "packages/demo/src/run.ts | 1 +", stderr: "", exitCode: 0 };
         }
-        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+        return {
+          stdout: `${command} ${args.join(" ")} in ${options.cwd}`,
+          stderr: "",
+          exitCode: 0,
+        };
       },
     });
 
@@ -507,7 +546,11 @@ describe("workspace-aware demo orchestration", () => {
         if (command === "git" && args[0] === "diff") {
           return { stdout: "packages/demo/src/run.ts | 1 +", stderr: "", exitCode: 0 };
         }
-        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+        return {
+          stdout: `${command} ${args.join(" ")} in ${options.cwd}`,
+          stderr: "",
+          exitCode: 0,
+        };
       },
     });
 
@@ -580,7 +623,11 @@ describe("workspace-aware demo orchestration", () => {
         if (command === "git" && args[0] === "diff") {
           return { stdout: "", stderr: "", exitCode: 0 };
         }
-        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+        return {
+          stdout: `${command} ${args.join(" ")} in ${options.cwd}`,
+          stderr: "",
+          exitCode: 0,
+        };
       },
     });
 

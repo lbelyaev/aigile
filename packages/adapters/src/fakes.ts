@@ -91,13 +91,14 @@ export const createFakeCodeHostAdapter = (): CodeHostAdapter => {
       const pullRequest = requirePullRequest(pullRequests, id);
       pullRequest.comments.push(comment);
     },
-    submitPullRequestReview: async (id, input: PullRequestReviewInput) => {
-      const pullRequest = requirePullRequest(pullRequests, id);
-      pullRequest.reviews.push(structuredClone(input));
-    },
     recordCheckResult: async (id, result: CheckResult) => {
       const pullRequest = requirePullRequest(pullRequests, id);
       pullRequest.checks.push(structuredClone(result));
+    },
+    submitPullRequestReview: async (id, review: PullRequestReviewInput) => {
+      const pullRequest = requirePullRequest(pullRequests, id);
+      pullRequest.reviews ??= [];
+      pullRequest.reviews.push(structuredClone(review));
     },
   };
 };
