@@ -310,6 +310,30 @@ describe("cli formatting", () => {
     });
   });
 
+  it("parses explicit agent-write run arguments", () => {
+    expect(parseCliArgs([
+      "run",
+      "LIN-124",
+      "--runtime-config",
+      "config/aigile.runtimes.json",
+      "--agent-write",
+    ])).toEqual({
+      mode: "run",
+      issueKey: "LIN-124",
+      runtimeConfigPath: "config/aigile.runtimes.json",
+      agentWrite: true,
+    });
+  });
+
+  it("rejects conflicting run execution modes", () => {
+    expect(() => parseCliArgs([
+      "run",
+      "LIN-124",
+      "--dry-run",
+      "--agent-write",
+    ])).toThrow(/choose only one/i);
+  });
+
   it("dry-run exec treats workspace collision probes as absent", async () => {
     const exec = createDryRunExec();
 

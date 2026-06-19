@@ -220,6 +220,7 @@ export interface CliArgs {
   remote?: string;
   githubRepo?: string;
   dryRun?: boolean;
+  agentWrite?: boolean;
   preflightOnly?: boolean;
 }
 
@@ -386,6 +387,10 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (githubRepo !== undefined) parsed.githubRepo = githubRepo;
     if (args.includes("--publish")) parsed.publish = true;
     if (args.includes("--dry-run")) parsed.dryRun = true;
+    if (args.includes("--agent-write")) parsed.agentWrite = true;
+    if (parsed.dryRun && parsed.agentWrite) {
+      throw new Error("choose only one of --dry-run or --agent-write");
+    }
     if (args.includes("--preflight-only")) parsed.preflightOnly = true;
     return parsed;
   }
@@ -426,6 +431,12 @@ const main = async (): Promise<void> => {
   if (args.dryRun) {
     runInput.dryRun = true;
     runInput.exec = createDryRunExec();
+  }
+  if (args.mode === "run" && args.runtimeConfigPath && !args.preflightOnly && !args.dryRun && !args.agentWrite) {
+    throw new Error("run with --runtime-config requires --dry-run or --agent-write");
+  }
+  if (args.mode === "run" && args.agentWrite && !args.publish) {
+    runInput.createPullRequest = false;
   }
   if (args.mode === "run" && args.publish && !args.dryRun) {
     const remote = args.remote ?? "origin";

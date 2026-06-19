@@ -231,6 +231,94 @@ describe("workspace-aware demo orchestration", () => {
     expect(seenArtifactKinds.checker).toContain("execution.policy");
   });
 
+  it("runs workspace verification after the developer role", async () => {
+    let developerFinished = false;
+    const registry = createRoleRuntimeRegistry({
+      runtimes: [{ id: "custom-runtime", transport: "stdio", command: ["custom-acp"] }],
+      assignments: [
+        { roleId: "architect", runtimeProfileId: "custom-runtime" },
+        { roleId: "developer", runtimeProfileId: "custom-runtime" },
+        { roleId: "checker", runtimeProfileId: "custom-runtime" },
+      ],
+    });
+    const runner: RoleRunner = {
+      run: async (input) => {
+        if (input.roleId === "architect") {
+          return {
+            id: "agent:LIN-123:architect:architect.plan",
+            kind: "architect.plan",
+            source: "agent",
+            producerRoleId: "architect",
+            payload: {
+              summary: "Plan",
+              scope: ["workspace"],
+              acceptanceCriteria: ["verification follows development"],
+              verificationCommands: ["bun run check"],
+              risks: [],
+            },
+          };
+        }
+        if (input.roleId === "developer") {
+          developerFinished = true;
+          return {
+            id: "agent:LIN-123:developer:developer.attempt",
+            kind: "developer.attempt",
+            source: "agent",
+            producerRoleId: "developer",
+            payload: {
+              summary: "Attempt",
+              changedFiles: ["README.md"],
+              verificationNotes: "Verifier should run after this.",
+            },
+          };
+        }
+        return {
+          id: "agent:LIN-123:checker:checker.verdict",
+          kind: "checker.verdict",
+          source: "agent",
+          producerRoleId: "checker",
+          payload: {
+            verdict: "pass",
+            summary: "Verification order is sound.",
+            reasons: [],
+          },
+        };
+      },
+    };
+
+    await runDemoIssueWithWorkspace({
+      issue: {
+        id: "issue-1",
+        key: "LIN-123",
+        title: "Verifier order",
+        description: "Verify after developer role.",
+        acceptanceCriteria: ["verification follows development"],
+        status: "todo",
+        priority: 1,
+        comments: [],
+      },
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      registry,
+      runner,
+      exec: async (command, args, options) => {
+        const preflight = availableWorkspaceTarget(command, args);
+        if (preflight) return preflight;
+        if (command === "git" && args[0] === "worktree") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (command === "git" && args[0] === "diff") {
+          return { stdout: "README.md | 1 +", stderr: "", exitCode: 0 };
+        }
+        if (command === "bun" && args[0] === "run" && args[1] === "check") {
+          expect(developerFinished).toBe(true);
+          return { stdout: "ok", stderr: "", exitCode: 0 };
+        }
+        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+      },
+    });
+  });
+
   it("uses an existing read-only workspace path in dry-run role handoffs", async () => {
     const seenWorkspaceArtifacts: unknown[] = [];
     const registry = createRoleRuntimeRegistry({
@@ -390,6 +478,41 @@ describe("workspace-aware demo orchestration", () => {
       "publish:aigile/LIN-123:origin:LIN-123 Publish branch",
       "pr:aigile/LIN-123",
     ]);
+  });
+
+  it("can stop after checker pass without creating a pull request", async () => {
+    const result = await runDemoIssueWithWorkspace({
+      issue: {
+        id: "issue-1",
+        key: "LIN-123",
+        title: "Local agent write",
+        description: "Exercise local-only agent write flow.",
+        acceptanceCriteria: ["no PR without publish"],
+        status: "todo",
+        priority: 1,
+        comments: [],
+      },
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      createPullRequest: false,
+      exec: async (command, args, options) => {
+        const preflight = availableWorkspaceTarget(command, args);
+        if (preflight) return preflight;
+        if (command === "git" && args[0] === "worktree") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (command === "git" && args[0] === "diff") {
+          return { stdout: "packages/demo/src/run.ts | 1 +", stderr: "", exitCode: 0 };
+        }
+        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+      },
+    });
+
+    expect(result.finalState).toBe("merge_ready");
+    expect(result.pullRequest).toBeUndefined();
+    expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("github.pull_request");
+    expect(result.timeline.map((entry) => entry.label)).toContain("checker_passed -> merge_ready");
+    expect(result.timeline.map((entry) => entry.label)).not.toContain("merge_completed -> merged");
   });
 
   it("uses a configured pull request target for workspace publishing", async () => {

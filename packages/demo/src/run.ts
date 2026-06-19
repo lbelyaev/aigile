@@ -44,8 +44,10 @@ export interface DemoWithRolesInput extends DemoIssueInput {
   runner: RoleRunner;
   codeHost?: CodeHostAdapter;
   pullRequestTarget?: PullRequestTarget;
+  createPullRequest?: boolean;
   initialArtifacts?: WorkflowArtifact[];
   verificationArtifact?: WorkflowArtifact;
+  verify?: (artifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact>;
   beforeVerification?: (artifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact[]>;
   beforePullRequest?: (artifacts: readonly WorkflowArtifact[]) => Promise<void>;
 }
@@ -67,6 +69,7 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   remote?: string;
   codeHost?: CodeHostAdapter;
   pullRequestTarget?: PullRequestTarget;
+  createPullRequest?: boolean;
 }
 
 export interface DemoGitHubInput extends DemoIssueInput {
@@ -264,16 +267,19 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     artifacts.push(...await input.beforeVerification(artifacts));
   }
 
-  const verification: WorkflowArtifact = input.verificationArtifact ?? {
-    id: `verifier:${issue.key}:local-check`,
-    kind: "verification.result",
-    source: "verifier",
-    payload: {
-      status: "passed",
-      command: "bun run check",
-      summary: "Local scripted verifier passed.",
-    },
-  };
+  const verification: WorkflowArtifact = input.verificationArtifact
+    ?? (input.verify
+      ? await input.verify(artifacts)
+      : {
+        id: `verifier:${issue.key}:local-check`,
+        kind: "verification.result",
+        source: "verifier",
+        payload: {
+          status: "passed",
+          command: "bun run check",
+          summary: "Local scripted verifier passed.",
+        },
+      });
   artifacts.push(verification);
   snapshot = pushTransition(snapshot, {
     type: "verification_passed",
@@ -309,6 +315,16 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
   }
 
   artifactByKind(artifacts, "developer.attempt");
+  if (input.createPullRequest === false) {
+    await issueTracker.updateIssueStatus(issue.key, snapshot.state);
+    return {
+      issueKey: issue.key,
+      finalState: snapshot.state,
+      artifacts,
+      timeline,
+      durationMs: timeline.reduce((total, entry) => total + entry.elapsedMs, 0),
+    };
+  }
   await input.beforePullRequest?.(artifacts);
   const pullRequestTarget = input.pullRequestTarget ?? {
     owner: "aigile",
@@ -459,11 +475,6 @@ export const runDemoIssueWithWorkspace = async (
     baseBranch: input.baseBranch ?? "main",
   });
   const verifier = createLocalVerifier(input.exec === undefined ? {} : { exec: input.exec });
-  const verificationArtifact = await verifier.verify({
-    issueKey: input.issue.key,
-    workspacePath: workspace.worktreePath,
-    commands: [["bun", "run", "check"]],
-  });
 
   const roleInput: DemoWithRolesInput = {
     issue: input.issue,
@@ -500,14 +511,19 @@ export const runDemoIssueWithWorkspace = async (
       workspaceToArtifact(workspaceRolePayload(workspace, input), input.issue.key),
       executionPolicyToArtifact(input.issue.key, input.dryRun === true),
     ],
-    verificationArtifact,
     beforeVerification: async () => [
       diffToArtifact(await workspaceAdapter.diffSummary(workspace), input.issue.key),
     ],
+    verify: async () => verifier.verify({
+      issueKey: input.issue.key,
+      workspacePath: workspace.worktreePath,
+      commands: [["bun", "run", "check"]],
+    }),
   };
   if (input.now !== undefined) roleInput.now = input.now;
   if (input.codeHost !== undefined) roleInput.codeHost = input.codeHost;
   if (input.pullRequestTarget !== undefined) roleInput.pullRequestTarget = input.pullRequestTarget;
+  if (input.createPullRequest !== undefined) roleInput.createPullRequest = input.createPullRequest;
   if (input.publish) {
     roleInput.beforePullRequest = async () => {
       const publisher = input.publisher ?? createGitPublisher(input.exec === undefined ? {} : { exec: input.exec });
