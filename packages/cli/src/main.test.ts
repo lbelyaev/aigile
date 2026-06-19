@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { formatDemoResult, selectDemoMode } from "./main.js";
+import { formatDemoResult, parseCliArgs, selectDemoMode } from "./main.js";
 
 describe("cli formatting", () => {
   it("formats demo output for hand testing", () => {
@@ -30,5 +30,12 @@ describe("cli formatting", () => {
     expect(selectDemoMode(["demo:github"])).toBe("github");
     expect(selectDemoMode(["demo:linear"])).toBe("linear");
     expect(selectDemoMode([])).toBe("scripted");
+  });
+
+  it("parses runtime config path from argv", () => {
+    expect(parseCliArgs(["demo:agents", "--runtime-config", "config/aigile.runtimes.json"])).toEqual({
+      mode: "agents",
+      runtimeConfigPath: "config/aigile.runtimes.json",
+    });
   });
 });

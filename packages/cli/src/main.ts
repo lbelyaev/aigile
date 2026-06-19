@@ -1,13 +1,17 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
+import { loadRuntimeConfigFromJson, runtimeConfigToRegistry } from "@aigile/config";
 import {
   runDemoIssue,
   runDemoIssueFromLinear,
   runDemoIssueWithAcpRoles,
   runDemoIssueWithGitHub,
+  runDemoIssueWithRoles,
   runDemoIssueWithWorkspace,
   type DemoResult,
 } from "@aigile/demo";
 import type { IssueRecord } from "@aigile/adapters";
+import { createAcpRoleRunner } from "@aigile/roles";
 
 const defaultIssue: IssueRecord = {
   id: "issue-demo-1",
@@ -51,11 +55,33 @@ export const selectDemoMode = (args: readonly string[]): DemoMode =>
           ? "linear"
           : "scripted";
 
+export interface CliArgs {
+  mode: DemoMode;
+  runtimeConfigPath?: string;
+}
+
+export const parseCliArgs = (args: readonly string[]): CliArgs => {
+  const runtimeConfigIndex = args.indexOf("--runtime-config");
+  const parsed: CliArgs = { mode: selectDemoMode(args) };
+  if (runtimeConfigIndex >= 0) {
+    const runtimeConfigPath = args[runtimeConfigIndex + 1];
+    if (!runtimeConfigPath) throw new Error("--runtime-config requires a path");
+    parsed.runtimeConfigPath = runtimeConfigPath;
+  }
+  return parsed;
+};
+
 const main = async (): Promise<void> => {
-  const mode = selectDemoMode(process.argv.slice(2));
-  const result = mode === "agents"
-    ? await runDemoIssueWithAcpRoles({ issue: defaultIssue })
-    : mode === "workspace"
+  const args = parseCliArgs(process.argv.slice(2));
+  const result = args.mode === "agents"
+    ? args.runtimeConfigPath
+      ? await runDemoIssueWithRoles({
+        issue: defaultIssue,
+        registry: runtimeConfigToRegistry(loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8"))),
+        runner: createAcpRoleRunner(),
+      })
+      : await runDemoIssueWithAcpRoles({ issue: defaultIssue })
+    : args.mode === "workspace"
       ? await runDemoIssueWithWorkspace({
         issue: defaultIssue,
         repoPath: "/tmp/aigile-demo-repo",
@@ -68,7 +94,7 @@ const main = async (): Promise<void> => {
           return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
         },
       })
-      : mode === "github"
+      : args.mode === "github"
         ? await runDemoIssueWithGitHub({
           issue: defaultIssue,
           ghExec: async (_command, args) => {
@@ -78,7 +104,7 @@ const main = async (): Promise<void> => {
             return { stdout: "", stderr: "", exitCode: 0 };
           },
         })
-        : mode === "linear"
+        : args.mode === "linear"
           ? await runDemoIssueFromLinear({
             issueKey: "LIN-123",
             linearApiKey: "demo-key",

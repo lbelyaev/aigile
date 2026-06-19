@@ -10,6 +10,7 @@
     ".": "./src/main.ts"
   },
   "dependencies": {
+    "@aigile/config": "workspace:*",
     "@aigile/demo": "workspace:*"
   }
 }

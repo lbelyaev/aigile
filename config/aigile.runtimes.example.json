@@ -1,0 +1,33 @@
+{
+  "runtimes": [
+    {
+      "id": "architect-acp",
+      "transport": "stdio",
+      "command": ["agent-acp-command", "--role", "architect"]
+    },
+    {
+      "id": "developer-acp",
+      "transport": "stdio",
+      "command": ["agent-acp-command", "--role", "developer"]
+    },
+    {
+      "id": "checker-acp",
+      "transport": "stdio",
+      "command": ["agent-acp-command", "--role", "checker"]
+    }
+  ],
+  "assignments": [
+    {
+      "roleId": "architect",
+      "runtimeProfileId": "architect-acp"
+    },
+    {
+      "roleId": "developer",
+      "runtimeProfileId": "developer-acp"
+    },
+    {
+      "roleId": "checker",
+      "runtimeProfileId": "checker-acp"
+    }
+  ]
+}
