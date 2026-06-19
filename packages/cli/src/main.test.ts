@@ -3,6 +3,7 @@ import {
   formatAcpRoleProgress,
   formatDemoResult,
   parseCliArgs,
+  runRunModePreflight,
   runPublishPreflight,
   selectDemoMode,
 } from "./main.js";
@@ -157,6 +158,7 @@ describe("cli formatting", () => {
       "run",
       "LIN-789",
       "--publish",
+      "--preflight-only",
       "--github-repo",
       "acme/project",
       "--remote",
@@ -167,10 +169,44 @@ describe("cli formatting", () => {
       mode: "run",
       issueKey: "LIN-789",
       publish: true,
+      preflightOnly: true,
       githubRepo: "acme/project",
       remote: "upstream",
       baseBranch: "develop",
     });
+  });
+
+  it("preflights run mode without starting agents", async () => {
+    const calls: Array<{ command: string; args: string[]; cwd: string }> = [];
+
+    const output = await runRunModePreflight({
+      issueKey: "LIN-789",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      githubRepo: "acme/project",
+      publish: true,
+      remote: "upstream",
+      baseBranch: "develop",
+      exec: async (command, args, options) => {
+        calls.push({ command, args: [...args], cwd: options.cwd });
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "show-ref") return { stdout: "", stderr: "", exitCode: 1 };
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    });
+
+    expect(output).toContain("Aigile preflight: LIN-789");
+    expect(output).toContain("Workspace: available /repo/aigile/.worktrees/LIN-789 on aigile/LIN-789 from develop");
+    expect(output).toContain("Publish: ready acme/project via upstream -> develop");
+    expect(output).toContain("Agents: not started");
+    expect(calls).toEqual([
+      { command: "test", args: ["-e", "/repo/aigile/.worktrees/LIN-789"], cwd: "/repo/aigile" },
+      { command: "git", args: ["show-ref", "--verify", "--quiet", "refs/heads/aigile/LIN-789"], cwd: "/repo/aigile" },
+      { command: "gh", args: ["auth", "status"], cwd: "/repo/aigile" },
+      { command: "gh", args: ["repo", "view", "acme/project", "--json", "name"], cwd: "/repo/aigile" },
+      { command: "git", args: ["remote", "get-url", "upstream"], cwd: "/repo/aigile" },
+      { command: "git", args: ["rev-parse", "--verify", "develop"], cwd: "/repo/aigile" },
+    ]);
   });
 
   it("preflights real publish dependencies before live role work", async () => {

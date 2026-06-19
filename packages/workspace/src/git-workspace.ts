@@ -26,6 +26,7 @@ export interface IssueWorkspace {
 }
 
 export interface GitWorkspaceAdapter {
+  checkIssueWorkspaceAvailability: (input: IssueWorkspaceInput) => Promise<IssueWorkspace>;
   createIssueWorkspace: (input: IssueWorkspaceInput) => Promise<IssueWorkspace>;
   diffSummary: (workspace: IssueWorkspace) => Promise<string>;
 }
@@ -96,16 +97,26 @@ export const createGitWorkspaceAdapter = (
 ): GitWorkspaceAdapter => {
   const exec = options.exec ?? defaultExecCommand;
 
+  const buildWorkspace = (input: IssueWorkspaceInput): IssueWorkspace => {
+    const slug = safeIssueSlug(input.issueKey);
+    return {
+      issueKey: input.issueKey,
+      branchName: `aigile/${slug}`,
+      worktreePath: join(options.worktreesPath, slug),
+      baseBranch: input.baseBranch,
+    };
+  };
+
+  const checkIssueWorkspaceAvailability = async (input: IssueWorkspaceInput): Promise<IssueWorkspace> => {
+    const workspace = buildWorkspace(input);
+    await assertWorkspaceTargetAvailable(exec, options.repoPath, workspace);
+    return workspace;
+  };
+
   return {
+    checkIssueWorkspaceAvailability,
     createIssueWorkspace: async (input) => {
-      const slug = safeIssueSlug(input.issueKey);
-      const workspace: IssueWorkspace = {
-        issueKey: input.issueKey,
-        branchName: `aigile/${slug}`,
-        worktreePath: join(options.worktreesPath, slug),
-        baseBranch: input.baseBranch,
-      };
-      await assertWorkspaceTargetAvailable(exec, options.repoPath, workspace);
+      const workspace = await checkIssueWorkspaceAvailability(input);
       const result = await exec("git", [
         "worktree",
         "add",

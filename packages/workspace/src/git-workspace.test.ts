@@ -45,6 +45,40 @@ describe("git workspace adapter", () => {
     ]);
   });
 
+  it("checks issue workspace availability without creating it", async () => {
+    const commands: Array<{ command: string; args: string[]; cwd: string }> = [];
+    const adapter = createGitWorkspaceAdapter({
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      exec: async (command, args, options) => {
+        commands.push({ command, args: [...args], cwd: options.cwd });
+        return { stdout: "", stderr: "", exitCode: 1 };
+      },
+    });
+
+    await expect(adapter.checkIssueWorkspaceAvailability({
+      issueKey: "LIN-123",
+      baseBranch: "main",
+    })).resolves.toEqual({
+      issueKey: "LIN-123",
+      branchName: "aigile/LIN-123",
+      worktreePath: "/repo/aigile/.worktrees/LIN-123",
+      baseBranch: "main",
+    });
+    expect(commands).toEqual([
+      {
+        command: "test",
+        args: ["-e", "/repo/aigile/.worktrees/LIN-123"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["show-ref", "--verify", "--quiet", "refs/heads/aigile/LIN-123"],
+        cwd: "/repo/aigile",
+      },
+    ]);
+  });
+
   it("fails clearly when the issue worktree path already exists", async () => {
     const adapter = createGitWorkspaceAdapter({
       repoPath: "/repo/aigile",

@@ -14,7 +14,7 @@ import {
 } from "@aigile/demo";
 import type { IssueRecord } from "@aigile/adapters";
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
-import { defaultExecCommand, type ExecCommand, type ExecResult } from "@aigile/workspace";
+import { createGitWorkspaceAdapter, defaultExecCommand, type ExecCommand, type ExecResult } from "@aigile/workspace";
 
 const defaultIssue: IssueRecord = {
   id: "issue-demo-1",
@@ -107,6 +107,7 @@ export interface CliArgs {
   remote?: string;
   githubRepo?: string;
   dryRun?: boolean;
+  preflightOnly?: boolean;
 }
 
 export interface PublishPreflightInput {
@@ -141,6 +142,52 @@ export const runPublishPreflight = async (input: PublishPreflightInput): Promise
     await exec("git", ["rev-parse", "--verify", input.baseBranch], { cwd: input.repoPath }),
     `git rev-parse --verify ${input.baseBranch}`,
   );
+};
+
+export interface RunModePreflightInput {
+  issueKey: string;
+  repoPath: string;
+  worktreesPath: string;
+  baseBranch: string;
+  publish?: boolean;
+  githubRepo?: string;
+  remote?: string;
+  exec?: ExecCommand;
+}
+
+export const runRunModePreflight = async (input: RunModePreflightInput): Promise<string> => {
+  const exec = input.exec ?? defaultExecCommand;
+  const workspace = await createGitWorkspaceAdapter({
+    repoPath: input.repoPath,
+    worktreesPath: input.worktreesPath,
+    exec,
+  }).checkIssueWorkspaceAvailability({
+    issueKey: input.issueKey,
+    baseBranch: input.baseBranch,
+  });
+
+  let publishLine = "Publish: skipped";
+  if (input.publish) {
+    if (!input.githubRepo) throw new Error("--publish requires --github-repo owner/repo");
+    const [owner, repo] = input.githubRepo.split("/");
+    if (!owner || !repo) throw new Error("--github-repo must be in owner/repo format");
+    const remote = input.remote ?? "origin";
+    await runPublishPreflight({
+      repoPath: input.repoPath,
+      githubRepo: input.githubRepo,
+      remote,
+      baseBranch: input.baseBranch,
+      exec,
+    });
+    publishLine = `Publish: ready ${input.githubRepo} via ${remote} -> ${input.baseBranch}`;
+  }
+
+  return [
+    `Aigile preflight: ${input.issueKey}`,
+    `Workspace: available ${workspace.worktreePath} on ${workspace.branchName} from ${workspace.baseBranch}`,
+    publishLine,
+    "Agents: not started",
+  ].join("\n");
 };
 
 const optionValue = (args: readonly string[], name: string): string | undefined => {
@@ -187,6 +234,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (githubRepo !== undefined) parsed.githubRepo = githubRepo;
     if (args.includes("--publish")) parsed.publish = true;
     if (args.includes("--dry-run")) parsed.dryRun = true;
+    if (args.includes("--preflight-only")) parsed.preflightOnly = true;
     return parsed;
   }
   const parsed: CliArgs = { mode: selectDemoMode(args) };
@@ -209,6 +257,20 @@ const main = async (): Promise<void> => {
     worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
   };
   if (args.baseBranch !== undefined) runInput.baseBranch = args.baseBranch;
+  if (args.mode === "run" && args.preflightOnly) {
+    const preflightInput: RunModePreflightInput = {
+      issueKey: args.issueKey ?? defaultIssue.key,
+      repoPath: args.repoPath ?? process.cwd(),
+      worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
+      baseBranch: args.baseBranch ?? "main",
+    };
+    if (args.publish !== undefined) preflightInput.publish = args.publish;
+    if (args.githubRepo !== undefined) preflightInput.githubRepo = args.githubRepo;
+    if (args.remote !== undefined) preflightInput.remote = args.remote;
+    const output = await runRunModePreflight(preflightInput);
+    process.stdout.write(`${output}\n`);
+    return;
+  }
   if (args.dryRun) {
     runInput.dryRun = true;
     runInput.exec = async (command, commandArgs, options) => {
