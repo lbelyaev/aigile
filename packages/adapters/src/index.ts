@@ -4,6 +4,11 @@ export {
 } from "./contracts.js";
 
 export {
+  compareReadyIssues,
+  sortReadyIssues,
+} from "./ready-issue-ordering.js";
+
+export {
   createFakeCodeHostAdapter,
   createFakeIssueTrackerAdapter,
   createFakeReadyIssueSource,

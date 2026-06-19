@@ -1,4 +1,5 @@
 import type { IssueRecord, IssueTrackerAdapter, ReadyIssueSource } from "./contracts.js";
+import { sortReadyIssues } from "./ready-issue-ordering.js";
 
 export type LinearFetchGraphql = (
   query: string,
@@ -49,6 +50,7 @@ interface LinearIssueResponse {
     title?: unknown;
     description?: unknown;
     priority?: unknown;
+    createdAt?: unknown;
     state?: { name?: unknown };
     comments?: { nodes?: Array<{ body?: unknown }> };
   };
@@ -129,6 +131,7 @@ const toIssueRecordFromIssue = (issue: LinearIssueResponse["issue"], key: string
       .filter((body): body is string => typeof body === "string"),
   };
   if (typeof issue.priority === "number") record.priority = issue.priority;
+  if (typeof issue.createdAt === "string") record.createdAt = issue.createdAt;
   return record;
 };
 
@@ -233,6 +236,7 @@ export const createLinearGraphqlIssueTrackerAdapter = (
           title
           description
           priority
+          createdAt
           state { name }
           comments { nodes { body } }
         }
@@ -267,30 +271,32 @@ export const createLinearGraphqlReadyIssueSource = (
     fetchGraphql(query, variables, { apiKey: options.apiKey, endpoint });
 
   return {
-    listReadyIssues: async () => toIssueRecords(await request(`
-      query ReadyIssues($teamKey: String!, $readyStatus: String!, $first: Int!) {
-        issues(
-          filter: {
-            team: { key: { eq: $teamKey } }
-            state: { name: { eq: $readyStatus } }
-          }
-          first: $first
-        ) {
-          nodes {
-            id
-            identifier
-            title
-            description
-            priority
-            state { name }
-            comments { nodes { body } }
+    listReadyIssues: async () =>
+      sortReadyIssues(toIssueRecords(await request(`
+        query ReadyIssues($teamKey: String!, $readyStatus: String!, $first: Int!) {
+          issues(
+            filter: {
+              team: { key: { eq: $teamKey } }
+              state: { name: { eq: $readyStatus } }
+            }
+            first: $first
+          ) {
+            nodes {
+              id
+              identifier
+              title
+              description
+              priority
+              createdAt
+              state { name }
+              comments { nodes { body } }
+            }
           }
         }
-      }
-    `, {
-      teamKey: options.teamKey,
-      readyStatus: options.readyStatus,
-      first: options.first ?? 1,
-    })),
+      `, {
+        teamKey: options.teamKey,
+        readyStatus: options.readyStatus,
+        first: options.first ?? 25,
+      }))),
   };
 };

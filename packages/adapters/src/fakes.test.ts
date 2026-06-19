@@ -63,6 +63,156 @@ describe("fake source-of-truth adapters", () => {
     expect((await source.listReadyIssues())[0]!.status).toBe("ready");
   });
 
+  it("lists ready issues by priority before creation time", async () => {
+    const source = createFakeReadyIssueSource([
+      {
+        id: "issue-1",
+        key: "LIN-LOW",
+        title: "Lower priority",
+        description: "",
+        acceptanceCriteria: [],
+        status: "ready",
+        priority: 2,
+        createdAt: "2024-01-01T00:00:00.000Z",
+        comments: [],
+      },
+      {
+        id: "issue-2",
+        key: "LIN-HIGH",
+        title: "Higher priority",
+        description: "",
+        acceptanceCriteria: [],
+        status: "ready",
+        priority: 1,
+        createdAt: "2024-02-01T00:00:00.000Z",
+        comments: [],
+      },
+    ]);
+
+    await expect(source.listReadyIssues()).resolves.toMatchObject([
+      { key: "LIN-HIGH" },
+      { key: "LIN-LOW" },
+    ]);
+  });
+
+  it("lists equal-priority ready issues by oldest creation time first", async () => {
+    const source = createFakeReadyIssueSource([
+      {
+        id: "issue-1",
+        key: "LIN-NEWER",
+        title: "Newer issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "ready",
+        priority: 2,
+        createdAt: "2024-02-01T00:00:00.000Z",
+        comments: [],
+      },
+      {
+        id: "issue-2",
+        key: "LIN-OLDER",
+        title: "Older issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "ready",
+        priority: 2,
+        createdAt: "2024-01-01T00:00:00.000Z",
+        comments: [],
+      },
+    ]);
+
+    await expect(source.listReadyIssues()).resolves.toMatchObject([
+      { key: "LIN-OLDER" },
+      { key: "LIN-NEWER" },
+    ]);
+  });
+
+  it("lists ready issues with missing priority after explicit priorities", async () => {
+    const source = createFakeReadyIssueSource([
+      {
+        id: "issue-1",
+        key: "LIN-MISSING",
+        title: "Missing priority",
+        description: "",
+        acceptanceCriteria: [],
+        status: "ready",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        comments: [],
+      },
+      {
+        id: "issue-2",
+        key: "LIN-EXPLICIT",
+        title: "Explicit priority",
+        description: "",
+        acceptanceCriteria: [],
+        status: "ready",
+        priority: 3,
+        createdAt: "2024-02-01T00:00:00.000Z",
+        comments: [],
+      },
+    ]);
+
+    await expect(source.listReadyIssues()).resolves.toMatchObject([
+      { key: "LIN-EXPLICIT" },
+      { key: "LIN-MISSING" },
+    ]);
+  });
+
+  it("lists ready issues with missing creation time after explicit creation times", async () => {
+    const source = createFakeReadyIssueSource([
+      {
+        id: "issue-1",
+        key: "LIN-MISSING",
+        title: "Missing createdAt",
+        description: "",
+        acceptanceCriteria: [],
+        status: "ready",
+        priority: 2,
+        comments: [],
+      },
+      {
+        id: "issue-2",
+        key: "LIN-DATED",
+        title: "Dated issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "ready",
+        priority: 2,
+        createdAt: "2024-03-01T00:00:00.000Z",
+        comments: [],
+      },
+    ]);
+
+    await expect(source.listReadyIssues()).resolves.toMatchObject([
+      { key: "LIN-DATED" },
+      { key: "LIN-MISSING" },
+    ]);
+  });
+
+  it("keeps a single ready issue unchanged", async () => {
+    const source = createFakeReadyIssueSource([
+      {
+        id: "issue-1",
+        key: "LIN-ONLY",
+        title: "Only issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "ready",
+        comments: [],
+      },
+    ]);
+
+    await expect(source.listReadyIssues()).resolves.toEqual([{
+      id: "issue-1",
+      key: "LIN-ONLY",
+      title: "Only issue",
+      description: "",
+      acceptanceCriteria: [],
+      status: "ready",
+      comments: [],
+    }]);
+  });
+
   it("turns issue records into workflow artifacts", async () => {
     const issues = createFakeIssueTrackerAdapter([
       {

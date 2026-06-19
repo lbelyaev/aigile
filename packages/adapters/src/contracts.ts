@@ -8,6 +8,7 @@ export interface IssueRecord {
   acceptanceCriteria: string[];
   status: string;
   priority?: number;
+  createdAt?: string;
   comments: string[];
 }
 
