@@ -119,6 +119,19 @@ const workspaceToArtifact = (payload: unknown, issueKey: string): WorkflowArtifa
   payload,
 });
 
+const workspaceRolePayload = (
+  workspace: { worktreePath: string },
+  input: Pick<DemoWorkspaceInput, "repoPath" | "dryRun">,
+): unknown => {
+  if (input.dryRun !== true) return workspace;
+  return {
+    ...workspace,
+    worktreePath: input.repoPath,
+    simulatedWorktreePath: workspace.worktreePath,
+    mode: "dry_run",
+  };
+};
+
 const diffToArtifact = (summary: string, issueKey: string): WorkflowArtifact => ({
   id: `workspace:${issueKey}:diff`,
   kind: "workspace.diff",
@@ -437,7 +450,7 @@ export const runDemoIssueWithWorkspace = async (
       },
     }),
     initialArtifacts: [
-      workspaceToArtifact(workspace, input.issue.key),
+      workspaceToArtifact(workspaceRolePayload(workspace, input), input.issue.key),
       executionPolicyToArtifact(input.issue.key, input.dryRun === true),
     ],
     verificationArtifact,

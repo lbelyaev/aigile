@@ -231,6 +231,97 @@ describe("workspace-aware demo orchestration", () => {
     expect(seenArtifactKinds.checker).toContain("execution.policy");
   });
 
+  it("uses an existing read-only workspace path in dry-run role handoffs", async () => {
+    const seenWorkspaceArtifacts: unknown[] = [];
+    const registry = createRoleRuntimeRegistry({
+      runtimes: [{ id: "custom-runtime", transport: "stdio", command: ["custom-acp"] }],
+      assignments: [
+        { roleId: "architect", runtimeProfileId: "custom-runtime" },
+        { roleId: "developer", runtimeProfileId: "custom-runtime" },
+        { roleId: "checker", runtimeProfileId: "custom-runtime" },
+      ],
+    });
+    const runner: RoleRunner = {
+      run: async (input) => {
+        seenWorkspaceArtifacts.push(input.inputArtifacts.find((artifact) => artifact.kind === "workspace.issue_worktree")?.payload);
+        if (input.roleId === "architect") {
+          return {
+            id: "agent:LIN-123:architect:architect.plan",
+            kind: "architect.plan",
+            source: "agent",
+            producerRoleId: "architect",
+            payload: {
+              summary: "Dry-run plan",
+              scope: ["policy"],
+              acceptanceCriteria: ["policy is visible"],
+              verificationCommands: ["bun run check"],
+              risks: [],
+            },
+          };
+        }
+        if (input.roleId === "developer") {
+          return {
+            id: "agent:LIN-123:developer:developer.attempt",
+            kind: "developer.attempt",
+            source: "agent",
+            producerRoleId: "developer",
+            payload: {
+              summary: "Dry-run attempt",
+              changedFiles: [],
+              verificationNotes: "No writes performed.",
+            },
+          };
+        }
+        return {
+          id: "agent:LIN-123:checker:checker.verdict",
+          kind: "checker.verdict",
+          source: "agent",
+          producerRoleId: "checker",
+          payload: {
+            verdict: "pass",
+            summary: "Dry-run policy was visible.",
+            reasons: [],
+          },
+        };
+      },
+    };
+
+    await runDemoIssueWithWorkspace({
+      issue: {
+        id: "issue-1",
+        key: "LIN-123",
+        title: "Dry run",
+        description: "Exercise dry-run workspace artifact.",
+        acceptanceCriteria: ["policy is visible"],
+        status: "todo",
+        priority: 1,
+        comments: [],
+      },
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      dryRun: true,
+      registry,
+      runner,
+      exec: async (command, args, options) => {
+        const preflight = availableWorkspaceTarget(command, args);
+        if (preflight) return preflight;
+        if (command === "git" && args[0] === "worktree") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (command === "git" && args[0] === "diff") {
+          return { stdout: "dry-run diff | 1 +", stderr: "", exitCode: 0 };
+        }
+        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+      },
+    });
+
+    expect(seenWorkspaceArtifacts).toContainEqual(expect.objectContaining({
+      worktreePath: "/repo/aigile",
+      simulatedWorktreePath: "/repo/aigile/.worktrees/LIN-123",
+      mode: "dry_run",
+    }));
+  });
+
   it("can publish a workspace branch before creating the pull request", async () => {
     const steps: string[] = [];
 
