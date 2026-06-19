@@ -5,6 +5,7 @@ export {
 } from "./runner.js";
 
 export {
+  buildAcpRuntimeConnectInput,
   createAcpRoleRunner,
 } from "./acp-runner.js";
 

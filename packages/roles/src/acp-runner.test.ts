@@ -1,7 +1,44 @@
 import { describe, expect, it } from "bun:test";
-import { createAcpRoleRunner, type AcpRuntimeConnector } from "./index.js";
+import {
+  buildAcpRuntimeConnectInput,
+  createAcpRoleRunner,
+  type AcpRuntimeConnector,
+} from "./index.js";
 
 describe("ACP role runner", () => {
+  it("builds ACP-standard initialize and session params for stdio runtimes", () => {
+    const connectInput = buildAcpRuntimeConnectInput({
+      roleId: "architect",
+      issueId: "LIN-123",
+      runtime: {
+        id: "runtime-architect",
+        transport: "stdio",
+        command: ["agent-acp"],
+        cwd: "/repo/aigile",
+      },
+      assignment: {
+        roleId: "architect",
+        runtimeProfileId: "runtime-architect",
+      },
+      inputArtifacts: [],
+    });
+
+    expect(connectInput).toMatchObject({
+      command: ["agent-acp"],
+      cwd: "/repo/aigile",
+      sessionId: "LIN-123:architect",
+      initializeParams: {
+        protocolVersion: 1,
+        clientCapabilities: {},
+      },
+      sessionParams: {
+        cwd: "/repo/aigile",
+        mcpServers: [],
+      },
+    });
+    expect(connectInput.sessionParams).not.toHaveProperty("model");
+  });
+
   it("runs a role through an ACP runtime and returns an artifact", async () => {
     const prompts: string[] = [];
     let killed = false;

@@ -16,7 +16,7 @@ export interface AcpRoleRunnerOptions {
   connector?: AcpRuntimeConnector;
 }
 
-const defaultConnector: AcpRuntimeConnector = async (input) => {
+export const buildAcpRuntimeConnectInput = (input: RoleRunInput): ConnectAcpRuntimeInput => {
   if (input.runtime.transport !== "stdio" || !input.runtime.command) {
     throw new Error(`ACP role runner currently supports stdio command runtimes only: ${input.runtime.id}`);
   }
@@ -25,22 +25,25 @@ const defaultConnector: AcpRuntimeConnector = async (input) => {
     command: input.runtime.command,
     sessionId: `${input.issueId}:${input.roleId}`,
     initializeParams: {
-      client: "aigile",
-      roleId: input.roleId,
+      protocolVersion: 1,
+      clientCapabilities: {},
     },
     sessionParams: {
       cwd: input.runtime.cwd ?? process.cwd(),
       mcpServers: [],
-      model: input.runtime.defaultModel,
     },
   };
+  if (input.runtime.defaultModel !== undefined) {
+    connectInput.sessionParams.model = input.runtime.defaultModel;
+  }
   if (input.runtime.cwd !== undefined) connectInput.cwd = input.runtime.cwd;
   if (input.runtime.env !== undefined) connectInput.env = input.runtime.env;
 
-  const connected = await connectAcpRuntime(connectInput);
-
-  return connected;
+  return connectInput;
 };
+
+const defaultConnector: AcpRuntimeConnector = async (input) =>
+  connectAcpRuntime(buildAcpRuntimeConnectInput(input));
 
 const buildPrompt = (input: RoleRunInput): string => buildRolePrompt({
   roleId: input.roleId,
