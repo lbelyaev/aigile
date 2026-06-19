@@ -6,6 +6,11 @@ export {
   createIssueWorkflowHandlers,
 } from "./issue-workflow.js";
 
+export {
+  createRestateIssueWorkflowService,
+  createRestateServeOptions,
+} from "./service.js";
+
 export type {
   DurableStepContext,
   ExecuteWorkflowCommand,
@@ -21,3 +26,9 @@ export type {
   WorkflowApprovalSignalContext,
   WorkflowRunContext,
 } from "./issue-workflow.js";
+
+export type {
+  RestateIssueWorkflowServiceOptions,
+  RestateWorkflowApi,
+  RestateWorkflowDefinition,
+} from "./service.js";

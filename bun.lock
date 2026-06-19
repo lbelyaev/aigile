@@ -55,6 +55,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@aigile/workflow": "workspace:*",
+        "@restatedev/restate-sdk": "^1.14.5",
       },
     },
     "packages/roles": {
@@ -111,6 +112,10 @@
     "@aigile/workflow": ["@aigile/workflow@workspace:packages/workflow"],
 
     "@aigile/workspace": ["@aigile/workspace@workspace:packages/workspace"],
+
+    "@restatedev/restate-sdk": ["@restatedev/restate-sdk@1.14.5", "", { "dependencies": { "@restatedev/restate-sdk-core": "1.14.5" } }, "sha512-RvuJU/Ji9MSgLkRBN1pLeGm/AdrpFl380SZZ0sPk/NWC9jpZyX2fntJx7NbIqfQ4PfoTm1/zPH8/gn7AQGuSaQ=="],
+
+    "@restatedev/restate-sdk-core": ["@restatedev/restate-sdk-core@1.14.5", "", {}, "sha512-MvlRhyFhnNMDLFRz2t5TbhebIkIAI8oN2reRgoAj9OMADK0xn7mOuBbWHwGF+8MsFfBXmV1HrNqpAXltEeNzqg=="],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 

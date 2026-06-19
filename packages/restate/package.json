@@ -7,6 +7,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@aigile/workflow": "workspace:*"
+    "@aigile/workflow": "workspace:*",
+    "@restatedev/restate-sdk": "^1.14.5"
   }
 }
