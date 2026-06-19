@@ -66,8 +66,10 @@ describe("ACP role runner", () => {
       issueId: "LIN-123",
       runtime: {
         id: "runtime-architect",
+        displayName: "Architect ACP",
         transport: "stdio",
         command: ["agent-acp"],
+        defaultModel: "configured-model",
       },
       assignment: {
         roleId: "architect",
@@ -276,8 +278,10 @@ describe("ACP role runner", () => {
       issueId: "LIN-123",
       runtime: {
         id: "runtime-architect",
+        displayName: "Architect ACP",
         transport: "stdio",
         command: ["agent-acp"],
+        defaultModel: "configured-model",
       },
       assignment: {
         roleId: "architect",
@@ -299,6 +303,15 @@ describe("ACP role runner", () => {
       kind: "architect.plan",
       source: "agent",
       producerRoleId: "architect",
+      provenance: {
+        runtime: {
+          runtimeId: "runtime-architect",
+          runtimeDisplayName: "Architect ACP",
+          transport: "stdio",
+          command: ["agent-acp"],
+          model: "configured-model",
+        },
+      },
       payload: {
         summary: "Plan from ACP",
         scope: ["role runner"],
@@ -365,6 +378,14 @@ describe("ACP role runner", () => {
       kind: "checker.verdict",
       source: "agent",
       producerRoleId: "checker",
+      provenance: {
+        runtime: {
+          runtimeId: "runtime-checker",
+          transport: "stdio",
+          command: ["agent-acp"],
+          model: "runtime-default",
+        },
+      },
       payload: {
         verdict: "pass",
         summary: "Streamed verdict",

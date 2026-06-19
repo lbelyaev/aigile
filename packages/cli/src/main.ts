@@ -64,7 +64,7 @@ export const formatAcpRoleProgress = (event: AcpRoleProgressEvent): string => {
   if (event.type === "role_started") return `${prefix} starting ${event.runtimeId}`;
   if (event.type === "runtime_connecting") return `${prefix} connecting ${event.runtimeId}`;
   if (event.type === "runtime_connected") {
-    return `${prefix} connected ${event.runtimeId} session ${event.acpSessionId}`;
+    return `${prefix} connected ${event.runtimeId} model ${event.model} session ${event.acpSessionId}`;
   }
   if (event.type === "runtime_stderr") return `${prefix} stderr: ${event.chunk.trimEnd()}`;
   if (event.type === "prompt_started") return `${prefix} prompt sent`;

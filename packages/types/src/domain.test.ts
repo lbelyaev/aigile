@@ -51,6 +51,14 @@ describe("domain schemas", () => {
       kind: "architect.plan",
       source: "agent",
       producerRoleId: "architect",
+      provenance: {
+        runtime: {
+          runtimeId: "codex-acp",
+          transport: "stdio",
+          command: ["npx", "-y", "@zed-industries/codex-acp"],
+          model: "runtime-default",
+        },
+      },
       payload: { summary: "Plan the change" },
     })).toBe(true);
 

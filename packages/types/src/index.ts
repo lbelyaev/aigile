@@ -18,8 +18,10 @@ export {
 export type {
   AcpRuntimeCapabilities,
   AcpRuntimeProfile,
+  ArtifactProvenance,
   ArtifactSource,
   RoleAssignment,
+  RuntimeArtifactProvenance,
   WorkflowArtifact,
   WorkflowEvent,
   WorkflowEventType,

@@ -5,7 +5,7 @@ import {
   type ConnectAcpRuntimeInput,
   type PermissionDecision,
 } from "@aigile/acp";
-import { parseRoleArtifactResponse, type WorkflowArtifact } from "@aigile/types";
+import { parseRoleArtifactResponse, type RuntimeArtifactProvenance, type WorkflowArtifact } from "@aigile/types";
 import type { RoleRunner, RoleRunInput } from "./runner.js";
 import { buildRolePrompt, getDefaultRoleInstruction } from "./prompts.js";
 
@@ -21,7 +21,7 @@ export type AcpRuntimeConnector = (input: RoleRunInput) => Promise<AcpRuntimeCon
 export type AcpRoleProgressEvent =
   | { type: "role_started"; roleId: string; issueId: string; runtimeId: string }
   | { type: "runtime_connecting"; roleId: string; issueId: string; runtimeId: string }
-  | { type: "runtime_connected"; roleId: string; issueId: string; runtimeId: string; acpSessionId: string }
+  | { type: "runtime_connected"; roleId: string; issueId: string; runtimeId: string; model: string; acpSessionId: string }
   | { type: "runtime_stderr"; roleId: string; issueId: string; runtimeId: string; chunk: string }
   | { type: "prompt_started"; roleId: string; issueId: string; runtimeId: string }
   | { type: "text_delta"; roleId: string; issueId: string; runtimeId: string; delta: string }
@@ -76,6 +76,19 @@ export const buildAcpRuntimeConnectInput = (input: RoleRunInput): ConnectAcpRunt
 
 const defaultConnector: AcpRuntimeConnector = async (input) =>
   connectAcpRuntime(buildAcpRuntimeConnectInput(input));
+
+const runtimeModel = (input: RoleRunInput): string => input.runtime.defaultModel ?? "runtime-default";
+
+const runtimeProvenance = (input: RoleRunInput): RuntimeArtifactProvenance => {
+  const provenance: RuntimeArtifactProvenance = {
+    runtimeId: input.runtime.id,
+    transport: input.runtime.transport,
+    model: runtimeModel(input),
+  };
+  if (input.runtime.displayName !== undefined) provenance.runtimeDisplayName = input.runtime.displayName;
+  if (input.runtime.command !== undefined) provenance.command = [...input.runtime.command];
+  return provenance;
+};
 
 const buildPrompt = (input: RoleRunInput): string => buildRolePrompt({
   roleId: input.roleId,
@@ -233,6 +246,7 @@ export const createAcpRoleRunner = (
       options.onProgress?.({
         type: "runtime_connected",
         ...progressBase(input),
+        model: runtimeModel(input),
         acpSessionId: connection.session.acpSessionId,
       });
       let streamedText = "";
@@ -288,6 +302,9 @@ export const createAcpRoleRunner = (
           kind: response.artifactKind,
           source: "agent",
           producerRoleId: input.roleId,
+          provenance: {
+            runtime: runtimeProvenance(input),
+          },
           payload: structuredClone(response.payload),
         } satisfies WorkflowArtifact;
       } finally {

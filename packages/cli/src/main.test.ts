@@ -71,8 +71,9 @@ describe("cli formatting", () => {
       roleId: "architect",
       issueId: "LIN-123",
       runtimeId: "claude-acp",
+      model: "runtime-default",
       acpSessionId: "acp-1",
-    })).toBe("[LIN-123 architect] connected claude-acp session acp-1");
+    })).toBe("[LIN-123 architect] connected claude-acp model runtime-default session acp-1");
     expect(formatAcpRoleProgress({
       type: "tool_start",
       roleId: "developer",

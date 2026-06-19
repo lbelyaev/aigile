@@ -70,11 +70,24 @@ export interface RoleAssignment {
   instructionRef?: string;
 }
 
+export interface RuntimeArtifactProvenance {
+  runtimeId: string;
+  runtimeDisplayName?: string;
+  transport: AcpRuntimeProfile["transport"];
+  command?: readonly string[];
+  model: string;
+}
+
+export interface ArtifactProvenance {
+  runtime?: RuntimeArtifactProvenance;
+}
+
 export interface WorkflowArtifact<TPayload = unknown> {
   id: string;
   kind: string;
   source: ArtifactSource;
   producerRoleId?: string;
+  provenance?: ArtifactProvenance;
   payload: TPayload;
 }
 
@@ -131,12 +144,25 @@ export const isRoleAssignment = (value: unknown): value is RoleAssignment =>
   && isNonEmptyString(value.runtimeProfileId)
   && (value.instructionRef === undefined || isNonEmptyString(value.instructionRef));
 
+const isRuntimeArtifactProvenance = (value: unknown): value is RuntimeArtifactProvenance =>
+  isRecord(value)
+  && isNonEmptyString(value.runtimeId)
+  && (value.runtimeDisplayName === undefined || isNonEmptyString(value.runtimeDisplayName))
+  && isKnownValue(["stdio", "http", "websocket"] as const, value.transport)
+  && (value.command === undefined || (Array.isArray(value.command) && value.command.every(isNonEmptyString)))
+  && isNonEmptyString(value.model);
+
+const isArtifactProvenance = (value: unknown): value is ArtifactProvenance =>
+  isRecord(value)
+  && (value.runtime === undefined || isRuntimeArtifactProvenance(value.runtime));
+
 export const isWorkflowArtifact = (value: unknown): value is WorkflowArtifact =>
   isRecord(value)
   && isNonEmptyString(value.id)
   && isNonEmptyString(value.kind)
   && isKnownValue(ARTIFACT_SOURCES, value.source)
   && (value.producerRoleId === undefined || isNonEmptyString(value.producerRoleId))
+  && (value.provenance === undefined || isArtifactProvenance(value.provenance))
   && "payload" in value;
 
 export const isWorkflowEvent = (value: unknown): value is WorkflowEvent =>
