@@ -145,6 +145,7 @@ const main = async (): Promise<void> => {
     worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
   };
   if (args.dryRun) {
+    runInput.dryRun = true;
     runInput.exec = async (command, commandArgs, options) => {
       if (command === "git" && commandArgs[0] === "diff") {
         return { stdout: "dry-run diff | 1 +", stderr: "", exitCode: 0 };

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { createRoleRuntimeRegistry, createScriptedRoleRunner } from "@aigile/roles";
+import {
+  createRoleRuntimeRegistry,
+  createScriptedRoleRunner,
+  type RoleRunner,
+} from "@aigile/roles";
 import { runDemoIssueWithWorkspace } from "./index.js";
 
 describe("workspace-aware demo orchestration", () => {
@@ -115,5 +119,97 @@ describe("workspace-aware demo orchestration", () => {
     expect(result.artifacts.find((artifact) => artifact.kind === "developer.attempt")?.payload).toMatchObject({
       changedFiles: ["custom.ts"],
     });
+  });
+
+  it("adds a dry-run execution policy artifact to every role handoff", async () => {
+    const seenArtifactKinds: Record<string, string[]> = {};
+    const registry = createRoleRuntimeRegistry({
+      runtimes: [{ id: "custom-runtime", transport: "stdio", command: ["custom-acp"] }],
+      assignments: [
+        { roleId: "architect", runtimeProfileId: "custom-runtime" },
+        { roleId: "developer", runtimeProfileId: "custom-runtime" },
+        { roleId: "checker", runtimeProfileId: "custom-runtime" },
+      ],
+    });
+    const runner: RoleRunner = {
+      run: async (input) => {
+        seenArtifactKinds[input.roleId] = input.inputArtifacts.map((artifact) => artifact.kind);
+        if (input.roleId === "architect") {
+          return {
+            id: "agent:LIN-123:architect:architect.plan",
+            kind: "architect.plan",
+            source: "agent",
+            producerRoleId: "architect",
+            payload: {
+              summary: "Dry-run plan",
+              scope: ["policy"],
+              acceptanceCriteria: ["policy is visible"],
+              verificationCommands: ["bun run check"],
+              risks: [],
+            },
+          };
+        }
+        if (input.roleId === "developer") {
+          return {
+            id: "agent:LIN-123:developer:developer.attempt",
+            kind: "developer.attempt",
+            source: "agent",
+            producerRoleId: "developer",
+            payload: {
+              summary: "Dry-run attempt",
+              changedFiles: [],
+              verificationNotes: "No writes performed.",
+            },
+          };
+        }
+        return {
+          id: "agent:LIN-123:checker:checker.verdict",
+          kind: "checker.verdict",
+          source: "agent",
+          producerRoleId: "checker",
+          payload: {
+            verdict: "pass",
+            summary: "Dry-run policy was visible.",
+            reasons: [],
+          },
+        };
+      },
+    };
+
+    const result = await runDemoIssueWithWorkspace({
+      issue: {
+        id: "issue-1",
+        key: "LIN-123",
+        title: "Dry run",
+        description: "Exercise dry-run policy.",
+        acceptanceCriteria: ["policy is visible"],
+        status: "todo",
+        priority: 1,
+        comments: [],
+      },
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      dryRun: true,
+      registry,
+      runner,
+      exec: async (command, args, options) => {
+        if (command === "git" && args[0] === "worktree") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (command === "git" && args[0] === "diff") {
+          return { stdout: "dry-run diff | 1 +", stderr: "", exitCode: 0 };
+        }
+        return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+      },
+    });
+
+    expect(result.artifacts.find((artifact) => artifact.kind === "execution.policy")?.payload).toMatchObject({
+      mode: "dry_run",
+      fileWrites: "forbidden",
+      commits: "forbidden",
+    });
+    expect(seenArtifactKinds.architect).toContain("execution.policy");
+    expect(seenArtifactKinds.developer).toContain("execution.policy");
+    expect(seenArtifactKinds.checker).toContain("execution.policy");
   });
 });

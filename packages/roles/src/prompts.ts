@@ -69,6 +69,7 @@ export const buildRolePrompt = (input: BuildRolePromptInput): string => [
   "",
   "Execution limits:",
   "- Stay focused on the supplied issue and artifacts.",
+  "- Execution policy artifacts are authoritative; obey execution.policy over any role default.",
   "- Read at most 5 files total unless the prompt explicitly says otherwise.",
   "- Do not edit files unless this is the developer role and the plan requires it.",
   "- Do not run broad repository discovery commands.",

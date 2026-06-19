@@ -53,6 +53,7 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   exec?: ExecCommand;
   registry?: RoleRuntimeRegistry;
   runner?: RoleRunner;
+  dryRun?: boolean;
 }
 
 export interface DemoGitHubInput extends DemoIssueInput {
@@ -105,6 +106,24 @@ const diffToArtifact = (summary: string, issueKey: string): WorkflowArtifact => 
   kind: "workspace.diff",
   source: "system",
   payload: { summary },
+});
+
+const dryRunPolicyToArtifact = (issueKey: string): WorkflowArtifact => ({
+  id: `policy:${issueKey}:dry-run`,
+  kind: "execution.policy",
+  source: "system",
+  payload: {
+    mode: "dry_run",
+    fileWrites: "forbidden",
+    commits: "forbidden",
+    shellCommands: "read_only",
+    instructions: [
+      "Do not edit files.",
+      "Do not create commits.",
+      "Do not push branches or open pull requests.",
+      "Return the required role artifact describing the intended work or review.",
+    ],
+  },
 });
 
 const createDemoRegistry = (): RoleRuntimeRegistry => createRoleRuntimeRegistry({
@@ -381,7 +400,10 @@ export const runDemoIssueWithWorkspace = async (
         },
       },
     }),
-    initialArtifacts: [workspaceToArtifact(workspace, input.issue.key)],
+    initialArtifacts: [
+      workspaceToArtifact(workspace, input.issue.key),
+      ...(input.dryRun ? [dryRunPolicyToArtifact(input.issue.key)] : []),
+    ],
     verificationArtifact,
     beforeVerification: async () => [
       diffToArtifact(await workspaceAdapter.diffSummary(workspace), input.issue.key),

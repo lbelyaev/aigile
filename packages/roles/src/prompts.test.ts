@@ -18,6 +18,15 @@ describe("role prompt builder", () => {
         kind: "linear.issue",
         source: "linear",
         payload: { title: "Build prompts" },
+      }, {
+        id: "policy:LIN-123:dry-run",
+        kind: "execution.policy",
+        source: "system",
+        payload: {
+          mode: "dry_run",
+          fileWrites: "forbidden",
+          commits: "forbidden",
+        },
       }],
     });
 
@@ -31,10 +40,12 @@ describe("role prompt builder", () => {
     expect(prompt).toContain("\"verificationCommands\": [");
     expect(prompt).toContain("\"risks\": [");
     expect(prompt).toContain("Read at most 5 files");
+    expect(prompt).toContain("Execution policy artifacts are authoritative");
     expect(prompt).toContain("Do not edit files");
     expect(prompt).toContain("No Markdown");
     expect(prompt).toContain("\"artifactKind\"");
     expect(prompt).toContain("linear.issue");
+    expect(prompt).toContain("execution.policy");
     expect(prompt).not.toContain("Codex");
     expect(prompt).not.toContain("Claude");
   });
