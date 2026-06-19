@@ -12,6 +12,10 @@ export {
   createGitHubCliCodeHostAdapter,
 } from "./github-cli.js";
 
+export {
+  createLinearGraphqlIssueTrackerAdapter,
+} from "./linear-graphql.js";
+
 export type {
   CheckResult,
   CodeHostAdapter,
@@ -28,3 +32,8 @@ export type {
   GitHubCliExec,
   GitHubCliExecResult,
 } from "./github-cli.js";
+
+export type {
+  LinearFetchGraphql,
+  LinearGraphqlIssueTrackerAdapterOptions,
+} from "./linear-graphql.js";
