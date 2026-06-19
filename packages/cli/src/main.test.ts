@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import type { CodeHostAdapter } from "@aigile/adapters";
 import type { DemoWorkspaceInput } from "@aigile/demo";
+import type { WorkflowArtifact } from "@aigile/types";
 import {
   createAcpRoleProgressFormatter,
   createDryRunExec,
   formatAcpRoleProgress,
+  formatArchitectPlanComment,
   formatDemoResult,
   formatDuration,
   parseDurationMs,
@@ -23,6 +25,40 @@ import {
 } from "./main.js";
 
 describe("cli formatting", () => {
+  it("formats architect plan comments deterministically", () => {
+    expect(formatArchitectPlanComment({
+      id: "agent:LBE-10:architect:architect.plan",
+      kind: "architect.plan",
+      source: "agent",
+      payload: {
+        summary: "Post the plan to Linear before implementation.",
+        scope: ["Add a formatter", "Wire the orchestration hook"],
+        acceptanceCriteria: [],
+        verificationCommands: ["bun run check", "bun test packages/cli"],
+        risks: [],
+      },
+    })).toBe([
+      "Aigile architect plan",
+      "",
+      "Summary:",
+      "Post the plan to Linear before implementation.",
+      "",
+      "Scope:",
+      "- Add a formatter",
+      "- Wire the orchestration hook",
+      "",
+      "Acceptance criteria:",
+      "- None.",
+      "",
+      "Verification commands:",
+      "- bun run check",
+      "- bun test packages/cli",
+      "",
+      "Risks:",
+      "- None.",
+    ].join("\n"));
+  });
+
   it("formats demo output for hand testing", () => {
     expect(formatDemoResult({
       issueKey: "LIN-123",
@@ -1220,6 +1256,135 @@ describe("cli formatting", () => {
     });
 
     expect(calls.map((call) => call.variables)).toEqual([{ key: "LBE-8" }]);
+  });
+
+  it("posts the Linear architect plan before developer artifacts in real runs", async () => {
+    const events: string[] = [];
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const plan: WorkflowArtifact = {
+      id: "agent:LBE-10:architect:architect.plan",
+      kind: "architect.plan",
+      source: "agent",
+      payload: {
+        summary: "Publish the architect plan.",
+        scope: ["format comment", "post comment"],
+        acceptanceCriteria: ["comment exists before development"],
+        verificationCommands: ["bun run check"],
+        risks: ["Linear mutation can fail"],
+      },
+    };
+
+    const output = await runLinearIssueWorkflowCli({
+      apiKey: "test-key",
+      issueKey: "LBE-10",
+      teamKey: "LBE",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      agentWrite: true,
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("commentCreate")) events.push("commentCreate");
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("commentCreate")) return {};
+        return {
+          issue: {
+            id: "issue-id",
+            identifier: "LBE-10",
+            title: "Publish architect plans back to Linear",
+            description: "Acceptance:\n- Plan comment exists",
+            state: { name: "In Progress" },
+            comments: { nodes: [] },
+          },
+        };
+      },
+      runWorkspace: async (input) => {
+        events.push("architect.plan");
+        await input.publishPlan?.(plan);
+        events.push("developer.attempt");
+        return {
+          issueKey: input.issue.key,
+          finalState: "developing",
+          artifacts: [
+            plan,
+            {
+              id: "agent:LBE-10:developer:developer.attempt",
+              kind: "developer.attempt",
+              source: "agent",
+              payload: {
+                summary: "Attempt",
+                changedFiles: ["packages/cli/src/main.ts"],
+                verificationNotes: "Not verified.",
+              },
+            },
+          ],
+          timeline: [],
+          durationMs: 0,
+        };
+      },
+    });
+
+    expect(output).toContain("Final state: developing");
+    expect(events).toEqual(["architect.plan", "commentCreate", "developer.attempt"]);
+    expect(calls.map((call) => call.variables)).toContainEqual({
+      key: "issue-id",
+      body: formatArchitectPlanComment(plan),
+    });
+  });
+
+  it("prints the architect plan in dry-run without mutating Linear", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const progressLines: string[] = [];
+    const plan: WorkflowArtifact = {
+      id: "agent:LBE-10:architect:architect.plan",
+      kind: "architect.plan",
+      source: "agent",
+      payload: {
+        summary: "Dry-run plan is visible.",
+        scope: [],
+        acceptanceCriteria: [],
+        verificationCommands: [],
+        risks: [],
+      },
+    };
+
+    const output = await runLinearIssueWorkflowCli({
+      apiKey: "test-key",
+      issueKey: "LBE-10",
+      teamKey: "LBE",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      dryRun: true,
+      onProgressLine: (line) => progressLines.push(line),
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        return {
+          issue: {
+            id: "issue-id",
+            identifier: "LBE-10",
+            title: "Publish architect plans back to Linear",
+            description: "Acceptance:\n- Plan comment exists",
+            state: { name: "In Progress" },
+            comments: { nodes: [] },
+          },
+        };
+      },
+      runWorkspace: async (input) => {
+        await input.publishPlan?.(plan);
+        return {
+          issueKey: input.issue.key,
+          finalState: "developing",
+          artifacts: [plan],
+          timeline: [],
+          durationMs: 0,
+        };
+      },
+    });
+
+    expect(calls.map((call) => call.variables)).toEqual([{ key: "LBE-10" }]);
+    expect(output).toContain("Dry-run plan is visible.");
+    expect(progressLines.join("\n")).toContain("Dry-run plan is visible.");
   });
 
   it("fetches run issue metadata from Linear", async () => {

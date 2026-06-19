@@ -24,6 +24,7 @@ import {
 } from "@aigile/demo";
 import type { CodeHostAdapter, IssueRecord, IssueTrackerAdapter, LinearFetchGraphql, ReadyIssueSource } from "@aigile/adapters";
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
+import { isArchitectPlanPayload, type WorkflowArtifact } from "@aigile/types";
 import { defaultClaimComment, watchLoop, watchOnce, type WatchLoopEvent } from "@aigile/watch";
 import {
   createGitWorkspaceAdapter,
@@ -528,6 +529,34 @@ const publishedComment = (result: DemoResult): string => [
   `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
 ].join("\n");
 
+const formatListSection = (items: readonly string[]): string[] =>
+  items.length === 0 ? ["- None."] : items.map((item) => `- ${item}`);
+
+export const formatArchitectPlanComment = (plan: WorkflowArtifact): string => {
+  if (plan.kind !== "architect.plan" || !isArchitectPlanPayload(plan.payload)) {
+    throw new Error(`Architect plan artifact payload is invalid: ${plan.id}`);
+  }
+
+  return [
+    "Aigile architect plan",
+    "",
+    "Summary:",
+    plan.payload.summary,
+    "",
+    "Scope:",
+    ...formatListSection(plan.payload.scope),
+    "",
+    "Acceptance criteria:",
+    ...formatListSection(plan.payload.acceptanceCriteria),
+    "",
+    "Verification commands:",
+    ...formatListSection(plan.payload.verificationCommands),
+    "",
+    "Risks:",
+    ...formatListSection(plan.payload.risks),
+  ].join("\n");
+};
+
 const syncLinearIssueWorkflowResult = async (
   input: LinearIssueWorkflowCliInput,
   result: DemoResult,
@@ -585,6 +614,31 @@ export const runLinearIssueWorkflowCli = async (input: LinearIssueWorkflowCliInp
     if (input.codeHost !== undefined) runInput.codeHost = input.codeHost;
   }
   if (input.agentWrite === true && input.publish !== true) runInput.createPullRequest = false;
+  const dryRunPlanOutputs: string[] = [];
+  runInput.publishPlan = async (plan) => {
+    const body = formatArchitectPlanComment(plan);
+    if (input.dryRun === true) {
+      const output = [
+        "Aigile dry-run architect plan comment:",
+        "",
+        body,
+      ].join("\n");
+      dryRunPlanOutputs.push(output);
+      for (const line of output.split("\n")) input.onProgressLine?.(line);
+      return;
+    }
+    const tracker = createLinearGraphqlIssueTrackerAdapter(input.fetchGraphql === undefined
+      ? {
+        apiKey: input.apiKey,
+        ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
+      }
+      : {
+        apiKey: input.apiKey,
+        fetchGraphql: input.fetchGraphql,
+        ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
+      });
+    await tracker.appendIssueComment(input.issueKey, body);
+  };
   const progressFormatter = createAcpRoleProgressFormatter();
   runInput.runner = createAcpRoleRunner({
     onProgress: (event) => {
@@ -595,7 +649,10 @@ export const runLinearIssueWorkflowCli = async (input: LinearIssueWorkflowCliInp
   });
   const result = await (input.runWorkspace ?? runDemoIssueWithWorkspace)(runInput);
   await syncLinearIssueWorkflowResult(input, result);
-  return formatDemoResult(result);
+  const formattedResult = formatDemoResult(result);
+  return dryRunPlanOutputs.length === 0
+    ? formattedResult
+    : [...dryRunPlanOutputs, "", formattedResult].join("\n");
 };
 
 export const runLinearWatchOnceCli = async (input: LinearWatchOnceCliInput): Promise<string> => {
