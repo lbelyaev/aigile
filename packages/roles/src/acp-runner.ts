@@ -1,5 +1,5 @@
 import { connectAcpRuntime, type AcpSession, type ConnectAcpRuntimeInput } from "@aigile/acp";
-import type { WorkflowArtifact } from "@aigile/types";
+import { parseRoleArtifactResponse, type WorkflowArtifact } from "@aigile/types";
 import type { RoleRunner, RoleRunInput } from "./runner.js";
 import { buildRolePrompt, getDefaultRoleInstruction } from "./prompts.js";
 
@@ -15,29 +15,6 @@ export type AcpRuntimeConnector = (input: RoleRunInput) => Promise<AcpRuntimeCon
 export interface AcpRoleRunnerOptions {
   connector?: AcpRuntimeConnector;
 }
-
-interface AcpArtifactResponse {
-  artifactKind: string;
-  payload: unknown;
-}
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const isAcpArtifactResponse = (value: unknown): value is AcpArtifactResponse =>
-  isRecord(value)
-  && typeof value.artifactKind === "string"
-  && value.artifactKind.trim().length > 0
-  && "payload" in value;
-
-const parseAcpArtifactResponse = (value: unknown): AcpArtifactResponse => {
-  if (isAcpArtifactResponse(value)) return value;
-  if (typeof value === "string") {
-    const parsed = JSON.parse(value) as unknown;
-    if (isAcpArtifactResponse(parsed)) return parsed;
-  }
-  throw new Error("ACP role response did not include artifactKind and payload");
-};
 
 const defaultConnector: AcpRuntimeConnector = async (input) => {
   if (input.runtime.transport !== "stdio" || !input.runtime.command) {
@@ -84,7 +61,7 @@ export const createAcpRoleRunner = (
     run: async (input) => {
       const connection = await connector(input);
       try {
-        const response = parseAcpArtifactResponse(await connection.session.prompt(buildPrompt(input)));
+        const response = parseRoleArtifactResponse(await connection.session.prompt(buildPrompt(input)));
         return {
           id: `agent:${input.issueId}:${input.roleId}:${response.artifactKind}`,
           kind: response.artifactKind,

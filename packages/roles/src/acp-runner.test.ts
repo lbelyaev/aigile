@@ -13,7 +13,13 @@ describe("ACP role runner", () => {
           prompts.push(text);
           return {
             artifactKind: "architect.plan",
-            payload: { summary: "Plan from ACP" },
+            payload: {
+              summary: "Plan from ACP",
+              scope: ["role runner"],
+              acceptanceCriteria: ["artifact is parsed"],
+              verificationCommands: ["bun run check"],
+              risks: [],
+            },
           };
         },
         cancel: () => undefined,
@@ -55,7 +61,13 @@ describe("ACP role runner", () => {
       kind: "architect.plan",
       source: "agent",
       producerRoleId: "architect",
-      payload: { summary: "Plan from ACP" },
+      payload: {
+        summary: "Plan from ACP",
+        scope: ["role runner"],
+        acceptanceCriteria: ["artifact is parsed"],
+        verificationCommands: ["bun run check"],
+        risks: [],
+      },
     });
     expect(killed).toBe(true);
   });
