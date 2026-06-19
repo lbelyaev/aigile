@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import type { CodeHostAdapter } from "@aigile/adapters";
+import type { DemoWorkspaceInput } from "@aigile/demo";
 import {
   createAcpRoleProgressFormatter,
   createDryRunExec,
@@ -9,6 +11,7 @@ import {
   parseGitHubRepoFromRemoteUrl,
   parseCliArgs,
   fetchLinearIssueForRun,
+  runLinearIssueWorkflowCli,
   runLinearWatchLoopCli,
   runLinearWatchPreflightCli,
   runLinearWatchOnceCli,
@@ -587,6 +590,11 @@ describe("cli formatting", () => {
       "--worktrees",
       "/repo/aigile/.worktrees",
       "--agent-write",
+      "--publish",
+      "--github-repo",
+      "lbelyaev/aigile",
+      "--remote",
+      "origin",
     ])).toEqual({
       mode: "watch",
       linear: true,
@@ -600,6 +608,9 @@ describe("cli formatting", () => {
       repoPath: "/repo/aigile",
       worktreesPath: "/repo/aigile/.worktrees",
       agentWrite: true,
+      publish: true,
+      githubRepo: "lbelyaev/aigile",
+      remote: "origin",
     });
   });
 
@@ -928,6 +939,75 @@ describe("cli formatting", () => {
     expect(output).toContain("Run LBE-6: Final state: merge_ready");
     expect(output).toContain("Run LBE-6: completed");
     expect(output).toContain("Agents: handled claimed issues");
+  });
+
+  it("passes publish options into Linear issue workflow runs", async () => {
+    let capturedInput: DemoWorkspaceInput | undefined;
+    const codeHost: CodeHostAdapter = {
+      createPullRequest: async (input) => ({
+        ...input,
+        id: `${input.owner}/${input.repo}#1`,
+        number: 1,
+        url: `https://github.local/${input.owner}/${input.repo}/pull/1`,
+        comments: [],
+        checks: [],
+      }),
+      getPullRequest: async () => {
+        throw new Error("getPullRequest should not be called");
+      },
+      appendPullRequestComment: async () => {},
+      recordCheckResult: async () => {},
+    };
+
+    const output = await runLinearIssueWorkflowCli({
+      apiKey: "test-key",
+      issueKey: "LBE-6",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      agentWrite: true,
+      publish: true,
+      remote: "origin",
+      pullRequestTarget: { owner: "lbelyaev", repo: "aigile", baseBranch: "main" },
+      codeHost,
+      fetchGraphql: async () => ({
+        issue: {
+          id: "issue-id",
+          identifier: "LBE-6",
+          title: "Start Linear-claimed issues automatically",
+          description: "Acceptance:\n- Starts run",
+          state: { name: "In Progress" },
+          comments: { nodes: [] },
+        },
+      }),
+      runWorkspace: async (input) => {
+        capturedInput = input;
+        return {
+          issueKey: input.issue.key,
+          finalState: "merged",
+          pullRequest: await codeHost.createPullRequest({
+            owner: input.pullRequestTarget?.owner ?? "missing",
+            repo: input.pullRequestTarget?.repo ?? "missing",
+            branch: "aigile/LBE-6",
+            baseBranch: input.pullRequestTarget?.baseBranch ?? "main",
+            title: "LBE-6 Start Linear-claimed issues automatically",
+            body: "Demo PR",
+          }),
+          artifacts: [],
+          timeline: [],
+          durationMs: 0,
+        };
+      },
+    });
+
+    expect(capturedInput).toMatchObject({
+      publish: true,
+      remote: "origin",
+      pullRequestTarget: { owner: "lbelyaev", repo: "aigile", baseBranch: "main" },
+    });
+    expect(capturedInput?.createPullRequest).toBeUndefined();
+    expect(capturedInput?.codeHost).toBe(codeHost);
+    expect(output).toContain("Pull request: https://github.local/lbelyaev/aigile/pull/1");
   });
 
   it("fetches run issue metadata from Linear", async () => {

@@ -20,8 +20,9 @@ import {
   runDemoIssueWithWorkspace,
   type DemoWorkspaceInput,
   type DemoResult,
+  type PullRequestTarget,
 } from "@aigile/demo";
-import type { IssueRecord, IssueTrackerAdapter, LinearFetchGraphql, ReadyIssueSource } from "@aigile/adapters";
+import type { CodeHostAdapter, IssueRecord, IssueTrackerAdapter, LinearFetchGraphql, ReadyIssueSource } from "@aigile/adapters";
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
 import { defaultClaimComment, watchLoop, watchOnce, type WatchLoopEvent } from "@aigile/watch";
 import {
@@ -497,8 +498,13 @@ export interface LinearIssueWorkflowCliInput {
   baseBranch?: string;
   dryRun?: boolean;
   agentWrite?: boolean;
+  publish?: boolean;
+  remote?: string;
+  pullRequestTarget?: PullRequestTarget;
+  codeHost?: CodeHostAdapter;
   fetchGraphql?: LinearFetchGraphql;
   onProgressLine?: (line: string) => void;
+  runWorkspace?: (input: DemoWorkspaceInput) => Promise<DemoResult>;
 }
 
 export const fetchLinearIssueForRun = async (input: LinearRunIssueInput): Promise<IssueRecord> => {
@@ -523,7 +529,13 @@ export const runLinearIssueWorkflowCli = async (input: LinearIssueWorkflowCliInp
     runInput.dryRun = true;
     runInput.exec = createDryRunExec();
   }
-  if (input.agentWrite === true) runInput.createPullRequest = false;
+  if (input.publish === true) {
+    runInput.publish = true;
+    runInput.remote = input.remote ?? "origin";
+    if (input.pullRequestTarget !== undefined) runInput.pullRequestTarget = input.pullRequestTarget;
+    if (input.codeHost !== undefined) runInput.codeHost = input.codeHost;
+  }
+  if (input.agentWrite === true && input.publish !== true) runInput.createPullRequest = false;
   const progressFormatter = createAcpRoleProgressFormatter();
   runInput.runner = createAcpRoleRunner({
     onProgress: (event) => {
@@ -532,7 +544,7 @@ export const runLinearIssueWorkflowCli = async (input: LinearIssueWorkflowCliInp
       }
     },
   });
-  return formatDemoResult(await runDemoIssueWithWorkspace(runInput));
+  return formatDemoResult(await (input.runWorkspace ?? runDemoIssueWithWorkspace)(runInput));
 };
 
 export const runLinearWatchOnceCli = async (input: LinearWatchOnceCliInput): Promise<string> => {
@@ -718,6 +730,8 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     const repoPath = optionValue(args, "--repo");
     const worktreesPath = optionValue(args, "--worktrees");
     const baseBranch = optionValue(args, "--base-branch");
+    const remote = optionValue(args, "--remote");
+    const githubRepo = optionValue(args, "--github-repo");
     const linearTeam = optionValue(args, "--linear-team");
     const linearApiKeyEnv = optionValue(args, "--linear-api-key-env");
     const maxPolls = optionValue(args, "--max-polls");
@@ -731,11 +745,14 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (repoPath !== undefined) parsed.repoPath = repoPath;
     if (worktreesPath !== undefined) parsed.worktreesPath = worktreesPath;
     if (baseBranch !== undefined) parsed.baseBranch = baseBranch;
+    if (remote !== undefined) parsed.remote = remote;
+    if (githubRepo !== undefined) parsed.githubRepo = githubRepo;
     if (args.includes("--linear")) parsed.linear = true;
     if (linearTeam !== undefined) parsed.linearTeam = linearTeam;
     if (linearApiKeyEnv !== undefined) parsed.linearApiKeyEnv = linearApiKeyEnv;
     if (maxPolls !== undefined) parsed.maxPolls = parsePositiveInteger(maxPolls, "--max-polls");
     if (args.includes("--start-run")) parsed.startRun = true;
+    if (args.includes("--publish")) parsed.publish = true;
     if (args.includes("--dry-run")) parsed.dryRun = true;
     if (args.includes("--agent-write")) parsed.agentWrite = true;
     if (parsed.dryRun && parsed.agentWrite) {
@@ -872,6 +889,31 @@ const main = async (): Promise<void> => {
           if (args.dryRun !== true && args.agentWrite !== true) {
             throw new Error("watch --start-run requires --dry-run or --agent-write");
           }
+          const publishRunInput: Pick<LinearIssueWorkflowCliInput, "publish" | "remote" | "pullRequestTarget" | "codeHost"> = {};
+          if (args.publish === true && args.dryRun !== true) {
+            const remote = args.remote ?? "origin";
+            const baseBranch = args.baseBranch ?? "main";
+            const publishPreflightInput: PublishPreflightInput = {
+              repoPath: args.repoPath ?? process.cwd(),
+              remote,
+              baseBranch,
+            };
+            if (args.githubRepo !== undefined) publishPreflightInput.githubRepo = args.githubRepo;
+            const publishPreflight = await runPublishPreflight(publishPreflightInput);
+            const [owner, repo] = publishPreflight.githubRepo.split("/");
+            if (!owner || !repo) throw new Error("--github-repo must be in owner/repo format");
+            publishRunInput.publish = true;
+            publishRunInput.remote = remote;
+            publishRunInput.pullRequestTarget = { owner, repo, baseBranch };
+            publishRunInput.codeHost = createGitHubCliCodeHostAdapter({
+              cwd: args.repoPath ?? process.cwd(),
+              exec: async (command, commandArgs, options) =>
+                defaultExecCommand(command, commandArgs, { cwd: options.cwd ?? process.cwd() }),
+            });
+          } else if (args.publish === true) {
+            publishRunInput.publish = true;
+            publishRunInput.remote = args.remote ?? "origin";
+          }
           loopInput.startRun = async (issue) => runLinearIssueWorkflowCli({
             apiKey,
             issueKey: issue.key,
@@ -881,6 +923,7 @@ const main = async (): Promise<void> => {
             ...(args.baseBranch === undefined ? {} : { baseBranch: args.baseBranch }),
             ...(args.dryRun === true ? { dryRun: true } : {}),
             ...(args.agentWrite === true ? { agentWrite: true } : {}),
+            ...publishRunInput,
             onProgressLine: (line) => process.stderr.write(`${line}\n`),
           });
         }
