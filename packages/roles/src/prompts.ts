@@ -72,6 +72,7 @@ export const buildRolePrompt = (input: BuildRolePromptInput): string => [
   "- Execution policy artifacts are authoritative; obey execution.policy over any role default.",
   "- In dry_run mode, read at most 5 files total unless the prompt explicitly says otherwise.",
   "- In agent_write mode, keep file reads focused on the approved plan; do not perform broad discovery.",
+  "- In agent_write mode, the developer role may edit files in the worktree, but the agent must not commit, push, or open pull requests.",
   "- Do not edit files unless this is the developer role and the plan requires it.",
   "- Do not run broad repository discovery commands.",
   "- No Markdown, no prose, no commentary outside the final JSON object.",

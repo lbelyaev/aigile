@@ -160,7 +160,7 @@ const extractCommand = (request: AcpPermissionRequest): string => {
 
 const commandSegments = (command: string): string[] =>
   command
-    .split(/\s*(?:&&|\|\||;|\|)\s*/g)
+    .split(/\s*(?:&&|\|\||;|\||\r?\n)\s*/g)
     .map((segment) => segment.trim())
     .filter((segment) => segment.length > 0);
 

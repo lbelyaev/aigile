@@ -41,6 +41,8 @@ describe("role prompt builder", () => {
     expect(prompt).toContain("\"risks\": [");
     expect(prompt).toContain("In dry_run mode, read at most 5 files");
     expect(prompt).toContain("In agent_write mode, keep file reads focused");
+    expect(prompt).toContain("the developer role may edit files in the worktree");
+    expect(prompt).toContain("must not commit, push, or open pull requests");
     expect(prompt).toContain("Execution policy artifacts are authoritative");
     expect(prompt).toContain("Do not edit files");
     expect(prompt).toContain("No Markdown");

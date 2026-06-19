@@ -226,6 +226,15 @@ describe("ACP role runner", () => {
       description: "/repo/README.md",
       options: [],
     })).toBe("allow_once");
+    for (const tool of ["Write", "MultiEdit", "NotebookEdit"] as const) {
+      expect(connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: `tool-${tool}`,
+        tool,
+        description: "/repo/README.md",
+        options: [],
+      })).toBe("allow_once");
+    }
     expect(connectInput.decidePermission?.({
       sessionId: "LIN-123:developer",
       requestId: "tool-2",
@@ -247,6 +256,7 @@ describe("ACP role runner", () => {
       ["tool-7", "git merge main"],
       ["tool-8", "git rebase main"],
       ["tool-9", "git reset --hard"],
+      ["tool-9-newline", "echo ready\ngit push origin aigile/LIN-123"],
     ] as const) {
       expect(connectInput.decidePermission?.({
         sessionId: "LIN-123:developer",
@@ -270,6 +280,84 @@ describe("ACP role runner", () => {
       description: JSON.stringify({ command: "bun test packages/roles/src/acp-runner.test.ts" }),
       options: [],
     })).toBe("allow_once");
+  });
+
+  it("rejects observed broad-discovery tool starts for agent-write policy", async () => {
+    const progress: string[] = [];
+    let killed = false;
+    let eventHandler: ((event: {
+      type: "tool_start";
+      sessionId: string;
+      tool: string;
+      params?: unknown;
+    }) => void) | undefined;
+    const connector: AcpRuntimeConnector = async () => ({
+      session: {
+        sessionId: "role-session-1",
+        acpSessionId: "acp-session-1",
+        prompt: async () => {
+          eventHandler?.({
+            type: "tool_start",
+            sessionId: "role-session-1",
+            tool: "Bash",
+            params: { command: "cd /repo/aigile && rg TODO" },
+          });
+          return {
+            artifactKind: "developer.attempt",
+            payload: {
+              summary: "Attempt should be rejected.",
+              changedFiles: [],
+              verificationNotes: "Policy should stop broad discovery.",
+            },
+          };
+        },
+        cancel: () => undefined,
+        onEvent: (handler) => {
+          eventHandler = handler as typeof eventHandler;
+          return () => {
+            eventHandler = undefined;
+          };
+        },
+      },
+      process: {
+        kill: async () => {
+          killed = true;
+        },
+      },
+    });
+    const runner = createAcpRoleRunner({
+      connector,
+      onProgress: (event) => progress.push(event.type),
+    });
+
+    await expect(runner.run({
+      roleId: "developer",
+      issueId: "LIN-123",
+      runtime: {
+        id: "runtime-developer",
+        transport: "stdio",
+        command: ["agent-acp"],
+      },
+      assignment: {
+        roleId: "developer",
+        runtimeProfileId: "runtime-developer",
+      },
+      inputArtifacts: [{
+        id: "policy:LIN-123:agent-write",
+        kind: "execution.policy",
+        source: "system",
+        payload: {
+          mode: "agent_write",
+          fileWrites: "allowed",
+          commits: "forbidden",
+          pushes: "forbidden",
+          shellCommands: "workspace",
+        },
+      }],
+    })).rejects.toThrow(/Policy violation broad_discovery/);
+    expect(progress).toContain("policy_violation");
+    expect(progress).not.toContain("artifact_parsed");
+    expect(killed).toBe(true);
   });
 
   it("runs a role through an ACP runtime and returns an artifact", async () => {
