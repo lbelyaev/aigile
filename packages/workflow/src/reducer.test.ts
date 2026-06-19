@@ -116,4 +116,25 @@ describe("workflow reducer", () => {
     expect(result.snapshot.developerAttempts).toBe(2);
     expect(commandTypes(result.commands)).toEqual(["start_developer_attempt"]);
   });
+
+  it("routes already satisfied work to a terminal sync state", () => {
+    const issueId = "LIN-123";
+    const checking = replayWorkflow(initialWorkflowSnapshot(issueId), [
+      { type: "issue_received", issueId },
+      { type: "plan_drafted", issueId },
+      { type: "plan_approved", issueId },
+      { type: "developer_finished", issueId, artifactId: "attempt-noop" },
+      { type: "verification_passed", issueId, artifactId: "verify-1" },
+    ]).snapshot;
+
+    const result = transitionWorkflow(checking, {
+      type: "work_satisfied",
+      issueId,
+      artifactId: "verdict-pass",
+    });
+
+    expect(result.snapshot.state).toBe("satisfied");
+    expect(result.snapshot.artifactIds).toContain("verdict-pass");
+    expect(commandTypes(result.commands)).toEqual(["sync_sources_of_truth"]);
+  });
 });

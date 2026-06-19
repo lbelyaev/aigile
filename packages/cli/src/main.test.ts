@@ -962,6 +962,7 @@ describe("cli formatting", () => {
     const output = await runLinearIssueWorkflowCli({
       apiKey: "test-key",
       issueKey: "LBE-6",
+      teamKey: "LBE",
       repoPath: "/repo/aigile",
       worktreesPath: "/repo/aigile/.worktrees",
       runtimeConfigPath: "config/aigile.runtimes.example.json",
@@ -1008,6 +1009,82 @@ describe("cli formatting", () => {
     expect(capturedInput?.createPullRequest).toBeUndefined();
     expect(capturedInput?.codeHost).toBe(codeHost);
     expect(output).toContain("Pull request: https://github.local/lbelyaev/aigile/pull/1");
+  });
+
+  it("syncs already satisfied Linear runs to Done with evidence", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+
+    const output = await runLinearIssueWorkflowCli({
+      apiKey: "test-key",
+      issueKey: "LBE-6",
+      teamKey: "LBE",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      agentWrite: true,
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("IssueByKey")) {
+          return {
+            issue: {
+              id: "issue-id",
+              identifier: "LBE-6",
+              title: "Start Linear-claimed issues automatically",
+              description: "Acceptance:\n- Starts run",
+              state: { name: "In Progress" },
+              comments: { nodes: [] },
+            },
+          };
+        }
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-done", name: "Done" }] } };
+        }
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("issueUpdate")) return {};
+        if (query.includes("commentCreate")) return {};
+        throw new Error(`unexpected query: ${query}`);
+      },
+      runWorkspace: async (input) => ({
+        issueKey: input.issue.key,
+        finalState: "satisfied",
+        artifacts: [{
+          id: "verifier:LBE-6:local",
+          kind: "verification.result",
+          source: "verifier",
+          payload: { status: "passed", commands: [] },
+        }, {
+          id: "agent:LBE-6:checker:checker.verdict",
+          kind: "checker.verdict",
+          source: "agent",
+          payload: {
+            verdict: "pass",
+            summary: "Existing implementation satisfies the issue.",
+            reasons: ["No code changes required"],
+          },
+        }],
+        timeline: [{ label: "work_satisfied -> satisfied", elapsedMs: 1 }],
+        durationMs: 1,
+      }),
+    });
+
+    expect(output).toContain("Final state: satisfied");
+    expect(calls.map((call) => call.variables)).toEqual([
+      { key: "LBE-6" },
+      { teamKey: "LBE", name: "Done" },
+      { key: "LBE-6" },
+      { key: "issue-id", status: "state-done" },
+      { key: "LBE-6" },
+      {
+        key: "issue-id",
+        body: [
+          "Aigile verified this issue is already satisfied. No code changes were required.",
+          "",
+          "Final state: satisfied",
+          "Verification: verifier:LBE-6:local",
+          "Checker: agent:LBE-6:checker:checker.verdict",
+        ].join("\n"),
+      },
+    ]);
   });
 
   it("fetches run issue metadata from Linear", async () => {

@@ -76,9 +76,11 @@ describe("domain schemas", () => {
 
   it("defines explicit FSM states and event types", () => {
     expect(WORKFLOW_STATES).toContain("awaiting_plan_approval");
+    expect(WORKFLOW_STATES).toContain("satisfied");
     expect(WORKFLOW_STATES).toContain("merged");
     expect(WORKFLOW_EVENT_TYPES).toContain("plan_drafted");
     expect(WORKFLOW_EVENT_TYPES).toContain("checker_requested_changes");
+    expect(WORKFLOW_EVENT_TYPES).toContain("work_satisfied");
   });
 
   it("validates workflow events with optional artifact references", () => {

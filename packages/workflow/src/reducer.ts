@@ -96,7 +96,7 @@ const ensureIssueMatches = (snapshot: WorkflowSnapshot, event: WorkflowEvent): v
 };
 
 const isTerminalState = (state: WorkflowState): boolean =>
-  state === "merged" || state === "cancelled" || state === "failed";
+  state === "satisfied" || state === "merged" || state === "cancelled" || state === "failed";
 
 const shouldRetryDevelopment = (
   snapshot: WorkflowSnapshot,
@@ -196,6 +196,11 @@ export const transitionWorkflow = (
       return illegalTransition(snapshot.state, event);
 
     case "checking":
+      if (event.type === "work_satisfied") {
+        return moveTo(snapshot, "satisfied", [
+          command("sync_sources_of_truth", snapshot.issueId, event.reason),
+        ], event);
+      }
       if (event.type === "checker_passed") {
         return moveTo(snapshot, "merge_ready", [
           command("merge_pull_request", snapshot.issueId),
@@ -224,6 +229,7 @@ export const transitionWorkflow = (
 
     case "failed":
     case "cancelled":
+    case "satisfied":
     case "merged":
       return illegalTransition(snapshot.state, event);
   }

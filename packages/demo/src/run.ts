@@ -20,7 +20,13 @@ import {
   type RoleRunner,
   type RoleRuntimeRegistry,
 } from "@aigile/roles";
-import { isCheckerVerdictPayload, type WorkflowArtifact, type WorkflowEvent, type WorkflowState } from "@aigile/types";
+import {
+  isCheckerVerdictPayload,
+  isDeveloperAttemptPayload,
+  type WorkflowArtifact,
+  type WorkflowEvent,
+  type WorkflowState,
+} from "@aigile/types";
 import { createLocalVerifier } from "@aigile/verifier";
 import {
   createGitPublisher,
@@ -192,6 +198,21 @@ const checkerEventForVerdict = (artifact: WorkflowArtifact): WorkflowEvent["type
   return "checker_escalated";
 };
 
+const verificationEventForResult = (artifact: WorkflowArtifact): WorkflowEvent["type"] => {
+  if (typeof artifact.payload !== "object" || artifact.payload === null || Array.isArray(artifact.payload)) {
+    return "verification_passed";
+  }
+  const status = (artifact.payload as { status?: unknown }).status;
+  return status === "failed" ? "verification_failed" : "verification_passed";
+};
+
+const developerAttemptHasChanges = (artifact: WorkflowArtifact): boolean => {
+  if (!isDeveloperAttemptPayload(artifact.payload)) {
+    throw new Error(`Developer artifact payload is invalid: ${artifact.id}`);
+  }
+  return artifact.payload.changedFiles.length > 0;
+};
+
 const createDemoRegistry = (): RoleRuntimeRegistry => createRoleRuntimeRegistry({
   runtimes: [
     { id: "demo-architect", transport: "stdio", command: ["aigile-demo-acp"] },
@@ -281,11 +302,22 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
         },
       });
   artifacts.push(verification);
+  const verificationEvent = verificationEventForResult(verification);
   snapshot = pushTransition(snapshot, {
-    type: "verification_passed",
+    type: verificationEvent,
     issueId: issue.key,
     artifactId: verification.id,
   }, timeline, elapsedSinceLast);
+  if (verificationEvent === "verification_failed") {
+    await issueTracker.updateIssueStatus(issue.key, snapshot.state);
+    return {
+      issueKey: issue.key,
+      finalState: snapshot.state,
+      artifacts,
+      timeline,
+      durationMs: timeline.reduce((total, entry) => total + entry.elapsedMs, 0),
+    };
+  }
 
   const verdict = await runAssignedRole({
     roleId: "checker",
@@ -296,13 +328,24 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
   });
   artifacts.push(verdict);
   const checkerEvent = checkerEventForVerdict(verdict);
+  const developerChangedFiles = developerAttemptHasChanges(attempt);
   const checkerWorkflowEvent: WorkflowEvent = {
-    type: checkerEvent,
+    type: checkerEvent === "checker_passed" && !developerChangedFiles ? "work_satisfied" : checkerEvent,
     issueId: issue.key,
     artifactId: verdict.id,
   };
   if (isCheckerVerdictPayload(verdict.payload)) checkerWorkflowEvent.reason = verdict.payload.summary;
   snapshot = pushTransition(snapshot, checkerWorkflowEvent, timeline, elapsedSinceLast);
+  if (checkerWorkflowEvent.type === "work_satisfied") {
+    await issueTracker.updateIssueStatus(issue.key, snapshot.state);
+    return {
+      issueKey: issue.key,
+      finalState: snapshot.state,
+      artifacts,
+      timeline,
+      durationMs: timeline.reduce((total, entry) => total + entry.elapsedMs, 0),
+    };
+  }
   if (checkerEvent !== "checker_passed") {
     await issueTracker.updateIssueStatus(issue.key, snapshot.state);
     return {

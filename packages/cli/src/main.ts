@@ -492,6 +492,7 @@ export interface LinearRunIssueInput {
 export interface LinearIssueWorkflowCliInput {
   apiKey: string;
   issueKey: string;
+  teamKey?: string;
   repoPath: string;
   worktreesPath: string;
   runtimeConfigPath: string;
@@ -506,6 +507,39 @@ export interface LinearIssueWorkflowCliInput {
   onProgressLine?: (line: string) => void;
   runWorkspace?: (input: DemoWorkspaceInput) => Promise<DemoResult>;
 }
+
+const artifactIdByKind = (result: DemoResult, kind: string): string =>
+  result.artifacts.find((artifact) => artifact.kind === kind)?.id ?? "unavailable";
+
+const alreadySatisfiedComment = (result: DemoResult): string => [
+  "Aigile verified this issue is already satisfied. No code changes were required.",
+  "",
+  `Final state: ${result.finalState}`,
+  `Verification: ${artifactIdByKind(result, "verification.result")}`,
+  `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
+].join("\n");
+
+const syncLinearIssueWorkflowResult = async (
+  input: LinearIssueWorkflowCliInput,
+  result: DemoResult,
+): Promise<void> => {
+  if (result.finalState !== "satisfied") return;
+
+  const tracker = createLinearGraphqlIssueTrackerAdapter(input.fetchGraphql === undefined
+    ? {
+      apiKey: input.apiKey,
+      ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
+    }
+    : {
+      apiKey: input.apiKey,
+      fetchGraphql: input.fetchGraphql,
+      ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
+    });
+  if (input.teamKey !== undefined) {
+    await tracker.updateIssueStatus(input.issueKey, "Done");
+  }
+  await tracker.appendIssueComment(input.issueKey, alreadySatisfiedComment(result));
+};
 
 export const fetchLinearIssueForRun = async (input: LinearRunIssueInput): Promise<IssueRecord> => {
   const adapter = createLinearGraphqlIssueTrackerAdapter(input.fetchGraphql === undefined
@@ -544,7 +578,9 @@ export const runLinearIssueWorkflowCli = async (input: LinearIssueWorkflowCliInp
       }
     },
   });
-  return formatDemoResult(await (input.runWorkspace ?? runDemoIssueWithWorkspace)(runInput));
+  const result = await (input.runWorkspace ?? runDemoIssueWithWorkspace)(runInput);
+  await syncLinearIssueWorkflowResult(input, result);
+  return formatDemoResult(result);
 };
 
 export const runLinearWatchOnceCli = async (input: LinearWatchOnceCliInput): Promise<string> => {
@@ -917,6 +953,7 @@ const main = async (): Promise<void> => {
           loopInput.startRun = async (issue) => runLinearIssueWorkflowCli({
             apiKey,
             issueKey: issue.key,
+            ...(args.linearTeam === undefined ? {} : { teamKey: args.linearTeam }),
             repoPath: args.repoPath ?? process.cwd(),
             worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
             runtimeConfigPath: args.runtimeConfigPath!,

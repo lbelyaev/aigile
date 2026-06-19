@@ -113,4 +113,76 @@ describe("demo orchestration", () => {
     expect(result.timeline.map((entry) => entry.label)).toContain("checker_requested_changes -> developing");
     expect(result.timeline.map((entry) => entry.label)).not.toContain("merge_completed -> merged");
   });
+
+  it("marks verified no-op work as satisfied without creating a pull request", async () => {
+    const runner = createScriptedRoleRunner({
+      architect: {
+        artifactKind: "architect.plan",
+        payload: {
+          summary: "Plan",
+          scope: ["demo"],
+          acceptanceCriteria: ["already implemented"],
+          verificationCommands: ["bun run check"],
+          risks: [],
+        },
+      },
+      developer: {
+        artifactKind: "developer.attempt",
+        payload: {
+          summary: "Acceptance is already satisfied.",
+          changedFiles: [],
+          verificationNotes: "Verifier should prove the existing behavior.",
+        },
+      },
+      checker: {
+        artifactKind: "checker.verdict",
+        payload: {
+          verdict: "pass",
+          summary: "Existing implementation satisfies the issue.",
+          reasons: ["No changes required"],
+        },
+      },
+    });
+
+    const result = await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner,
+    });
+
+    expect(result.finalState).toBe("satisfied");
+    expect(result.pullRequest).toBeUndefined();
+    expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("github.pull_request");
+    expect(result.timeline.map((entry) => entry.label)).toContain("work_satisfied -> satisfied");
+    expect(result.timeline.map((entry) => entry.label)).not.toContain("merge_completed -> merged");
+  });
+
+  it("routes failed verification back to development without checker or pull request", async () => {
+    const result = await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner: runnerWithCheckerVerdict("pass"),
+      verificationArtifact: {
+        id: "verifier:LIN-123:failed",
+        kind: "verification.result",
+        source: "verifier",
+        payload: {
+          status: "failed",
+          commands: [{
+            command: "bun",
+            args: ["run", "check"],
+            exitCode: 1,
+            stdout: "",
+            stderr: "failing test",
+          }],
+        },
+      },
+    });
+
+    expect(result.finalState).toBe("developing");
+    expect(result.pullRequest).toBeUndefined();
+    expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("checker.verdict");
+    expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("github.pull_request");
+    expect(result.timeline.map((entry) => entry.label)).toContain("verification_failed -> developing");
+  });
 });
