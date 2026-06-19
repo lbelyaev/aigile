@@ -90,6 +90,25 @@ describe("role artifact payloads", () => {
     ].join("\n")).artifactKind).toBe("architect.plan");
   });
 
+  it("parses the first valid role artifact object from noisy text", () => {
+    expect(parseRoleArtifactResponse([
+      "I will return JSON:",
+      "{\"note\":\"not the artifact\"}",
+      "```json",
+      JSON.stringify({
+        artifactKind: "architect.plan",
+        payload: {
+          summary: "Plan",
+          scope: ["roles"],
+          acceptanceCriteria: ["artifact parses"],
+          verificationCommands: ["bun test packages/types"],
+          risks: [],
+        },
+      }, null, 2),
+      "```",
+    ].join("\n")).artifactKind).toBe("architect.plan");
+  });
+
   it("rejects malformed role artifact responses", () => {
     expect(() => parseRoleArtifactResponse({
       artifactKind: "checker.verdict",
