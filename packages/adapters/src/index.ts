@@ -28,6 +28,8 @@ export type {
   IssueTrackerAdapter,
   PullRequestArtifact,
   PullRequestInput,
+  PullRequestMergeability,
+  PullRequestMergeabilityStatus,
   PullRequestRecord,
   ReadyIssueSource,
 } from "./contracts.js";

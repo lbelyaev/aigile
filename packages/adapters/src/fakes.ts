@@ -4,6 +4,8 @@ import type {
   IssueRecord,
   IssueTrackerAdapter,
   PullRequestInput,
+  PullRequestMergeability,
+  PullRequestMergeabilityStatus,
   PullRequestRecord,
   ReadyIssueSource,
 } from "./contracts.js";
@@ -60,8 +62,15 @@ export const createFakeReadyIssueSource = (
   };
 };
 
-export const createFakeCodeHostAdapter = (): CodeHostAdapter => {
+export interface FakeCodeHostAdapterOptions {
+  mergeabilityStatus?: PullRequestMergeabilityStatus;
+}
+
+export const createFakeCodeHostAdapter = (
+  options: FakeCodeHostAdapterOptions = {},
+): CodeHostAdapter => {
   const pullRequests = new Map<string, PullRequestRecord>();
+  const mergeabilityStatus = options.mergeabilityStatus ?? "mergeable";
   let nextNumber = 1;
 
   return {
@@ -82,6 +91,10 @@ export const createFakeCodeHostAdapter = (): CodeHostAdapter => {
       return clonePullRequest(pullRequest);
     },
     getPullRequest: async (id) => clonePullRequest(requirePullRequest(pullRequests, id)),
+    getPullRequestMergeability: async (id): Promise<PullRequestMergeability> => {
+      requirePullRequest(pullRequests, id);
+      return { id, status: mergeabilityStatus };
+    },
     appendPullRequestComment: async (id, comment) => {
       const pullRequest = requirePullRequest(pullRequests, id);
       pullRequest.comments.push(comment);

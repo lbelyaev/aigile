@@ -2,6 +2,8 @@ import type {
   CheckResult,
   CodeHostAdapter,
   PullRequestInput,
+  PullRequestMergeability,
+  PullRequestMergeabilityStatus,
   PullRequestRecord,
 } from "./contracts.js";
 
@@ -54,6 +56,37 @@ const repoFromRecord = (record: PullRequestRecord): string => `${record.owner}/$
 const execOptions = (cwd: string | undefined): { cwd?: string } =>
   cwd === undefined ? {} : { cwd };
 
+const optionalString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.length > 0 ? value : undefined;
+
+const parseMergeabilityPayload = (id: string, stdout: string): PullRequestMergeability => {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(stdout);
+  } catch (error) {
+    throw new Error(`Could not parse pull request mergeability JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("Could not parse pull request mergeability JSON: expected object");
+  }
+  const mergeable = optionalString((payload as { mergeable?: unknown }).mergeable);
+  const mergeStateStatus = optionalString((payload as { mergeStateStatus?: unknown }).mergeStateStatus);
+  const mergeableValue = mergeable?.toUpperCase();
+  const mergeStateStatusValue = mergeStateStatus?.toUpperCase();
+  let status: PullRequestMergeabilityStatus = "unknown";
+  if (mergeableValue === "CONFLICTING" || mergeStateStatusValue === "DIRTY") {
+    status = "conflicting";
+  } else if (mergeableValue === "MERGEABLE") {
+    status = "mergeable";
+  }
+  return {
+    id,
+    status,
+    ...(mergeable === undefined ? {} : { mergeable }),
+    ...(mergeStateStatus === undefined ? {} : { mergeStateStatus }),
+  };
+};
+
 export const createGitHubCliCodeHostAdapter = (
   options: GitHubCliCodeHostAdapterOptions,
 ): CodeHostAdapter => {
@@ -91,6 +124,21 @@ export const createGitHubCliCodeHostAdapter = (
       const record = pullRequests.get(id);
       if (!record) throw new Error(`Pull request not found: ${id}`);
       return structuredClone(record);
+    },
+    getPullRequestMergeability: async (id) => {
+      const record = pullRequests.get(id);
+      if (!record) throw new Error(`Pull request not found: ${id}`);
+      const result = await options.exec("gh", [
+        "pr",
+        "view",
+        prNumberFromId(id),
+        "--repo",
+        repoFromRecord(record),
+        "--json",
+        "mergeable,mergeStateStatus",
+      ], execOptions(options.cwd));
+      assertSuccess(result, "gh pr view");
+      return parseMergeabilityPayload(id, result.stdout);
     },
     appendPullRequestComment: async (id, comment) => {
       const record = pullRequests.get(id);
