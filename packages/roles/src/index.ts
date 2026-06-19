@@ -4,6 +4,10 @@ export {
   runAssignedRole,
 } from "./runner.js";
 
+export {
+  createAcpRoleRunner,
+} from "./acp-runner.js";
+
 export type {
   RoleRunInput,
   RoleRunner,
@@ -12,3 +16,9 @@ export type {
   RunAssignedRoleInput,
   ScriptedRoleOutput,
 } from "./runner.js";
+
+export type {
+  AcpRoleRunnerOptions,
+  AcpRuntimeConnection,
+  AcpRuntimeConnector,
+} from "./acp-runner.js";

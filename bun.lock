@@ -43,6 +43,7 @@
       "name": "@aigile/roles",
       "version": "0.0.0",
       "dependencies": {
+        "@aigile/acp": "workspace:*",
         "@aigile/types": "workspace:*",
       },
     },
