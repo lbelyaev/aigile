@@ -240,6 +240,36 @@ describe("ACP role runner", () => {
       description: JSON.stringify({ command: "ls -R ." }),
       options: [],
     })).toBe("reject_once");
+    for (const [requestId, command] of [
+      ["tool-4", "git add packages/demo/src/run.ts"],
+      ["tool-5", "git -C /repo/aigile commit -m test"],
+      ["tool-6", "cd /repo/aigile && git push origin aigile/LIN-123"],
+      ["tool-7", "git merge main"],
+      ["tool-8", "git rebase main"],
+      ["tool-9", "git reset --hard"],
+    ] as const) {
+      expect(connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId,
+        tool: "Bash",
+        description: JSON.stringify({ command }),
+        options: [],
+      })).toBe("reject_once");
+    }
+    expect(connectInput.decidePermission?.({
+      sessionId: "LIN-123:developer",
+      requestId: "tool-10",
+      tool: "Bash",
+      description: JSON.stringify({ command: "cd /repo/aigile && find . -type f" }),
+      options: [],
+    })).toBe("reject_once");
+    expect(connectInput.decidePermission?.({
+      sessionId: "LIN-123:developer",
+      requestId: "tool-11",
+      tool: "Bash",
+      description: JSON.stringify({ command: "bun test packages/roles/src/acp-runner.test.ts" }),
+      options: [],
+    })).toBe("allow_once");
   });
 
   it("runs a role through an ACP runtime and returns an artifact", async () => {

@@ -158,6 +158,15 @@ const extractCommand = (request: AcpPermissionRequest): string => {
   return request.description;
 };
 
+const commandSegments = (command: string): string[] =>
+  command
+    .split(/\s*(?:&&|\|\||;|\|)\s*/g)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+const gitSubcommandPattern = (subcommands: string): RegExp =>
+  new RegExp(`^git(?:\\s+-c\\s+(?:"[^"]+"|'[^']+'|\\S+))*\\s+(?:${subcommands})\\b`);
+
 const toolCommand = (tool: string, params: unknown): string => {
   if (isRecord(params) && typeof params.command === "string") return params.command;
   return tool;
@@ -167,16 +176,17 @@ const isWriteLikePermission = (request: AcpPermissionRequest): boolean => {
   const tool = request.tool.toLowerCase();
   const command = extractCommand(request).trim().toLowerCase();
   if (/(^|\s)(edit|write|multiedit|notebookedit)(\s|$)/.test(tool)) return true;
-  return [
-    /^git\s+(add|commit|push|merge|rebase|checkout|switch|reset|worktree\s+add)\b/,
+  return commandSegments(command).some((segment) => [
+    gitSubcommandPattern("add|commit|push|merge|rebase|checkout|switch|reset|worktree\\s+add"),
     /(^|\s)(rm|mv|cp|mkdir|touch|chmod|chown|tee)\b/,
     />/,
-  ].some((pattern) => pattern.test(command));
+  ].some((pattern) => pattern.test(segment)));
 };
 
 const isCommitLikePermission = (request: AcpPermissionRequest): boolean => {
   const command = extractCommand(request).trim().toLowerCase();
-  return /^git\s+(add|commit|push|merge|rebase|reset)\b/.test(command);
+  return commandSegments(command).some((segment) =>
+    gitSubcommandPattern("add|commit|push|merge|rebase|reset").test(segment));
 };
 
 const hasTargetedPathArgument = (command: string): boolean =>
@@ -184,6 +194,8 @@ const hasTargetedPathArgument = (command: string): boolean =>
 
 const isBroadDiscoveryCommand = (command: string): boolean => {
   const trimmed = command.trim();
+  const segments = commandSegments(trimmed);
+  if (segments.length > 1) return segments.some(isBroadDiscoveryCommand);
   const lowered = trimmed.toLowerCase();
   if (/^find\b/.test(lowered)) return true;
   if (/^ls\b/.test(lowered) && /(^|\s)-[A-Za-z]*R[A-Za-z]*(\s|$)/.test(trimmed)) return true;

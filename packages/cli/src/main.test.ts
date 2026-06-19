@@ -96,6 +96,33 @@ describe("cli formatting", () => {
     expect(output).not.toContain("Final state: merged");
   });
 
+  it("surfaces agent-write mode in run output", () => {
+    const output = formatDemoResult({
+      issueKey: "LIN-794",
+      finalState: "merge_ready",
+      artifacts: [{
+        id: "policy:LIN-794:agent-write",
+        kind: "execution.policy",
+        source: "system",
+        payload: {
+          mode: "agent_write",
+          fileWrites: "allowed",
+          commits: "forbidden",
+          pushes: "forbidden",
+          shellCommands: "workspace",
+        },
+      }],
+      timeline: [
+        { label: "checker_passed -> merge_ready", elapsedMs: 1_000 },
+      ],
+      durationMs: 1_000,
+    });
+
+    expect(output).toContain("Mode: agent_write");
+    expect(output).toContain("Final state: merge_ready");
+    expect(output).toContain("Pull request: none");
+  });
+
   it("formats timeline durations and unavailable token usage", () => {
     const output = formatDemoResult({
       issueKey: "LIN-123",
