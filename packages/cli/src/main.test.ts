@@ -65,7 +65,10 @@ describe("cli formatting", () => {
     });
 
     expect(output).toContain("Mode: dry_run (simulated)");
+    expect(output).toContain("Workflow state: merged");
+    expect(output).toContain("External side effects: none (workspace, GitHub, and source-of-truth updates simulated)");
     expect(output).toContain("Pull request: simulated https://github.local/aigile/aigile/pull/1");
+    expect(output).not.toContain("Final state: merged");
   });
 
   it("formats ACP role progress for hand testing", () => {

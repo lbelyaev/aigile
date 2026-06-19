@@ -48,7 +48,8 @@ export const formatDemoResult = (result: DemoResult): string => {
   return [
     `Aigile demo run: ${result.issueKey}`,
     ...(mode === undefined ? [] : [`Mode: ${isDryRun ? "dry_run (simulated)" : mode}`]),
-    `Final state: ${result.finalState}`,
+    `${isDryRun ? "Workflow state" : "Final state"}: ${result.finalState}`,
+    ...(isDryRun ? ["External side effects: none (workspace, GitHub, and source-of-truth updates simulated)"] : []),
     `Pull request: ${isDryRun ? "simulated " : ""}${result.pullRequest.url}`,
     "",
     "Timeline:",
