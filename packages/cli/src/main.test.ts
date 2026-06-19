@@ -100,4 +100,25 @@ describe("cli formatting", () => {
       ],
     });
   });
+
+  it("parses publish arguments for real runs", () => {
+    expect(parseCliArgs([
+      "run",
+      "LIN-789",
+      "--publish",
+      "--github-repo",
+      "acme/project",
+      "--remote",
+      "upstream",
+      "--base-branch",
+      "develop",
+    ])).toEqual({
+      mode: "run",
+      issueKey: "LIN-789",
+      publish: true,
+      githubRepo: "acme/project",
+      remote: "upstream",
+      baseBranch: "develop",
+    });
+  });
 });

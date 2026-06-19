@@ -26,8 +26,10 @@
         "aigile": "./src/main.ts",
       },
       "dependencies": {
+        "@aigile/adapters": "workspace:*",
         "@aigile/config": "workspace:*",
         "@aigile/demo": "workspace:*",
+        "@aigile/workspace": "workspace:*",
       },
     },
     "packages/config": {

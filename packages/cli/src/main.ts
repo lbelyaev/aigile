@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
+import { createGitHubCliCodeHostAdapter } from "@aigile/adapters";
 import { loadRuntimeConfigFromJson, runtimeConfigToRegistry } from "@aigile/config";
 import {
   runDemoIssue,
@@ -13,6 +14,7 @@ import {
 } from "@aigile/demo";
 import type { IssueRecord } from "@aigile/adapters";
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
+import { defaultExecCommand } from "@aigile/workspace";
 
 const defaultIssue: IssueRecord = {
   id: "issue-demo-1",
@@ -83,6 +85,10 @@ export interface CliArgs {
   runtimeConfigPath?: string;
   repoPath?: string;
   worktreesPath?: string;
+  baseBranch?: string;
+  publish?: boolean;
+  remote?: string;
+  githubRepo?: string;
   dryRun?: boolean;
 }
 
@@ -116,12 +122,19 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     const runtimeConfigPath = optionValue(args, "--runtime-config");
     const repoPath = optionValue(args, "--repo");
     const worktreesPath = optionValue(args, "--worktrees");
+    const baseBranch = optionValue(args, "--base-branch");
+    const remote = optionValue(args, "--remote");
+    const githubRepo = optionValue(args, "--github-repo");
     if (title !== undefined) parsed.title = title;
     if (description !== undefined) parsed.description = description;
     if (acceptanceCriteria.length > 0) parsed.acceptanceCriteria = acceptanceCriteria;
     if (runtimeConfigPath !== undefined) parsed.runtimeConfigPath = runtimeConfigPath;
     if (repoPath !== undefined) parsed.repoPath = repoPath;
     if (worktreesPath !== undefined) parsed.worktreesPath = worktreesPath;
+    if (baseBranch !== undefined) parsed.baseBranch = baseBranch;
+    if (remote !== undefined) parsed.remote = remote;
+    if (githubRepo !== undefined) parsed.githubRepo = githubRepo;
+    if (args.includes("--publish")) parsed.publish = true;
     if (args.includes("--dry-run")) parsed.dryRun = true;
     return parsed;
   }
@@ -144,6 +157,7 @@ const main = async (): Promise<void> => {
     repoPath: args.repoPath ?? process.cwd(),
     worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
   };
+  if (args.baseBranch !== undefined) runInput.baseBranch = args.baseBranch;
   if (args.dryRun) {
     runInput.dryRun = true;
     runInput.exec = async (command, commandArgs, options) => {
@@ -152,6 +166,23 @@ const main = async (): Promise<void> => {
       }
       return { stdout: `${command} ${commandArgs.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
     };
+  }
+  if (args.mode === "run" && args.publish && !args.dryRun) {
+    if (!args.githubRepo) throw new Error("--publish requires --github-repo owner/repo");
+    const [owner, repo] = args.githubRepo.split("/");
+    if (!owner || !repo) throw new Error("--github-repo must be in owner/repo format");
+    runInput.publish = true;
+    runInput.remote = args.remote ?? "origin";
+    runInput.pullRequestTarget = {
+      owner,
+      repo,
+      baseBranch: args.baseBranch ?? "main",
+    };
+    runInput.codeHost = createGitHubCliCodeHostAdapter({
+      cwd: args.repoPath ?? process.cwd(),
+      exec: async (command, commandArgs, options) =>
+        defaultExecCommand(command, commandArgs, { cwd: options.cwd ?? process.cwd() }),
+    });
   }
   if (args.mode === "run" && args.runtimeConfigPath) {
     runInput.registry = runtimeConfigToRegistry(loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8")));
