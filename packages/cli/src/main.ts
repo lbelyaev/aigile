@@ -7,6 +7,8 @@ import {
   createGitHubCliCodeHostAdapter,
   createLinearGraphqlIssueTrackerAdapter,
   createLinearGraphqlReadyIssueSource,
+  listLinearTeams,
+  listLinearWorkflowStateNames,
 } from "@aigile/adapters";
 import { loadRuntimeConfigFromJson, runtimeConfigToRegistry } from "@aigile/config";
 import {
@@ -462,6 +464,12 @@ export interface LinearWatchOnceCliInput {
   fetchGraphql?: LinearFetchGraphql;
 }
 
+export interface LinearWatchPreflightCliInput {
+  apiKey: string;
+  teamKey?: string;
+  fetchGraphql?: LinearFetchGraphql;
+}
+
 export interface LinearRunIssueInput {
   apiKey: string;
   issueKey: string;
@@ -501,6 +509,33 @@ export const runLinearWatchOnceCli = async (input: LinearWatchOnceCliInput): Pro
   });
 };
 
+export const runLinearWatchPreflightCli = async (input: LinearWatchPreflightCliInput): Promise<string> => {
+  const sharedOptions = input.fetchGraphql === undefined
+    ? { apiKey: input.apiKey }
+    : { apiKey: input.apiKey, fetchGraphql: input.fetchGraphql };
+  const teams = await listLinearTeams(sharedOptions);
+  const lines = [
+    "Aigile watch: preflight",
+    "Provider: linear",
+    "Teams:",
+    ...teams.map((team) => `- ${team.key} (${team.name})`),
+  ];
+
+  if (input.teamKey !== undefined) {
+    const workflowStateOptions = input.fetchGraphql === undefined
+      ? { apiKey: input.apiKey, teamKey: input.teamKey }
+      : { apiKey: input.apiKey, teamKey: input.teamKey, fetchGraphql: input.fetchGraphql };
+    const workflowStateNames = await listLinearWorkflowStateNames(workflowStateOptions);
+    lines.push(
+      `Workflow states (${input.teamKey}):`,
+      ...workflowStateNames.map((name) => `- ${name}`),
+    );
+  }
+
+  lines.push("Agents: not started");
+  return lines.join("\n");
+};
+
 export const createDryRunExec = (): ExecCommand => async (command, commandArgs, options) => {
   if (command === "test" && commandArgs[0] === "-e") {
     return { stdout: "", stderr: "", exitCode: 1 };
@@ -535,8 +570,11 @@ const optionValues = (args: readonly string[], name: string): string[] => {
 
 export const parseCliArgs = (args: readonly string[]): CliArgs => {
   if (args[0] === "watch") {
-    if (!args.includes("--once")) throw new Error("watch currently requires --once");
-    const parsed: CliArgs = { mode: "watch", once: true };
+    const preflightOnly = args.includes("--preflight");
+    if (!args.includes("--once") && !preflightOnly) throw new Error("watch currently requires --once");
+    const parsed: CliArgs = { mode: "watch" };
+    if (args.includes("--once")) parsed.once = true;
+    if (preflightOnly) parsed.preflightOnly = true;
     const issueKey = optionValue(args, "--issue");
     const title = optionValue(args, "--title");
     const description = optionValue(args, "--description");
@@ -644,6 +682,17 @@ const main = async (): Promise<void> => {
     return;
   }
   if (args.mode === "watch") {
+    if (args.preflightOnly) {
+      if (!args.linear) throw new Error("watch --preflight requires --linear");
+      const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
+      const apiKey = process.env[apiKeyEnv];
+      if (!apiKey) throw new Error(`watch --linear requires ${apiKeyEnv} to be set`);
+      const preflightInput: LinearWatchPreflightCliInput = { apiKey };
+      if (args.linearTeam !== undefined) preflightInput.teamKey = args.linearTeam;
+      const output = await runLinearWatchPreflightCli(preflightInput);
+      process.stdout.write(`${output}\n`);
+      return;
+    }
     if (args.linear) {
       if (args.linearTeam === undefined) throw new Error("watch --linear requires --linear-team");
       const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";

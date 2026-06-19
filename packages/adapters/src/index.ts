@@ -16,6 +16,8 @@ export {
 export {
   createLinearGraphqlIssueTrackerAdapter,
   createLinearGraphqlReadyIssueSource,
+  listLinearTeams,
+  listLinearWorkflowStateNames,
 } from "./linear-graphql.js";
 
 export type {
@@ -39,5 +41,8 @@ export type {
 export type {
   LinearFetchGraphql,
   LinearGraphqlIssueTrackerAdapterOptions,
+  LinearGraphqlListTeamsOptions,
+  LinearGraphqlListWorkflowStateNamesOptions,
   LinearGraphqlReadyIssueSourceOptions,
+  LinearTeam,
 } from "./linear-graphql.js";

@@ -8,6 +8,7 @@ import {
   parseGitHubRepoFromRemoteUrl,
   parseCliArgs,
   fetchLinearIssueForRun,
+  runLinearWatchPreflightCli,
   runLinearWatchOnceCli,
   runWatchOnceCli,
   runRunModePreflight,
@@ -511,6 +512,24 @@ describe("cli formatting", () => {
     });
   });
 
+  it("parses Linear watch preflight arguments without once", () => {
+    expect(parseCliArgs([
+      "watch",
+      "--linear",
+      "--preflight",
+      "--linear-team",
+      "ENG",
+      "--linear-api-key-env",
+      "AIGILE_LINEAR_API_KEY",
+    ])).toEqual({
+      mode: "watch",
+      preflightOnly: true,
+      linear: true,
+      linearTeam: "ENG",
+      linearApiKeyEnv: "AIGILE_LINEAR_API_KEY",
+    });
+  });
+
   it("rejects watch without an explicit once pass", () => {
     expect(() => parseCliArgs(["watch"])).toThrow(/requires --once/i);
   });
@@ -598,6 +617,86 @@ describe("cli formatting", () => {
       { key: "issue-id", body: "Aigile claimed this issue for local processing." },
       { key: "LIN-900" },
     ]);
+  });
+
+  it("preflights Linear watch teams without mutating issues", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+
+    const output = await runLinearWatchPreflightCli({
+      apiKey: "test-key",
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        return {
+          teams: {
+            nodes: [
+              { key: "ENG", name: "Engineering" },
+              { key: "OPS", name: "Operations" },
+            ],
+          },
+        };
+      },
+    });
+
+    expect(output).toBe([
+      "Aigile watch: preflight",
+      "Provider: linear",
+      "Teams:",
+      "- ENG (Engineering)",
+      "- OPS (Operations)",
+      "Agents: not started",
+    ].join("\n"));
+    expect(calls.map((call) => call.variables)).toEqual([{ first: 100 }]);
+    expect(calls.some((call) => call.query.includes("mutation"))).toBe(false);
+    expect(calls.some((call) => call.query.includes("issueUpdate"))).toBe(false);
+    expect(calls.some((call) => call.query.includes("commentCreate"))).toBe(false);
+  });
+
+  it("preflights Linear watch workflow states for a selected team", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+
+    const output = await runLinearWatchPreflightCli({
+      apiKey: "test-key",
+      teamKey: "ENG",
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("LinearTeams")) {
+          return {
+            teams: {
+              nodes: [
+                { key: "ENG", name: "Engineering" },
+              ],
+            },
+          };
+        }
+        if (query.includes("WorkflowStatesByTeam")) {
+          return {
+            workflowStates: {
+              nodes: [
+                { name: "Ready for Aigile" },
+                { name: "In Progress" },
+              ],
+            },
+          };
+        }
+        throw new Error(`unexpected query: ${query}`);
+      },
+    });
+
+    expect(output).toBe([
+      "Aigile watch: preflight",
+      "Provider: linear",
+      "Teams:",
+      "- ENG (Engineering)",
+      "Workflow states (ENG):",
+      "- Ready for Aigile",
+      "- In Progress",
+      "Agents: not started",
+    ].join("\n"));
+    expect(calls.map((call) => call.variables)).toEqual([
+      { first: 100 },
+      { teamKey: "ENG", first: 100 },
+    ]);
+    expect(calls.some((call) => call.query.includes("mutation"))).toBe(false);
   });
 
   it("fetches run issue metadata from Linear", async () => {
