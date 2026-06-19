@@ -134,6 +134,20 @@ const isCommitLikePermission = (request: AcpPermissionRequest): boolean => {
   return /^git\s+(add|commit|push|merge|rebase|reset)\b/.test(command);
 };
 
+const hasTargetedPathArgument = (command: string): boolean =>
+  /(^|\s)(\.?\/?[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+|[A-Za-z0-9_.-]+\.(ts|tsx|js|jsx|json|md|yml|yaml|toml|lock))(\s|$)/.test(command);
+
+const isBroadDiscoveryPermission = (request: AcpPermissionRequest): boolean => {
+  if (request.tool.toLowerCase() !== "bash") return false;
+  const command = extractCommand(request).trim();
+  const lowered = command.toLowerCase();
+  if (/^find\b/.test(lowered)) return true;
+  if (/^ls\b/.test(lowered) && /(^|\s)-[A-Za-z]*R[A-Za-z]*(\s|$)/.test(command)) return true;
+  if (/^(rg|grep)\b/.test(lowered) && !hasTargetedPathArgument(command)) return true;
+  if (/^git\s+grep\b/.test(lowered) && !hasTargetedPathArgument(command)) return true;
+  return false;
+};
+
 const isReadOnlyPermission = (request: AcpPermissionRequest): boolean => {
   const command = extractCommand(request).trim().toLowerCase();
   return [
@@ -157,6 +171,7 @@ const buildExecutionPolicyPermissionDecision = (
   if (mode === undefined) return undefined;
   return (request) => {
     if (mode === "dry_run") {
+      if (isBroadDiscoveryPermission(request)) return "reject_once";
       if (isWriteLikePermission(request)) return "reject_once";
       if (request.tool.toLowerCase() === "bash" && isReadOnlyPermission(request)) return "allow_once";
       return "reject_once";
@@ -166,6 +181,7 @@ const buildExecutionPolicyPermissionDecision = (
       return "allow_once";
     }
     if (request.tool.toLowerCase() === "bash") {
+      if (isBroadDiscoveryPermission(request)) return "reject_once";
       if (isWriteLikePermission(request)) return "reject_once";
       return "allow_once";
     }

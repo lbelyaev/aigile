@@ -168,6 +168,27 @@ describe("ACP role runner", () => {
       description: JSON.stringify({ command: "git status --short" }),
       options: [],
     })).toBe("allow_once");
+    expect(connectInput.decidePermission?.({
+      sessionId: "LIN-123:developer",
+      requestId: "tool-4",
+      tool: "Bash",
+      description: JSON.stringify({ command: "find . -type f" }),
+      options: [],
+    })).toBe("reject_once");
+    expect(connectInput.decidePermission?.({
+      sessionId: "LIN-123:developer",
+      requestId: "tool-5",
+      tool: "Bash",
+      description: JSON.stringify({ command: "rg TODO" }),
+      options: [],
+    })).toBe("reject_once");
+    expect(connectInput.decidePermission?.({
+      sessionId: "LIN-123:developer",
+      requestId: "tool-6",
+      tool: "Bash",
+      description: JSON.stringify({ command: "rg TODO packages/roles/src/acp-runner.ts" }),
+      options: [],
+    })).toBe("allow_once");
   });
 
   it("allows edits but blocks commits for agent-write execution policy", () => {
@@ -208,6 +229,13 @@ describe("ACP role runner", () => {
       requestId: "tool-2",
       tool: "Bash",
       description: JSON.stringify({ command: "git commit -m test" }),
+      options: [],
+    })).toBe("reject_once");
+    expect(connectInput.decidePermission?.({
+      sessionId: "LIN-123:developer",
+      requestId: "tool-3",
+      tool: "Bash",
+      description: JSON.stringify({ command: "ls -R ." }),
       options: [],
     })).toBe("reject_once");
   });
