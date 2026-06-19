@@ -289,4 +289,46 @@ describe("ACP role runner", () => {
 
     expect(artifact.payload).toMatchObject({ summary: "Streamed plan" });
   });
+
+  it("rejects artifacts whose kind does not match the assigned core role", async () => {
+    let killed = false;
+    const connector: AcpRuntimeConnector = async () => ({
+      session: {
+        sessionId: "role-session-1",
+        acpSessionId: "acp-session-1",
+        prompt: async () => ({
+          artifactKind: "developer.attempt",
+          payload: {
+            summary: "Wrong role output",
+            changedFiles: ["README.md"],
+            verificationNotes: "Not run",
+          },
+        }),
+        cancel: () => undefined,
+        onEvent: () => () => undefined,
+      },
+      process: {
+        kill: async () => {
+          killed = true;
+        },
+      },
+    });
+    const runner = createAcpRoleRunner({ connector });
+
+    await expect(runner.run({
+      roleId: "architect",
+      issueId: "LIN-123",
+      runtime: {
+        id: "runtime-architect",
+        transport: "stdio",
+        command: ["agent-acp"],
+      },
+      assignment: {
+        roleId: "architect",
+        runtimeProfileId: "runtime-architect",
+      },
+      inputArtifacts: [],
+    })).rejects.toThrow(/expected architect\.plan/i);
+    expect(killed).toBe(true);
+  });
 });

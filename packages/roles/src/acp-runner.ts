@@ -70,6 +70,12 @@ const buildPrompt = (input: RoleRunInput): string => buildRolePrompt({
   inputArtifacts: input.inputArtifacts,
 });
 
+const EXPECTED_ARTIFACT_KIND_BY_ROLE: Record<string, string> = {
+  architect: "architect.plan",
+  developer: "developer.attempt",
+  checker: "checker.verdict",
+};
+
 const parsePromptArtifactResponse = (promptResult: unknown, streamedText: string) => {
   if (promptResult === undefined || promptResult === null) {
     return parseRoleArtifactResponse(streamedText);
@@ -80,6 +86,12 @@ const parsePromptArtifactResponse = (promptResult: unknown, streamedText: string
     if (streamedText.trim().length === 0) throw error;
     return parseRoleArtifactResponse(streamedText);
   }
+};
+
+const assertExpectedArtifactKind = (roleId: string, artifactKind: string): void => {
+  const expected = EXPECTED_ARTIFACT_KIND_BY_ROLE[roleId];
+  if (expected === undefined || artifactKind === expected) return;
+  throw new Error(`Role "${roleId}" expected ${expected} but received ${artifactKind}`);
 };
 
 export const createAcpRoleRunner = (
@@ -142,6 +154,7 @@ export const createAcpRoleRunner = (
         options.onProgress?.({ type: "prompt_started", ...progressBase(input) });
         const promptResult = await connection.session.prompt(buildPrompt(input));
         const response = parsePromptArtifactResponse(promptResult, streamedText);
+        assertExpectedArtifactKind(input.roleId, response.artifactKind);
         options.onProgress?.({
           type: "artifact_parsed",
           ...progressBase(input),
