@@ -5,9 +5,11 @@ import {
   formatAcpRoleProgress,
   formatDemoResult,
   formatDuration,
+  parseDurationMs,
   parseGitHubRepoFromRemoteUrl,
   parseCliArgs,
   fetchLinearIssueForRun,
+  runLinearWatchLoopCli,
   runLinearWatchPreflightCli,
   runLinearWatchOnceCli,
   runWatchOnceCli,
@@ -227,6 +229,14 @@ describe("cli formatting", () => {
     expect(formatDuration(1_250)).toBe("1 second");
     expect(formatDuration(42_100)).toBe("42 seconds");
     expect(formatDuration(61_200)).toBe("1 minute");
+  });
+
+  it("parses watch poll interval durations", () => {
+    expect(parseDurationMs("250ms")).toBe(250);
+    expect(parseDurationMs("30s")).toBe(30_000);
+    expect(parseDurationMs("2m")).toBe(120_000);
+    expect(() => parseDurationMs("soon")).toThrow(/invalid duration/i);
+    expect(() => parseDurationMs("0s")).toThrow(/invalid duration/i);
   });
 
   it("formats ACP role progress for hand testing", () => {
@@ -530,8 +540,46 @@ describe("cli formatting", () => {
     });
   });
 
+  it("parses Linear watch loop arguments without once", () => {
+    expect(parseCliArgs([
+      "watch",
+      "--linear",
+      "--linear-team",
+      "LBE",
+      "--ready-status",
+      "Todo",
+      "--claim-status",
+      "In Progress",
+      "--poll-interval",
+      "30s",
+      "--max-polls",
+      "2",
+    ])).toEqual({
+      mode: "watch",
+      linear: true,
+      linearTeam: "LBE",
+      readyStatus: "Todo",
+      claimStatus: "In Progress",
+      pollIntervalMs: 30_000,
+      maxPolls: 2,
+    });
+  });
+
   it("rejects watch without an explicit once pass", () => {
-    expect(() => parseCliArgs(["watch"])).toThrow(/requires --once/i);
+    expect(() => parseCliArgs(["watch"])).toThrow(/requires --once or --poll-interval/i);
+  });
+
+  it("rejects invalid watch loop bounds", () => {
+    expect(() => parseCliArgs([
+      "watch",
+      "--linear",
+      "--linear-team",
+      "LBE",
+      "--poll-interval",
+      "30s",
+      "--max-polls",
+      "never",
+    ])).toThrow(/--max-polls must be a positive integer/i);
   });
 
   it("runs a local watch-once claim without starting agents", async () => {
@@ -697,6 +745,66 @@ describe("cli formatting", () => {
       { teamKey: "ENG", first: 100 },
     ]);
     expect(calls.some((call) => call.query.includes("mutation"))).toBe(false);
+  });
+
+  it("runs a bounded Linear watch loop in the foreground", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+
+    const output = await runLinearWatchLoopCli({
+      apiKey: "test-key",
+      teamKey: "LBE",
+      readyStatus: "Todo",
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 2,
+      sleep: async () => {},
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("ReadyIssues")) {
+          return {
+            issues: {
+              nodes: [{
+                id: "issue-id",
+                identifier: "LBE-5",
+                title: "Add Linear watch preflight",
+                description: "Acceptance:\n- It runs",
+                state: { name: "Todo" },
+                comments: { nodes: [] },
+              }],
+            },
+          };
+        }
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-in-progress", name: "In Progress" }] } };
+        }
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("issueUpdate")) return {};
+        if (query.includes("commentCreate")) return {};
+        return {
+          issue: {
+            id: "issue-id",
+            identifier: "LBE-5",
+            title: "Add Linear watch preflight",
+            description: "Acceptance:\n- It runs",
+            state: { name: "In Progress" },
+            comments: { nodes: [{ body: "Aigile claimed this issue for local processing." }] },
+          },
+        };
+      },
+    });
+
+    expect(output).toContain("Aigile watch: loop");
+    expect(output).toContain("Provider: linear");
+    expect(output).toContain("Team: LBE");
+    expect(output).toContain("Poll interval: 1ms");
+    expect(output).toContain("Poll 1: checking for ready issues");
+    expect(output).toContain("Poll 1: claimed LBE-5 (ready issues: 1)");
+    expect(output).toContain("Poll 2: checking for ready issues");
+    expect(output).toContain("Poll 2: idle (ready issues: 0)");
+    expect(output).toContain("Stopped: max_polls after 2 polls");
+    expect(output).toContain("Agents: not started");
+    expect(calls.filter((call) => call.query.includes("issueUpdate"))).toHaveLength(1);
+    expect(calls.filter((call) => call.query.includes("commentCreate"))).toHaveLength(1);
   });
 
   it("fetches run issue metadata from Linear", async () => {

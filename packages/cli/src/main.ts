@@ -23,7 +23,7 @@ import {
 } from "@aigile/demo";
 import type { IssueRecord, IssueTrackerAdapter, LinearFetchGraphql, ReadyIssueSource } from "@aigile/adapters";
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
-import { defaultClaimComment, watchOnce } from "@aigile/watch";
+import { defaultClaimComment, watchLoop, watchOnce, type WatchLoopEvent } from "@aigile/watch";
 import {
   createGitWorkspaceAdapter,
   defaultExecCommand,
@@ -243,6 +243,8 @@ export interface CliArgs {
   linear?: boolean;
   linearTeam?: string;
   linearApiKeyEnv?: string;
+  pollIntervalMs?: number;
+  maxPolls?: number;
 }
 
 export interface PublishPreflightInput {
@@ -464,6 +466,14 @@ export interface LinearWatchOnceCliInput {
   fetchGraphql?: LinearFetchGraphql;
 }
 
+export interface LinearWatchLoopCliInput extends LinearWatchOnceCliInput {
+  pollIntervalMs: number;
+  maxPolls?: number;
+  signal?: AbortSignal;
+  sleep?: (durationMs: number, signal?: AbortSignal) => Promise<void>;
+  onLine?: (line: string) => void;
+}
+
 export interface LinearWatchPreflightCliInput {
   apiKey: string;
   teamKey?: string;
@@ -484,6 +494,20 @@ export const fetchLinearIssueForRun = async (input: LinearRunIssueInput): Promis
 };
 
 export const runLinearWatchOnceCli = async (input: LinearWatchOnceCliInput): Promise<string> => {
+  const { source, tracker } = createLinearWatchAdapters(input);
+  return runWatchOnceCli({
+    source,
+    tracker,
+    claimStatus: input.claimStatus ?? "In Progress",
+    provider: "linear",
+    team: input.teamKey,
+  });
+};
+
+const createLinearWatchAdapters = (input: LinearWatchOnceCliInput): {
+  source: ReadyIssueSource;
+  tracker: IssueTrackerAdapter;
+} => {
   const fetchGraphql = input.fetchGraphql;
   const trackerOptions = {
     apiKey: input.apiKey,
@@ -494,19 +518,50 @@ export const runLinearWatchOnceCli = async (input: LinearWatchOnceCliInput): Pro
     teamKey: input.teamKey,
     readyStatus: input.readyStatus ?? "Ready for Aigile",
   };
-  const tracker = createLinearGraphqlIssueTrackerAdapter(fetchGraphql === undefined
-    ? trackerOptions
-    : { ...trackerOptions, fetchGraphql });
-  const source = createLinearGraphqlReadyIssueSource(fetchGraphql === undefined
-    ? sourceOptions
-    : { ...sourceOptions, fetchGraphql });
-  return runWatchOnceCli({
+  return {
+    tracker: createLinearGraphqlIssueTrackerAdapter(fetchGraphql === undefined
+      ? trackerOptions
+      : { ...trackerOptions, fetchGraphql }),
+    source: createLinearGraphqlReadyIssueSource(fetchGraphql === undefined
+      ? sourceOptions
+      : { ...sourceOptions, fetchGraphql }),
+  };
+};
+
+const formatWatchLoopEvent = (event: WatchLoopEvent): string => {
+  if (event.type === "poll_started") return `Poll ${event.poll}: checking for ready issues`;
+  if (event.type === "poll_idle") return `Poll ${event.poll}: idle (ready issues: ${event.readyCount})`;
+  if (event.type === "issue_claimed") {
+    return `Poll ${event.poll}: claimed ${event.issueKey} (ready issues: ${event.readyCount})`;
+  }
+  return `Stopped: ${event.reason} after ${event.polls} polls`;
+};
+
+export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Promise<string> => {
+  const { source, tracker } = createLinearWatchAdapters(input);
+  const lines: string[] = [];
+  const emit = (line: string): void => {
+    lines.push(line);
+    input.onLine?.(line);
+  };
+  emit("Aigile watch: loop");
+  emit("Provider: linear");
+  emit(`Team: ${input.teamKey}`);
+  emit(`Poll interval: ${input.pollIntervalMs}ms`);
+
+  await watchLoop({
     source,
     tracker,
-    claimStatus: input.claimStatus ?? "In Progress",
-    provider: "linear",
-    team: input.teamKey,
+    pollIntervalMs: input.pollIntervalMs,
+    ...(input.claimStatus === undefined ? {} : { claimStatus: input.claimStatus }),
+    ...(input.maxPolls === undefined ? {} : { maxPolls: input.maxPolls }),
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+    ...(input.sleep === undefined ? {} : { sleep: input.sleep }),
+    onEvent: (event) => emit(formatWatchLoopEvent(event)),
   });
+
+  emit("Agents: not started");
+  return lines.join("\n");
 };
 
 export const runLinearWatchPreflightCli = async (input: LinearWatchPreflightCliInput): Promise<string> => {
@@ -568,13 +623,35 @@ const optionValues = (args: readonly string[], name: string): string[] => {
   return values;
 };
 
+export const parseDurationMs = (value: string): number => {
+  const match = /^(\d+)(ms|s|m)?$/.exec(value.trim());
+  if (!match) throw new Error(`invalid duration: ${value}`);
+  const amount = Number(match[1]);
+  if (amount <= 0) throw new Error(`invalid duration: ${value}`);
+  const unit = match[2] ?? "ms";
+  if (unit === "ms") return amount;
+  if (unit === "s") return amount * 1_000;
+  return amount * 60_000;
+};
+
+const parsePositiveInteger = (value: string, name: string): number => {
+  if (!/^\d+$/.test(value)) throw new Error(`${name} must be a positive integer`);
+  const parsed = Number.parseInt(value, 10);
+  if (parsed <= 0) throw new Error(`${name} must be a positive integer`);
+  return parsed;
+};
+
 export const parseCliArgs = (args: readonly string[]): CliArgs => {
   if (args[0] === "watch") {
     const preflightOnly = args.includes("--preflight");
-    if (!args.includes("--once") && !preflightOnly) throw new Error("watch currently requires --once");
+    const pollInterval = optionValue(args, "--poll-interval");
+    if (!args.includes("--once") && !preflightOnly && pollInterval === undefined) {
+      throw new Error("watch currently requires --once or --poll-interval");
+    }
     const parsed: CliArgs = { mode: "watch" };
     if (args.includes("--once")) parsed.once = true;
     if (preflightOnly) parsed.preflightOnly = true;
+    if (pollInterval !== undefined) parsed.pollIntervalMs = parseDurationMs(pollInterval);
     const issueKey = optionValue(args, "--issue");
     const title = optionValue(args, "--title");
     const description = optionValue(args, "--description");
@@ -583,6 +660,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     const claimStatus = optionValue(args, "--claim-status");
     const linearTeam = optionValue(args, "--linear-team");
     const linearApiKeyEnv = optionValue(args, "--linear-api-key-env");
+    const maxPolls = optionValue(args, "--max-polls");
     if (issueKey !== undefined) parsed.issueKey = issueKey;
     if (title !== undefined) parsed.title = title;
     if (description !== undefined) parsed.description = description;
@@ -592,6 +670,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (args.includes("--linear")) parsed.linear = true;
     if (linearTeam !== undefined) parsed.linearTeam = linearTeam;
     if (linearApiKeyEnv !== undefined) parsed.linearApiKeyEnv = linearApiKeyEnv;
+    if (maxPolls !== undefined) parsed.maxPolls = parsePositiveInteger(maxPolls, "--max-polls");
     return parsed;
   }
   if (args[0] === "status") {
@@ -698,6 +777,22 @@ const main = async (): Promise<void> => {
       const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
       const apiKey = process.env[apiKeyEnv];
       if (!apiKey) throw new Error(`watch --linear requires ${apiKeyEnv} to be set`);
+      if (args.pollIntervalMs !== undefined) {
+        const controller = new AbortController();
+        process.once("SIGINT", () => controller.abort());
+        const loopInput: LinearWatchLoopCliInput = {
+          apiKey,
+          teamKey: args.linearTeam,
+          pollIntervalMs: args.pollIntervalMs,
+          signal: controller.signal,
+          onLine: (line) => process.stdout.write(`${line}\n`),
+        };
+        if (args.readyStatus !== undefined) loopInput.readyStatus = args.readyStatus;
+        if (args.claimStatus !== undefined) loopInput.claimStatus = args.claimStatus;
+        if (args.maxPolls !== undefined) loopInput.maxPolls = args.maxPolls;
+        await runLinearWatchLoopCli(loopInput);
+        return;
+      }
       const linearInput: LinearWatchOnceCliInput = {
         apiKey,
         teamKey: args.linearTeam,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createFakeIssueTrackerAdapter, createFakeReadyIssueSource } from "@aigile/adapters";
-import { defaultClaimComment, watchOnce } from "./index.js";
+import { defaultClaimComment, watchLoop, watchOnce } from "./index.js";
 
 describe("watchOnce", () => {
   it("claims the first ready issue and posts an operator comment", async () => {
@@ -53,5 +53,60 @@ describe("watchOnce", () => {
       readyCount: 0,
       actions: ["no_ready_issues"],
     });
+  });
+
+  it("polls repeatedly without claiming the same issue twice in one process", async () => {
+    const seedIssues = [{
+      id: "issue-1",
+      key: "LIN-900",
+      title: "Watcher loop",
+      description: "Claim once.",
+      acceptanceCriteria: [],
+      status: "ready",
+      comments: [],
+    }];
+    const tracker = createFakeIssueTrackerAdapter(seedIssues);
+    const events: string[] = [];
+
+    await watchLoop({
+      source: createFakeReadyIssueSource(seedIssues),
+      tracker,
+      pollIntervalMs: 1,
+      maxPolls: 2,
+      sleep: async () => {},
+      onEvent: (event) => {
+        events.push(event.type);
+      },
+    });
+
+    expect(events).toEqual([
+      "poll_started",
+      "issue_claimed",
+      "poll_started",
+      "poll_idle",
+      "watch_stopped",
+    ]);
+    expect(await tracker.getIssue("LIN-900")).toMatchObject({
+      status: "aigile:claimed",
+      comments: [defaultClaimComment],
+    });
+  });
+
+  it("stops when aborted before a poll begins", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const events: string[] = [];
+
+    await watchLoop({
+      source: createFakeReadyIssueSource([]),
+      tracker: createFakeIssueTrackerAdapter([]),
+      pollIntervalMs: 1,
+      signal: controller.signal,
+      onEvent: (event) => {
+        events.push(event.type);
+      },
+    });
+
+    expect(events).toEqual(["watch_stopped"]);
   });
 });
