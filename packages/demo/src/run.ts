@@ -51,6 +51,8 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   worktreesPath: string;
   baseBranch?: string;
   exec?: ExecCommand;
+  registry?: RoleRuntimeRegistry;
+  runner?: RoleRunner;
 }
 
 export interface DemoGitHubInput extends DemoIssueInput {
@@ -350,8 +352,8 @@ export const runDemoIssueWithWorkspace = async (
 
   return runDemoIssueWithRoles({
     issue: input.issue,
-    registry: createDemoRegistry(),
-    runner: createScriptedRoleRunner({
+    registry: input.registry ?? createDemoRegistry(),
+    runner: input.runner ?? createScriptedRoleRunner({
       architect: {
         artifactKind: "architect.plan",
         payload: {

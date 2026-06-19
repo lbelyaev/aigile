@@ -1,33 +1,19 @@
 {
   "runtimes": [
     {
-      "id": "architect-acp",
+      "id": "claude-acp",
       "transport": "stdio",
-      "command": ["agent-acp-command", "--role", "architect"]
+      "command": ["npx", "-y", "@zed-industries/claude-agent-acp"]
     },
     {
-      "id": "developer-acp",
+      "id": "codex-acp",
       "transport": "stdio",
-      "command": ["agent-acp-command", "--role", "developer"]
-    },
-    {
-      "id": "checker-acp",
-      "transport": "stdio",
-      "command": ["agent-acp-command", "--role", "checker"]
+      "command": ["npx", "-y", "@zed-industries/codex-acp"]
     }
   ],
   "assignments": [
-    {
-      "roleId": "architect",
-      "runtimeProfileId": "architect-acp"
-    },
-    {
-      "roleId": "developer",
-      "runtimeProfileId": "developer-acp"
-    },
-    {
-      "roleId": "checker",
-      "runtimeProfileId": "checker-acp"
-    }
+    { "roleId": "architect", "runtimeProfileId": "claude-acp" },
+    { "roleId": "developer", "runtimeProfileId": "codex-acp" },
+    { "roleId": "checker", "runtimeProfileId": "claude-acp" }
   ]
 }

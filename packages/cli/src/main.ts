@@ -111,6 +111,10 @@ const main = async (): Promise<void> => {
       return { stdout: `${command} ${commandArgs.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
     };
   }
+  if (args.mode === "run" && args.runtimeConfigPath) {
+    runInput.registry = runtimeConfigToRegistry(loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8")));
+    runInput.runner = createAcpRoleRunner();
+  }
   const result = args.mode === "run"
     ? await runDemoIssueWithWorkspace(runInput)
     : args.mode === "agents"
