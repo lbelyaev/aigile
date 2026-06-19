@@ -8,6 +8,10 @@ export {
   createFakeIssueTrackerAdapter,
 } from "./fakes.js";
 
+export {
+  createGitHubCliCodeHostAdapter,
+} from "./github-cli.js";
+
 export type {
   CheckResult,
   CodeHostAdapter,
@@ -18,3 +22,9 @@ export type {
   PullRequestInput,
   PullRequestRecord,
 } from "./contracts.js";
+
+export type {
+  GitHubCliCodeHostAdapterOptions,
+  GitHubCliExec,
+  GitHubCliExecResult,
+} from "./github-cli.js";
