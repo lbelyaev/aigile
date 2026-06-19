@@ -1,8 +1,11 @@
 import {
+  createGitHubCliCodeHostAdapter,
   createFakeCodeHostAdapter,
   createFakeIssueTrackerAdapter,
   issueToArtifact,
   pullRequestToArtifact,
+  type CodeHostAdapter,
+  type GitHubCliExec,
   type IssueRecord,
   type PullRequestRecord,
 } from "@aigile/adapters";
@@ -31,6 +34,7 @@ export interface DemoIssueInput {
 export interface DemoWithRolesInput extends DemoIssueInput {
   registry: RoleRuntimeRegistry;
   runner: RoleRunner;
+  codeHost?: CodeHostAdapter;
   initialArtifacts?: WorkflowArtifact[];
   verificationArtifact?: WorkflowArtifact;
   beforeVerification?: (artifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact[]>;
@@ -45,6 +49,11 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   worktreesPath: string;
   baseBranch?: string;
   exec?: ExecCommand;
+}
+
+export interface DemoGitHubInput extends DemoIssueInput {
+  ghExec: GitHubCliExec;
+  cwd?: string;
 }
 
 export interface DemoResult {
@@ -103,7 +112,7 @@ const createDemoRegistry = (): RoleRuntimeRegistry => createRoleRuntimeRegistry(
 
 export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<DemoResult> => {
   const issueTracker = createFakeIssueTrackerAdapter([input.issue]);
-  const codeHost = createFakeCodeHostAdapter();
+  const codeHost = input.codeHost ?? createFakeCodeHostAdapter();
   const issue = await issueTracker.getIssue(input.issue.key);
   const artifacts: WorkflowArtifact[] = [issueToArtifact(issue), ...(input.initialArtifacts ?? [])];
   const timeline: string[] = [];
@@ -203,6 +212,7 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     status: "passed",
     summary: "Local scripted verifier passed.",
   });
+  await codeHost.appendPullRequestComment(pullRequest.id, `Checker: ${verdict.id}`);
   const pullRequestArtifact = pullRequestToArtifact(await codeHost.getPullRequest(pullRequest.id));
   artifacts.push(pullRequestArtifact);
   snapshot = pushTransition(snapshot, {
@@ -368,3 +378,41 @@ export const runDemoIssueWithWorkspace = async (
     ],
   });
 };
+
+export const runDemoIssueWithGitHub = async (
+  input: DemoGitHubInput,
+): Promise<DemoResult> => runDemoIssueWithRoles({
+  issue: input.issue,
+  registry: createDemoRegistry(),
+  runner: createScriptedRoleRunner({
+    architect: {
+      artifactKind: "architect.plan",
+      payload: {
+        summary: `Plan for ${input.issue.key}: ${input.issue.title}`,
+        scope: ["github demo"],
+        acceptanceCriteria: input.issue.acceptanceCriteria,
+        verificationCommands: ["bun run check"],
+        risks: [],
+      },
+    },
+    developer: {
+      artifactKind: "developer.attempt",
+      payload: {
+        summary: "GitHub demo implementation completed.",
+        changedFiles: ["packages/demo/src/run.ts"],
+        verificationNotes: "Verifier result is represented as PR feedback.",
+      },
+    },
+    checker: {
+      artifactKind: "checker.verdict",
+      payload: {
+        verdict: "pass",
+        summary: "Checker accepts GitHub demo artifacts.",
+        reasons: [],
+      },
+    },
+  }),
+  codeHost: createGitHubCliCodeHostAdapter(input.cwd === undefined
+    ? { exec: input.ghExec }
+    : { exec: input.ghExec, cwd: input.cwd }),
+});

@@ -2,6 +2,7 @@
 import {
   runDemoIssue,
   runDemoIssueWithAcpRoles,
+  runDemoIssueWithGitHub,
   runDemoIssueWithWorkspace,
   type DemoResult,
 } from "@aigile/demo";
@@ -36,14 +37,16 @@ export const formatDemoResult = (result: DemoResult): string => [
   ...result.artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.id}`),
 ].join("\n");
 
-export type DemoMode = "scripted" | "agents" | "workspace";
+export type DemoMode = "scripted" | "agents" | "workspace" | "github";
 
 export const selectDemoMode = (args: readonly string[]): DemoMode =>
   args.includes("demo:agents") || args.includes("--agents")
     ? "agents"
     : args.includes("demo:workspace") || args.includes("--workspace")
       ? "workspace"
-      : "scripted";
+      : args.includes("demo:github") || args.includes("--github")
+        ? "github"
+        : "scripted";
 
 const main = async (): Promise<void> => {
   const mode = selectDemoMode(process.argv.slice(2));
@@ -62,6 +65,16 @@ const main = async (): Promise<void> => {
           return { stdout: `${command} ${args.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
         },
       })
+      : mode === "github"
+        ? await runDemoIssueWithGitHub({
+          issue: defaultIssue,
+          ghExec: async (_command, args) => {
+            if (args[0] === "pr" && args[1] === "create") {
+              return { stdout: "https://github.com/aigile/aigile/pull/1", stderr: "", exitCode: 0 };
+            }
+            return { stdout: "", stderr: "", exitCode: 0 };
+          },
+        })
       : await runDemoIssue({ issue: defaultIssue });
   process.stdout.write(`${formatDemoResult(result)}\n`);
 };

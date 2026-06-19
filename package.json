@@ -12,7 +12,8 @@
     "check": "bun run typecheck && bun test",
     "demo": "bun run packages/cli/src/main.ts",
     "demo:agents": "bun run packages/cli/src/main.ts demo:agents",
-    "demo:workspace": "bun run packages/cli/src/main.ts demo:workspace"
+    "demo:workspace": "bun run packages/cli/src/main.ts demo:workspace",
+    "demo:github": "bun run packages/cli/src/main.ts demo:github"
   },
   "devDependencies": {
     "@types/bun": "^1.2.21",

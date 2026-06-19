@@ -27,6 +27,7 @@ describe("cli formatting", () => {
   it("selects the ACP-agent demo mode from argv", () => {
     expect(selectDemoMode(["demo:agents"])).toBe("agents");
     expect(selectDemoMode(["demo:workspace"])).toBe("workspace");
+    expect(selectDemoMode(["demo:github"])).toBe("github");
     expect(selectDemoMode([])).toBe("scripted");
   });
 });
