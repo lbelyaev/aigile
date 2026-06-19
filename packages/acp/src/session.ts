@@ -134,7 +134,7 @@ const normalizeTokenUsage = (value: unknown): AcpTokenUsage | undefined => {
   if (!isRecord(value)) return undefined;
   const inputTokens = tokenField(value, ["inputTokens", "input_tokens", "promptTokens", "prompt_tokens"]);
   const outputTokens = tokenField(value, ["outputTokens", "output_tokens", "completionTokens", "completion_tokens"]);
-  const explicitTotalTokens = tokenField(value, ["totalTokens", "total_tokens", "tokens"]);
+  const explicitTotalTokens = tokenField(value, ["totalTokens", "total_tokens"]);
   const totalTokens = explicitTotalTokens ?? (
     inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined
   );

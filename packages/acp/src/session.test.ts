@@ -154,6 +154,30 @@ describe("ACP session translation", () => {
         totalTokens: 14,
       },
     });
+
+    expect(translateSessionUpdate({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "acp-1",
+        update: {
+          sessionUpdate: "agent_message",
+          usage: {
+            tokens: 999_999,
+            inputTokens: 12,
+            outputTokens: 3,
+          },
+        },
+      },
+    }, "role-session-1", "acp-1")).toEqual({
+      type: "token_usage",
+      sessionId: "role-session-1",
+      usage: {
+        inputTokens: 12,
+        outputTokens: 3,
+        totalTokens: 15,
+      },
+    });
   });
 
   it("routes permission requests through policy before asking", async () => {

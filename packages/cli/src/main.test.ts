@@ -144,7 +144,7 @@ describe("cli formatting", () => {
             tokenUsage: {
               inputTokens: 1200,
               outputTokens: 500,
-              totalTokens: 1700,
+              totalTokens: 999_999,
             },
           },
         },

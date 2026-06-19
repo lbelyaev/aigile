@@ -61,11 +61,11 @@ const formatTokenUsage = (result: DemoResult): string => {
     hasUsage = true;
     inputTokens += usage.inputTokens ?? 0;
     outputTokens += usage.outputTokens ?? 0;
-    totalTokens += usage.totalTokens ?? (
-      usage.inputTokens !== undefined && usage.outputTokens !== undefined
-        ? usage.inputTokens + usage.outputTokens
-        : 0
-    );
+    if (usage.inputTokens !== undefined && usage.outputTokens !== undefined) {
+      totalTokens += usage.inputTokens + usage.outputTokens;
+    } else {
+      totalTokens += usage.totalTokens ?? 0;
+    }
   }
   if (!hasUsage) return "unavailable";
   return `${formattedNumber(totalTokens)} total (${formattedNumber(inputTokens)} input, ${formattedNumber(outputTokens)} output)`;
