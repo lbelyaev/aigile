@@ -1,0 +1,13 @@
+{
+  "name": "@aigile/config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@aigile/roles": "workspace:*",
+    "@aigile/types": "workspace:*"
+  }
+}
