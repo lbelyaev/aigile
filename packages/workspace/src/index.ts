@@ -14,6 +14,8 @@ export type {
   GitWorkspaceAdapterOptions,
   IssueWorkspace,
   IssueWorkspaceInput,
+  IssueWorkspaceStatus,
+  IssueWorkspaceStatusState,
 } from "./git-workspace.js";
 
 export type {

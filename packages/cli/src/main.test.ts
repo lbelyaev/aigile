@@ -9,6 +9,7 @@ import {
   parseCliArgs,
   runRunModePreflight,
   runPublishPreflight,
+  runIssueWorkspaceStatus,
   selectDemoMode,
 } from "./main.js";
 
@@ -419,6 +420,25 @@ describe("cli formatting", () => {
     });
   });
 
+  it("parses status arguments", () => {
+    expect(parseCliArgs([
+      "status",
+      "LIN-795",
+      "--repo",
+      "/repo/aigile",
+      "--worktrees",
+      "/repo/aigile/.worktrees",
+      "--base-branch",
+      "develop",
+    ])).toEqual({
+      mode: "status",
+      issueKey: "LIN-795",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      baseBranch: "develop",
+    });
+  });
+
   it("infers GitHub repos from common remote URL forms", () => {
     expect(parseGitHubRepoFromRemoteUrl("git@github.com:lbelyaev/aigile.git")).toBe("lbelyaev/aigile");
     expect(parseGitHubRepoFromRemoteUrl("https://github.com/lbelyaev/aigile.git")).toBe("lbelyaev/aigile");
@@ -486,6 +506,64 @@ describe("cli formatting", () => {
       args: ["repo", "view", "lbelyaev/aigile", "--json", "name"],
       cwd: "/repo/aigile",
     });
+  });
+
+  it("formats issue workspace status for dirty worktrees", async () => {
+    const calls: Array<{ command: string; args: string[]; cwd: string }> = [];
+
+    const output = await runIssueWorkspaceStatus({
+      issueKey: "LIN-795",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      baseBranch: "main",
+      exec: async (command, args, options) => {
+        calls.push({ command, args: [...args], cwd: options.cwd });
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse") {
+          return { stdout: "aigile/LIN-795\n", stderr: "", exitCode: 0 };
+        }
+        if (command === "git" && args[0] === "status") {
+          return {
+            stdout: " M packages/roles/src/acp-runner.ts\n?? scratch.md\n",
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    });
+
+    expect(output).toContain("Aigile status: LIN-795");
+    expect(output).toContain("Workspace: /repo/aigile/.worktrees/LIN-795");
+    expect(output).toContain("Branch: aigile/LIN-795");
+    expect(output).toContain("Base: main");
+    expect(output).toContain("State: worktree_dirty");
+    expect(output).toContain("- M packages/roles/src/acp-runner.ts");
+    expect(output).toContain("- ?? scratch.md");
+    expect(output).toContain("run LIN-795 --agent-write");
+    expect(output).toContain("run LIN-795 --publish");
+    expect(calls).toEqual([
+      { command: "test", args: ["-e", "/repo/aigile/.worktrees/LIN-795"], cwd: "/repo/aigile" },
+      { command: "git", args: ["rev-parse", "--abbrev-ref", "HEAD"], cwd: "/repo/aigile/.worktrees/LIN-795" },
+      { command: "git", args: ["status", "--short"], cwd: "/repo/aigile/.worktrees/LIN-795" },
+    ]);
+  });
+
+  it("formats issue workspace status for missing worktrees", async () => {
+    const output = await runIssueWorkspaceStatus({
+      issueKey: "LIN-404",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      baseBranch: "main",
+      exec: async (command) => {
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+        throw new Error("git should not run for missing status");
+      },
+    });
+
+    expect(output).toContain("State: missing");
+    expect(output).toContain("Changed files: none");
+    expect(output).toContain("run LIN-404 --agent-write");
   });
 
   it("preflights real publish dependencies before live role work", async () => {

@@ -25,9 +25,20 @@ export interface IssueWorkspace {
   baseBranch: string;
 }
 
+export type IssueWorkspaceStatusState = "missing" | "clean" | "dirty" | "branch_mismatch" | "invalid";
+
+export interface IssueWorkspaceStatus {
+  workspace: IssueWorkspace;
+  state: IssueWorkspaceStatusState;
+  currentBranch?: string;
+  changedFiles: string[];
+  message?: string;
+}
+
 export interface GitWorkspaceAdapter {
   checkIssueWorkspaceAvailability: (input: IssueWorkspaceInput) => Promise<IssueWorkspace>;
   createIssueWorkspace: (input: IssueWorkspaceInput) => Promise<IssueWorkspace>;
+  getIssueWorkspaceStatus: (input: IssueWorkspaceInput) => Promise<IssueWorkspaceStatus>;
   diffSummary: (workspace: IssueWorkspace) => Promise<string>;
 }
 
@@ -149,6 +160,50 @@ export const createGitWorkspaceAdapter = (
         ], { cwd: options.repoPath });
       assertSuccess(result, "git worktree add");
       return workspace;
+    },
+    getIssueWorkspaceStatus: async (input) => {
+      const workspace = buildWorkspace(input);
+      const pathResult = await exec("test", ["-e", workspace.worktreePath], { cwd: options.repoPath });
+      if (pathResult.exitCode !== 0) {
+        return {
+          workspace,
+          state: "missing",
+          changedFiles: [],
+        };
+      }
+
+      const branchResult = await exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: workspace.worktreePath });
+      if (branchResult.exitCode !== 0) {
+        return {
+          workspace,
+          state: "invalid",
+          changedFiles: [],
+          message: branchResult.stderr || branchResult.stdout || "worktree path is not a valid git worktree",
+        };
+      }
+
+      const currentBranch = branchResult.stdout.trim();
+      if (currentBranch !== workspace.branchName) {
+        return {
+          workspace,
+          state: "branch_mismatch",
+          currentBranch,
+          changedFiles: [],
+        };
+      }
+
+      const statusResult = await exec("git", ["status", "--short"], { cwd: workspace.worktreePath });
+      assertSuccess(statusResult, "git status --short");
+      const changedFiles = statusResult.stdout
+        .split(/\r?\n/)
+        .map((line) => line.trimEnd())
+        .filter((line) => line.length > 0);
+      return {
+        workspace,
+        state: changedFiles.length > 0 ? "dirty" : "clean",
+        currentBranch,
+        changedFiles,
+      };
     },
     diffSummary: async (workspace) => {
       const result = await exec("git", ["diff", "--stat"], { cwd: workspace.worktreePath });

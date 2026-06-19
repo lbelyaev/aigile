@@ -15,7 +15,13 @@ import {
 } from "@aigile/demo";
 import type { IssueRecord } from "@aigile/adapters";
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
-import { createGitWorkspaceAdapter, defaultExecCommand, type ExecCommand, type ExecResult } from "@aigile/workspace";
+import {
+  createGitWorkspaceAdapter,
+  defaultExecCommand,
+  type ExecCommand,
+  type ExecResult,
+  type IssueWorkspaceStatus,
+} from "@aigile/workspace";
 
 const defaultIssue: IssueRecord = {
   id: "issue-demo-1",
@@ -193,7 +199,7 @@ export const createAcpRoleProgressFormatter = (
   };
 };
 
-export type DemoMode = "scripted" | "agents" | "workspace" | "github" | "linear" | "run";
+export type DemoMode = "scripted" | "agents" | "workspace" | "github" | "linear" | "run" | "status";
 
 export const selectDemoMode = (args: readonly string[]): DemoMode =>
   args.includes("demo:agents") || args.includes("--agents")
@@ -297,6 +303,58 @@ export interface RunModePreflightInput {
   exec?: ExecCommand;
 }
 
+export interface IssueWorkspaceStatusInput {
+  issueKey: string;
+  repoPath: string;
+  worktreesPath: string;
+  baseBranch: string;
+  exec?: ExecCommand;
+}
+
+const workspaceStateLabel = (status: IssueWorkspaceStatus): string => {
+  if (status.state === "dirty") return "worktree_dirty";
+  if (status.state === "clean") return "worktree_clean";
+  if (status.state === "branch_mismatch") return "branch_mismatch";
+  if (status.state === "invalid") return "invalid_worktree";
+  return "missing";
+};
+
+export const formatIssueWorkspaceStatus = (status: IssueWorkspaceStatus): string => {
+  const changedFiles = status.changedFiles.length === 0
+    ? ["Changed files: none"]
+    : [
+      "Changed files:",
+      ...status.changedFiles.map((line) => `- ${line.trimStart()}`),
+    ];
+  const details = [
+    `Aigile status: ${status.workspace.issueKey}`,
+    `Workspace: ${status.workspace.worktreePath}`,
+    `Branch: ${status.workspace.branchName}`,
+    ...(status.currentBranch === undefined ? [] : [`Current branch: ${status.currentBranch}`]),
+    `Base: ${status.workspace.baseBranch}`,
+    `State: ${workspaceStateLabel(status)}`,
+    ...(status.message === undefined ? [] : [`Message: ${status.message.trimEnd()}`]),
+    ...changedFiles,
+    "Suggested next actions:",
+    `- run ${status.workspace.issueKey} --agent-write to continue local agent work`,
+    `- run ${status.workspace.issueKey} --publish to let Aigile commit, push, and open a PR`,
+    "- cleanup after preserving or discarding local changes",
+  ];
+  return details.join("\n");
+};
+
+export const runIssueWorkspaceStatus = async (input: IssueWorkspaceStatusInput): Promise<string> => {
+  const status = await createGitWorkspaceAdapter({
+    repoPath: input.repoPath,
+    worktreesPath: input.worktreesPath,
+    exec: input.exec ?? defaultExecCommand,
+  }).getIssueWorkspaceStatus({
+    issueKey: input.issueKey,
+    baseBranch: input.baseBranch,
+  });
+  return formatIssueWorkspaceStatus(status);
+};
+
 export const runRunModePreflight = async (input: RunModePreflightInput): Promise<string> => {
   const exec = input.exec ?? defaultExecCommand;
   const workspace = await createGitWorkspaceAdapter({
@@ -363,6 +421,18 @@ const optionValues = (args: readonly string[], name: string): string[] => {
 };
 
 export const parseCliArgs = (args: readonly string[]): CliArgs => {
+  if (args[0] === "status") {
+    const issueKey = args[1];
+    if (!issueKey) throw new Error("status requires an issue key");
+    const parsed: CliArgs = { mode: "status", issueKey };
+    const repoPath = optionValue(args, "--repo");
+    const worktreesPath = optionValue(args, "--worktrees");
+    const baseBranch = optionValue(args, "--base-branch");
+    if (repoPath !== undefined) parsed.repoPath = repoPath;
+    if (worktreesPath !== undefined) parsed.worktreesPath = worktreesPath;
+    if (baseBranch !== undefined) parsed.baseBranch = baseBranch;
+    return parsed;
+  }
   if (args[0] === "run") {
     const issueKey = args[1];
     if (!issueKey) throw new Error("run requires an issue key");
@@ -414,6 +484,16 @@ const main = async (): Promise<void> => {
     worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
   };
   if (args.baseBranch !== undefined) runInput.baseBranch = args.baseBranch;
+  if (args.mode === "status") {
+    const output = await runIssueWorkspaceStatus({
+      issueKey: args.issueKey ?? defaultIssue.key,
+      repoPath: args.repoPath ?? process.cwd(),
+      worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
+      baseBranch: args.baseBranch ?? "main",
+    });
+    process.stdout.write(`${output}\n`);
+    return;
+  }
   if (args.mode === "run" && args.preflightOnly) {
     const preflightInput: RunModePreflightInput = {
       issueKey: args.issueKey ?? defaultIssue.key,
