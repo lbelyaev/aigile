@@ -19,16 +19,19 @@ const createMockSpawn = (): {
   stdin: PassThrough;
   stderr: PassThrough;
   child: AcpChildProcess;
+  killSignals: NodeJS.Signals[];
 } => {
   const stdout = new PassThrough();
   const stdin = new PassThrough();
   const stderr = new PassThrough();
   const exitHandlers: Array<(code: number | null) => void> = [];
+  const killSignals: NodeJS.Signals[] = [];
   const child: AcpChildProcess = {
     stdin,
     stdout,
     stderr,
-    kill: () => {
+    kill: (signal = "SIGTERM") => {
+      killSignals.push(signal);
       for (const handler of exitHandlers) handler(0);
       return true;
     },
@@ -47,7 +50,17 @@ const createMockSpawn = (): {
     stdin,
     stderr,
     child,
+    killSignals,
   };
+};
+
+const createStubbornMockSpawn = (): ReturnType<typeof createMockSpawn> => {
+  const mock = createMockSpawn();
+  mock.child.kill = (signal = "SIGTERM") => {
+    mock.killSignals.push(signal);
+    return true;
+  };
+  return mock;
 };
 
 describe("ACP process connector", () => {
@@ -116,5 +129,22 @@ describe("ACP process connector", () => {
     expect(connected.session.acpSessionId).toBe("acp-session-1");
 
     await connected.process.kill();
+  });
+
+  it("escalates process shutdown when a runtime ignores SIGTERM", async () => {
+    const mock = createStubbornMockSpawn();
+    const process = createAcpProcess(["agent-acp"], {
+      spawnProcess: mock.spawn,
+      killGraceMs: 1,
+    });
+
+    const result = await Promise.race([
+      process.kill().then(() => "resolved"),
+      new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 20)),
+    ]);
+
+    expect(result).toBe("resolved");
+    expect(mock.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(process.isAlive()).toBe(false);
   });
 });

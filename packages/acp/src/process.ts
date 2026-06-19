@@ -33,6 +33,7 @@ export interface CreateAcpProcessOptions {
   cwd?: string;
   env?: Record<string, string>;
   timeoutMs?: number;
+  killGraceMs?: number;
   spawnProcess?: SpawnAcpProcess;
   forwardStderr?: (chunk: string) => void;
 }
@@ -94,8 +95,19 @@ export const createAcpProcess = (
   const kill = async (): Promise<void> => {
     if (!alive) return;
     await new Promise<void>((resolve) => {
-      child.once("close", () => resolve());
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      child.once("close", settle);
       child.kill("SIGTERM");
+      setTimeout(() => {
+        if (!alive || settled) return;
+        child.kill("SIGKILL");
+        settle();
+      }, options.killGraceMs ?? 2_000);
     });
     alive = false;
     rpc.destroy();
