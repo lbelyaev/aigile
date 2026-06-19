@@ -56,16 +56,21 @@ export const watchOnce = async (input: WatchOnceInput): Promise<WatchOnceResult>
 
   const claimStatus = input.claimStatus ?? defaultClaimStatus;
   const claimComment = input.claimComment ?? defaultClaimComment;
+  const hasClaimComment = issue.comments.includes(claimComment);
   await input.tracker.updateIssueStatus(issue.key, claimStatus);
-  await input.tracker.appendIssueComment(issue.key, claimComment);
+  if (!hasClaimComment) {
+    await input.tracker.appendIssueComment(issue.key, claimComment);
+  }
 
   return {
     readyCount: readyIssues.length,
     claimedIssue: issue,
-    actions: [
-      `status:${issue.key}:${claimStatus}`,
-      `comment:${issue.key}`,
-    ],
+    actions: hasClaimComment
+      ? [`status:${issue.key}:${claimStatus}`]
+      : [
+        `status:${issue.key}:${claimStatus}`,
+        `comment:${issue.key}`,
+      ],
   };
 };
 
