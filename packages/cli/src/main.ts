@@ -462,6 +462,19 @@ export interface LinearWatchOnceCliInput {
   fetchGraphql?: LinearFetchGraphql;
 }
 
+export interface LinearRunIssueInput {
+  apiKey: string;
+  issueKey: string;
+  fetchGraphql?: LinearFetchGraphql;
+}
+
+export const fetchLinearIssueForRun = async (input: LinearRunIssueInput): Promise<IssueRecord> => {
+  const adapter = createLinearGraphqlIssueTrackerAdapter(input.fetchGraphql === undefined
+    ? { apiKey: input.apiKey }
+    : { apiKey: input.apiKey, fetchGraphql: input.fetchGraphql });
+  return adapter.getIssue(input.issueKey);
+};
+
 export const runLinearWatchOnceCli = async (input: LinearWatchOnceCliInput): Promise<string> => {
   const fetchGraphql = input.fetchGraphql;
   const trackerOptions = {
@@ -568,6 +581,8 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     const baseBranch = optionValue(args, "--base-branch");
     const remote = optionValue(args, "--remote");
     const githubRepo = optionValue(args, "--github-repo");
+    const linearTeam = optionValue(args, "--linear-team");
+    const linearApiKeyEnv = optionValue(args, "--linear-api-key-env");
     if (title !== undefined) parsed.title = title;
     if (description !== undefined) parsed.description = description;
     if (acceptanceCriteria.length > 0) parsed.acceptanceCriteria = acceptanceCriteria;
@@ -577,6 +592,9 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (baseBranch !== undefined) parsed.baseBranch = baseBranch;
     if (remote !== undefined) parsed.remote = remote;
     if (githubRepo !== undefined) parsed.githubRepo = githubRepo;
+    if (args.includes("--linear")) parsed.linear = true;
+    if (linearTeam !== undefined) parsed.linearTeam = linearTeam;
+    if (linearApiKeyEnv !== undefined) parsed.linearApiKeyEnv = linearApiKeyEnv;
     if (args.includes("--publish")) parsed.publish = true;
     if (args.includes("--dry-run")) parsed.dryRun = true;
     if (args.includes("--agent-write")) parsed.agentWrite = true;
@@ -594,13 +612,22 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
 
 const main = async (): Promise<void> => {
   const args = parseCliArgs(process.argv.slice(2));
+  const linearIssue = args.mode === "run" && args.linear
+    ? await (async (): Promise<IssueRecord> => {
+      const issueKey = args.issueKey ?? defaultIssue.key;
+      const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
+      const apiKey = process.env[apiKeyEnv];
+      if (!apiKey) throw new Error(`run --linear requires ${apiKeyEnv} to be set`);
+      return fetchLinearIssueForRun({ apiKey, issueKey });
+    })()
+    : undefined;
   const runInput: DemoWorkspaceInput = {
     issue: {
-      ...defaultIssue,
+      ...(linearIssue ?? defaultIssue),
       key: args.issueKey ?? defaultIssue.key,
-      title: args.title ?? defaultIssue.title,
-      description: args.description ?? defaultIssue.description,
-      acceptanceCriteria: args.acceptanceCriteria ?? defaultIssue.acceptanceCriteria,
+      title: args.title ?? linearIssue?.title ?? defaultIssue.title,
+      description: args.description ?? linearIssue?.description ?? defaultIssue.description,
+      acceptanceCriteria: args.acceptanceCriteria ?? linearIssue?.acceptanceCriteria ?? defaultIssue.acceptanceCriteria,
     },
     repoPath: args.repoPath ?? process.cwd(),
     worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,

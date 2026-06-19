@@ -7,6 +7,7 @@ import {
   formatDuration,
   parseGitHubRepoFromRemoteUrl,
   parseCliArgs,
+  fetchLinearIssueForRun,
   runLinearWatchOnceCli,
   runWatchOnceCli,
   runRunModePreflight,
@@ -340,6 +341,26 @@ describe("cli formatting", () => {
     });
   });
 
+  it("parses Linear-backed run arguments", () => {
+    expect(parseCliArgs([
+      "run",
+      "LBE-5",
+      "--linear",
+      "--linear-team",
+      "LBE",
+      "--linear-api-key-env",
+      "AIGILE_LINEAR_API_KEY",
+      "--agent-write",
+    ])).toEqual({
+      mode: "run",
+      issueKey: "LBE-5",
+      linear: true,
+      linearTeam: "LBE",
+      linearApiKeyEnv: "AIGILE_LINEAR_API_KEY",
+      agentWrite: true,
+    });
+  });
+
   it("parses explicit agent-write run arguments", () => {
     expect(parseCliArgs([
       "run",
@@ -577,6 +598,33 @@ describe("cli formatting", () => {
       { key: "issue-id", body: "Aigile claimed this issue for local processing." },
       { key: "LIN-900" },
     ]);
+  });
+
+  it("fetches run issue metadata from Linear", async () => {
+    const issue = await fetchLinearIssueForRun({
+      apiKey: "test-key",
+      issueKey: "LBE-5",
+      fetchGraphql: async (_query, variables) => {
+        expect(variables).toEqual({ key: "LBE-5" });
+        return {
+          issue: {
+            id: "issue-id",
+            identifier: "LBE-5",
+            title: "Add Linear watch preflight",
+            description: "Acceptance:\n- Lists teams\n- Lists states",
+            state: { name: "In Progress" },
+            comments: { nodes: [] },
+          },
+        };
+      },
+    });
+
+    expect(issue).toMatchObject({
+      key: "LBE-5",
+      title: "Add Linear watch preflight",
+      acceptanceCriteria: ["Lists teams", "Lists states"],
+      status: "In Progress",
+    });
   });
 
   it("infers GitHub repos from common remote URL forms", () => {
