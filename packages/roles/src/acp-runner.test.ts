@@ -234,4 +234,59 @@ describe("ACP role runner", () => {
       },
     });
   });
+
+  it("falls back to streamed artifact JSON when prompt result is not an artifact", async () => {
+    let eventHandler: ((event: { type: "text_delta"; sessionId: string; delta: string }) => void) | undefined;
+    const connector: AcpRuntimeConnector = async () => ({
+      session: {
+        sessionId: "role-session-1",
+        acpSessionId: "acp-session-1",
+        prompt: async () => {
+          eventHandler?.({
+            type: "text_delta",
+            sessionId: "role-session-1",
+            delta: JSON.stringify({
+              artifactKind: "architect.plan",
+              payload: {
+                summary: "Streamed plan",
+                scope: ["fallback"],
+                acceptanceCriteria: ["stream is parsed"],
+                verificationCommands: ["bun test packages/roles"],
+                risks: [],
+              },
+            }),
+          });
+          return { stopReason: "end_turn" };
+        },
+        cancel: () => undefined,
+        onEvent: (handler) => {
+          eventHandler = handler as typeof eventHandler;
+          return () => {
+            eventHandler = undefined;
+          };
+        },
+      },
+      process: {
+        kill: async () => undefined,
+      },
+    });
+    const runner = createAcpRoleRunner({ connector });
+
+    const artifact = await runner.run({
+      roleId: "architect",
+      issueId: "LIN-123",
+      runtime: {
+        id: "runtime-architect",
+        transport: "stdio",
+        command: ["agent-acp"],
+      },
+      assignment: {
+        roleId: "architect",
+        runtimeProfileId: "runtime-architect",
+      },
+      inputArtifacts: [],
+    });
+
+    expect(artifact.payload).toMatchObject({ summary: "Streamed plan" });
+  });
 });

@@ -70,6 +70,18 @@ const buildPrompt = (input: RoleRunInput): string => buildRolePrompt({
   inputArtifacts: input.inputArtifacts,
 });
 
+const parsePromptArtifactResponse = (promptResult: unknown, streamedText: string) => {
+  if (promptResult === undefined || promptResult === null) {
+    return parseRoleArtifactResponse(streamedText);
+  }
+  try {
+    return parseRoleArtifactResponse(promptResult);
+  } catch (error) {
+    if (streamedText.trim().length === 0) throw error;
+    return parseRoleArtifactResponse(streamedText);
+  }
+};
+
 export const createAcpRoleRunner = (
   options: AcpRoleRunnerOptions = {},
 ): RoleRunner => {
@@ -129,7 +141,7 @@ export const createAcpRoleRunner = (
       try {
         options.onProgress?.({ type: "prompt_started", ...progressBase(input) });
         const promptResult = await connection.session.prompt(buildPrompt(input));
-        const response = parseRoleArtifactResponse(promptResult ?? streamedText);
+        const response = parsePromptArtifactResponse(promptResult, streamedText);
         options.onProgress?.({
           type: "artifact_parsed",
           ...progressBase(input),
