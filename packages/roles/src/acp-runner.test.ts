@@ -257,6 +257,8 @@ describe("ACP role runner", () => {
       ["tool-8", "git rebase main"],
       ["tool-9", "git reset --hard"],
       ["tool-9-newline", "echo ready\ngit push origin aigile/LIN-123"],
+      ["tool-9-pr", "gh pr create --fill"],
+      ["tool-9-hub-pr", "echo ready\nhub pull-request"],
     ] as const) {
       expect(connectInput.decidePermission?.({
         sessionId: "LIN-123:developer",
@@ -273,6 +275,20 @@ describe("ACP role runner", () => {
       description: JSON.stringify({ command: "cd /repo/aigile && find . -type f" }),
       options: [],
     })).toBe("reject_once");
+    for (const [requestId, command] of [
+      ["tool-10-git-ls-files", "git ls-files"],
+      ["tool-10-git-grep", "git grep TODO"],
+      ["tool-10-grep-r", "grep -R TODO ."],
+      ["tool-10-rg", "rg TODO"],
+    ] as const) {
+      expect(connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId,
+        tool: "Bash",
+        description: JSON.stringify({ command }),
+        options: [],
+      })).toBe("reject_once");
+    }
     expect(connectInput.decidePermission?.({
       sessionId: "LIN-123:developer",
       requestId: "tool-11",

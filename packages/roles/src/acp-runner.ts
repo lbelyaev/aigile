@@ -189,6 +189,12 @@ const isCommitLikePermission = (request: AcpPermissionRequest): boolean => {
     gitSubcommandPattern("add|commit|push|merge|rebase|reset").test(segment));
 };
 
+const isPrOpeningPermission = (request: AcpPermissionRequest): boolean => {
+  const command = extractCommand(request).trim().toLowerCase();
+  return commandSegments(command).some((segment) =>
+    /^(gh|hub)\s+pr\s+create\b/.test(segment) || /^hub\s+pull-request\b/.test(segment));
+};
+
 const hasTargetedPathArgument = (command: string): boolean =>
   /(^|\s)(\.?\/?[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+|[A-Za-z0-9_.-]+\.(ts|tsx|js|jsx|json|md|yml|yaml|toml|lock))(\s|$)/.test(command);
 
@@ -249,7 +255,7 @@ const buildExecutionPolicyPermissionDecision = (
       if (request.tool.toLowerCase() === "bash" && isReadOnlyPermission(request)) return "allow_once";
       return "reject_once";
     }
-    if (isCommitLikePermission(request)) return "reject_once";
+    if (isCommitLikePermission(request) || isPrOpeningPermission(request)) return "reject_once";
     if (/(^|\s)(edit|write|multiedit|notebookedit)(\s|$)/.test(request.tool.toLowerCase())) {
       return "allow_once";
     }
