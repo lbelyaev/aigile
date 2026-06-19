@@ -25,6 +25,11 @@ describe("role prompt builder", () => {
     expect(prompt).toContain("Issue: LIN-123");
     expect(prompt).toContain("Return only valid JSON");
     expect(prompt).toContain("artifactKind: architect.plan");
+    expect(prompt).toContain("\"summary\": \"string\"");
+    expect(prompt).toContain("\"scope\": [");
+    expect(prompt).toContain("\"acceptanceCriteria\": [");
+    expect(prompt).toContain("\"verificationCommands\": [");
+    expect(prompt).toContain("\"risks\": [");
     expect(prompt).toContain("Read at most 5 files");
     expect(prompt).toContain("Do not edit files");
     expect(prompt).toContain("No Markdown");

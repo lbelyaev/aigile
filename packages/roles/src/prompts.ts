@@ -31,6 +31,26 @@ const ARTIFACT_KIND_BY_ROLE: Record<string, string> = {
   checker: "checker.verdict",
 };
 
+const PAYLOAD_EXAMPLES_BY_ROLE: Record<string, unknown> = {
+  architect: {
+    summary: "string",
+    scope: ["string"],
+    acceptanceCriteria: ["string"],
+    verificationCommands: ["string"],
+    risks: ["string"],
+  },
+  developer: {
+    summary: "string",
+    changedFiles: ["string"],
+    verificationNotes: "string",
+  },
+  checker: {
+    verdict: "pass",
+    summary: "string",
+    reasons: ["string"],
+  },
+};
+
 export const getDefaultRoleInstruction = (roleId: string): string =>
   DEFAULT_ROLE_INSTRUCTIONS[roleId] ?? [
     `Fulfill the ${roleId} role using the provided artifacts.`,
@@ -39,6 +59,9 @@ export const getDefaultRoleInstruction = (roleId: string): string =>
 
 const artifactKindForRole = (roleId: string): string =>
   ARTIFACT_KIND_BY_ROLE[roleId] ?? `${roleId}.artifact`;
+
+const payloadExampleForRole = (roleId: string): unknown =>
+  PAYLOAD_EXAMPLES_BY_ROLE[roleId] ?? {};
 
 export const buildRolePrompt = (input: BuildRolePromptInput): string => [
   `Role: ${input.roleId}`,
@@ -58,8 +81,8 @@ export const buildRolePrompt = (input: BuildRolePromptInput): string => [
   "Return only valid JSON with this shape:",
   JSON.stringify({
     artifactKind: artifactKindForRole(input.roleId),
-    payload: {},
-  }),
+    payload: payloadExampleForRole(input.roleId),
+  }, null, 2),
   "",
   "Input artifacts:",
   JSON.stringify(input.inputArtifacts, null, 2),
