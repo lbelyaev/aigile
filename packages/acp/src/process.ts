@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
-import { createAcpSession, type AcpSession } from "./session.js";
+import { createAcpSession, type AcpSession, type AcpSessionOptions } from "./session.js";
 import { createRpcClient, type RpcClient } from "./rpc.js";
 
 export interface AcpChildProcess {
@@ -49,6 +49,7 @@ export interface ConnectAcpRuntimeInput extends CreateAcpProcessOptions {
   initializeParams?: unknown;
   sessionParams: Record<string, unknown>;
   sessionId: string;
+  decidePermission?: AcpSessionOptions["decidePermission"];
 }
 
 const defaultSpawnProcess: SpawnAcpProcess = (command, args, options) =>
@@ -141,10 +142,12 @@ export const connectAcpRuntime = async (
     input.initializeParams ?? {},
   );
   const sessionResult = await processHandle.rpc.sendRequest("session/new", input.sessionParams);
-  const session = createAcpSession(processHandle.rpc, {
+  const sessionOptions: AcpSessionOptions = {
     sessionId: input.sessionId,
     acpSessionId: extractSessionId(sessionResult),
-  });
+  };
+  if (input.decidePermission !== undefined) sessionOptions.decidePermission = input.decidePermission;
+  const session = createAcpSession(processHandle.rpc, sessionOptions);
 
   return {
     process: processHandle,

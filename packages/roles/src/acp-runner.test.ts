@@ -102,6 +102,55 @@ describe("ACP role runner", () => {
     expect(connectInput.sessionParams).not.toHaveProperty("model");
   });
 
+  it("builds a dry-run permission policy from execution policy artifacts", () => {
+    const connectInput = buildAcpRuntimeConnectInput({
+      roleId: "developer",
+      issueId: "LIN-123",
+      runtime: {
+        id: "runtime-developer",
+        transport: "stdio",
+        command: ["agent-acp"],
+      },
+      assignment: {
+        roleId: "developer",
+        runtimeProfileId: "runtime-developer",
+      },
+      inputArtifacts: [{
+        id: "policy:LIN-123:dry-run",
+        kind: "execution.policy",
+        source: "system",
+        payload: {
+          mode: "dry_run",
+          fileWrites: "forbidden",
+          commits: "forbidden",
+          shellCommands: "read_only",
+        },
+      }],
+    });
+
+    expect(connectInput.decidePermission?.({
+      sessionId: "LIN-123:developer",
+      requestId: "tool-1",
+      tool: "Bash",
+      description: JSON.stringify({ command: "git commit -m test" }),
+      options: [],
+    })).toBe("reject_once");
+    expect(connectInput.decidePermission?.({
+      sessionId: "LIN-123:developer",
+      requestId: "tool-2",
+      tool: "Edit",
+      description: "/repo/README.md",
+      options: [],
+    })).toBe("reject_once");
+    expect(connectInput.decidePermission?.({
+      sessionId: "LIN-123:developer",
+      requestId: "tool-3",
+      tool: "Bash",
+      description: JSON.stringify({ command: "git status --short" }),
+      options: [],
+    })).toBe("allow_once");
+  });
+
   it("runs a role through an ACP runtime and returns an artifact", async () => {
     const prompts: string[] = [];
     let killed = false;

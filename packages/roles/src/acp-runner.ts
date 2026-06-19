@@ -1,4 +1,10 @@
-import { connectAcpRuntime, type AcpSession, type ConnectAcpRuntimeInput } from "@aigile/acp";
+import {
+  connectAcpRuntime,
+  type AcpPermissionRequest,
+  type AcpSession,
+  type ConnectAcpRuntimeInput,
+  type PermissionDecision,
+} from "@aigile/acp";
 import { parseRoleArtifactResponse, type WorkflowArtifact } from "@aigile/types";
 import type { RoleRunner, RoleRunInput } from "./runner.js";
 import { buildRolePrompt, getDefaultRoleInstruction } from "./prompts.js";
@@ -53,6 +59,8 @@ export const buildAcpRuntimeConnectInput = (input: RoleRunInput): ConnectAcpRunt
   }
   if (input.runtime.cwd !== undefined) connectInput.cwd = input.runtime.cwd;
   if (input.runtime.env !== undefined) connectInput.env = input.runtime.env;
+  const decidePermission = buildExecutionPolicyPermissionDecision(input);
+  if (decidePermission !== undefined) connectInput.decidePermission = decidePermission;
 
   return connectInput;
 };
@@ -74,6 +82,64 @@ const EXPECTED_ARTIFACT_KIND_BY_ROLE: Record<string, string> = {
   architect: "architect.plan",
   developer: "developer.attempt",
   checker: "checker.verdict",
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const hasDryRunPolicy = (input: RoleRunInput): boolean =>
+  input.inputArtifacts.some((artifact) =>
+    artifact.kind === "execution.policy"
+    && isRecord(artifact.payload)
+    && artifact.payload.mode === "dry_run"
+  );
+
+const extractCommand = (request: AcpPermissionRequest): string => {
+  try {
+    const parsed = JSON.parse(request.description) as unknown;
+    if (isRecord(parsed) && typeof parsed.command === "string") return parsed.command;
+  } catch {
+    // Description may be a plain tool label or file path.
+  }
+  return request.description;
+};
+
+const isWriteLikePermission = (request: AcpPermissionRequest): boolean => {
+  const tool = request.tool.toLowerCase();
+  const command = extractCommand(request).trim().toLowerCase();
+  if (/(^|\s)(edit|write|multiedit|notebookedit)(\s|$)/.test(tool)) return true;
+  return [
+    /^git\s+(add|commit|push|merge|rebase|checkout|switch|reset|worktree\s+add)\b/,
+    /(^|\s)(rm|mv|cp|mkdir|touch|chmod|chown|tee)\b/,
+    />/,
+  ].some((pattern) => pattern.test(command));
+};
+
+const isReadOnlyPermission = (request: AcpPermissionRequest): boolean => {
+  const command = extractCommand(request).trim().toLowerCase();
+  return [
+    /^pwd$/,
+    /^ls\b/,
+    /^git\s+(status|diff|log|show|branch)\b/,
+    /^cat\b/,
+    /^sed\s+-n\b/,
+    /^head\b/,
+    /^tail\b/,
+    /^rg\b/,
+    /^find\b/,
+    /^test\b/,
+  ].some((pattern) => pattern.test(command));
+};
+
+const buildExecutionPolicyPermissionDecision = (
+  input: RoleRunInput,
+): ((request: AcpPermissionRequest) => PermissionDecision | undefined) | undefined => {
+  if (!hasDryRunPolicy(input)) return undefined;
+  return (request) => {
+    if (isWriteLikePermission(request)) return "reject_once";
+    if (request.tool.toLowerCase() === "bash" && isReadOnlyPermission(request)) return "allow_once";
+    return "reject_once";
+  };
 };
 
 const parsePromptArtifactResponse = (promptResult: unknown, streamedText: string) => {
