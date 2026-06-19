@@ -38,4 +38,25 @@ describe("cli formatting", () => {
       runtimeConfigPath: "config/aigile.runtimes.json",
     });
   });
+
+  it("parses real run arguments", () => {
+    expect(parseCliArgs([
+      "run",
+      "LIN-123",
+      "--runtime-config",
+      "config/aigile.runtimes.json",
+      "--repo",
+      "/repo/aigile",
+      "--worktrees",
+      "/repo/aigile/.worktrees",
+      "--dry-run",
+    ])).toEqual({
+      mode: "run",
+      issueKey: "LIN-123",
+      runtimeConfigPath: "config/aigile.runtimes.json",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      dryRun: true,
+    });
+  });
 });

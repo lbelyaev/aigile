@@ -8,6 +8,7 @@ import {
   runDemoIssueWithGitHub,
   runDemoIssueWithRoles,
   runDemoIssueWithWorkspace,
+  type DemoWorkspaceInput,
   type DemoResult,
 } from "@aigile/demo";
 import type { IssueRecord } from "@aigile/adapters";
@@ -42,7 +43,7 @@ export const formatDemoResult = (result: DemoResult): string => [
   ...result.artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.id}`),
 ].join("\n");
 
-export type DemoMode = "scripted" | "agents" | "workspace" | "github" | "linear";
+export type DemoMode = "scripted" | "agents" | "workspace" | "github" | "linear" | "run";
 
 export const selectDemoMode = (args: readonly string[]): DemoMode =>
   args.includes("demo:agents") || args.includes("--agents")
@@ -57,23 +58,62 @@ export const selectDemoMode = (args: readonly string[]): DemoMode =>
 
 export interface CliArgs {
   mode: DemoMode;
+  issueKey?: string;
   runtimeConfigPath?: string;
+  repoPath?: string;
+  worktreesPath?: string;
+  dryRun?: boolean;
 }
 
+const optionValue = (args: readonly string[], name: string): string | undefined => {
+  const index = args.indexOf(name);
+  if (index < 0) return undefined;
+  const value = args[index + 1];
+  if (!value) throw new Error(`${name} requires a value`);
+  return value;
+};
+
 export const parseCliArgs = (args: readonly string[]): CliArgs => {
-  const runtimeConfigIndex = args.indexOf("--runtime-config");
-  const parsed: CliArgs = { mode: selectDemoMode(args) };
-  if (runtimeConfigIndex >= 0) {
-    const runtimeConfigPath = args[runtimeConfigIndex + 1];
-    if (!runtimeConfigPath) throw new Error("--runtime-config requires a path");
-    parsed.runtimeConfigPath = runtimeConfigPath;
+  if (args[0] === "run") {
+    const issueKey = args[1];
+    if (!issueKey) throw new Error("run requires an issue key");
+    const parsed: CliArgs = { mode: "run", issueKey };
+    const runtimeConfigPath = optionValue(args, "--runtime-config");
+    const repoPath = optionValue(args, "--repo");
+    const worktreesPath = optionValue(args, "--worktrees");
+    if (runtimeConfigPath !== undefined) parsed.runtimeConfigPath = runtimeConfigPath;
+    if (repoPath !== undefined) parsed.repoPath = repoPath;
+    if (worktreesPath !== undefined) parsed.worktreesPath = worktreesPath;
+    if (args.includes("--dry-run")) parsed.dryRun = true;
+    return parsed;
   }
+  const parsed: CliArgs = { mode: selectDemoMode(args) };
+  const runtimeConfigPath = optionValue(args, "--runtime-config");
+  if (runtimeConfigPath !== undefined) parsed.runtimeConfigPath = runtimeConfigPath;
   return parsed;
 };
 
 const main = async (): Promise<void> => {
   const args = parseCliArgs(process.argv.slice(2));
-  const result = args.mode === "agents"
+  const runInput: DemoWorkspaceInput = {
+    issue: {
+      ...defaultIssue,
+      key: args.issueKey ?? defaultIssue.key,
+    },
+    repoPath: args.repoPath ?? process.cwd(),
+    worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
+  };
+  if (args.dryRun) {
+    runInput.exec = async (command, commandArgs, options) => {
+      if (command === "git" && commandArgs[0] === "diff") {
+        return { stdout: "dry-run diff | 1 +", stderr: "", exitCode: 0 };
+      }
+      return { stdout: `${command} ${commandArgs.join(" ")} in ${options.cwd}`, stderr: "", exitCode: 0 };
+    };
+  }
+  const result = args.mode === "run"
+    ? await runDemoIssueWithWorkspace(runInput)
+    : args.mode === "agents"
     ? args.runtimeConfigPath
       ? await runDemoIssueWithRoles({
         issue: defaultIssue,
