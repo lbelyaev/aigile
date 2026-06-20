@@ -1,6 +1,7 @@
 export { createLocalVerifier } from "./local-verifier.js";
 
 export type {
+  ChangedFileGuard,
   LocalVerifier,
   LocalVerifierOptions,
   VerificationArtifact,

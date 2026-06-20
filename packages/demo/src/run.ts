@@ -13,7 +13,12 @@ import {
   type PullRequestRecord,
   type PullRequestReviewInput,
 } from "@aigile/adapters";
-import { DEFAULT_ISSUE_STATUS_LABELS, type IssueStatusLabels } from "@aigile/config";
+import {
+  DEFAULT_ISSUE_STATUS_LABELS,
+  type IssueStatusLabels,
+  type ProductChangedFileGuard,
+  type ProductVerificationCommand,
+} from "@aigile/config";
 import {
   createAcpRoleRunner,
   createRoleRuntimeRegistry,
@@ -85,6 +90,8 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   pullRequestTarget?: PullRequestTarget;
   createPullRequest?: boolean;
   publishPlan?: (plan: WorkflowArtifact) => Promise<void>;
+  verificationCommands?: ProductVerificationCommand[];
+  changedFileGuards?: ProductChangedFileGuard[];
 }
 
 export interface DemoGitHubInput extends DemoIssueInput {
@@ -836,7 +843,10 @@ export const runDemoIssueWithWorkspace = async (input: DemoWorkspaceInput): Prom
       verifier.verify({
         issueKey: input.issue.key,
         workspacePath: workspace.worktreePath,
-        commands: [["bun", "run", "check"]],
+        commands: input.verificationCommands ?? [["bun", "run", "check"]],
+        ...(input.changedFileGuards === undefined
+          ? {}
+          : { changedFileGuards: input.changedFileGuards }),
       }),
   };
   if (input.now !== undefined) roleInput.now = input.now;

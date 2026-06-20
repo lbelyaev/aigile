@@ -20,6 +20,7 @@ import {
   runtimeConfigToRegistry,
   splitGithubRepo,
   type IssueStatusLabels,
+  type ProductVerificationPolicy,
   type RuntimeProductConfig,
 } from "@aigile/config";
 import {
@@ -316,6 +317,7 @@ export interface ResolvedProductCliContext {
   agentWrite: boolean;
   publish: boolean;
   startRun: boolean;
+  verification?: ProductVerificationPolicy;
 }
 
 export interface PublishPreflightInput {
@@ -405,6 +407,7 @@ export const resolveProductCliContext = (
     agentWrite: mode === "agent_write",
     publish: args.publish ?? product?.defaultRun.publish ?? false,
     startRun: args.startRun ?? product?.defaultRun.startRun ?? false,
+    ...(product?.verification === undefined ? {} : { verification: product.verification }),
   };
 };
 
@@ -680,6 +683,7 @@ export interface LinearIssueWorkflowCliInput {
   fetchGraphql?: LinearFetchGraphql;
   onProgressLine?: (line: string) => void;
   runWorkspace?: (input: DemoWorkspaceInput) => Promise<DemoResult>;
+  verification?: ProductVerificationPolicy;
 }
 
 const artifactIdByKind = (result: DemoResult, kind: string): string =>
@@ -852,6 +856,14 @@ export const runLinearIssueWorkflowCli = async (
     registry: runtimeConfigToRegistry(runtimeConfig),
     issueStatusLabels: runtimeConfig.issueStatusLabels,
   };
+  const verificationCommands = [
+    ...(input.verification?.install ?? []),
+    ...(input.verification?.checks ?? []),
+  ];
+  if (verificationCommands.length > 0) runInput.verificationCommands = verificationCommands;
+  if (input.verification?.changedFileGuards !== undefined) {
+    runInput.changedFileGuards = input.verification.changedFileGuards;
+  }
   if (input.baseBranch !== undefined) runInput.baseBranch = input.baseBranch;
   if (input.dryRun === true) {
     runInput.dryRun = true;
@@ -1347,6 +1359,9 @@ const main = async (): Promise<void> => {
               baseBranch: watchContext.baseBranch,
               ...(watchContext.dryRun === true ? { dryRun: true } : {}),
               ...(watchContext.agentWrite === true ? { agentWrite: true } : {}),
+              ...(watchContext.verification === undefined
+                ? {}
+                : { verification: watchContext.verification }),
               ...publishRunInput,
               onProgressLine: (line) => process.stderr.write(`${line}\n`),
             });
