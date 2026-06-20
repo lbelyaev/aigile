@@ -1331,6 +1331,16 @@ describe("cli formatting", () => {
       remote: "origin",
       pullRequestTarget: { owner: "lbelyaev", repo: "aigile", baseBranch: "main" },
       codeHost,
+      verification: {
+        install: [["bun", "install", "--frozen-lockfile"]],
+        checks: [["bun", "run", "check"]],
+        changedFileGuards: [
+          {
+            whenAnyChanged: ["package.json", "packages/*/package.json"],
+            mustAlsoChange: ["bun.lock"],
+          },
+        ],
+      },
       fetchGraphql: async (query) => {
         if (query.includes("WorkflowStateByName")) {
           return { workflowStates: { nodes: [{ id: "state-done", name: "Done" }] } };
@@ -1372,6 +1382,16 @@ describe("cli formatting", () => {
       publish: true,
       remote: "origin",
       pullRequestTarget: { owner: "lbelyaev", repo: "aigile", baseBranch: "main" },
+      verificationCommands: [
+        ["bun", "install", "--frozen-lockfile"],
+        ["bun", "run", "check"],
+      ],
+      changedFileGuards: [
+        {
+          whenAnyChanged: ["package.json", "packages/*/package.json"],
+          mustAlsoChange: ["bun.lock"],
+        },
+      ],
     });
     expect(capturedInput?.createPullRequest).toBeUndefined();
     expect(capturedInput?.codeHost).toBe(codeHost);

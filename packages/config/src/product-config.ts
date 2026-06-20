@@ -8,6 +8,20 @@ export interface RuntimeProductConfig {
   products: RuntimeProduct[];
 }
 
+export type ProductVerificationCommand = [string, ...string[]];
+
+export interface ProductChangedFileGuard {
+  whenAnyChanged: string[];
+  mustAlsoChange: string[];
+  message?: string;
+}
+
+export interface ProductVerificationPolicy {
+  install?: ProductVerificationCommand[];
+  checks?: ProductVerificationCommand[];
+  changedFileGuards?: ProductChangedFileGuard[];
+}
+
 export interface RuntimeProduct {
   id: string;
   linear: {
@@ -25,6 +39,7 @@ export interface RuntimeProduct {
     mode: ProductRunMode;
     publish: boolean;
   };
+  verification?: ProductVerificationPolicy;
 }
 
 export interface ProductPathResolutionOptions {
@@ -110,6 +125,87 @@ const parseDefaultRun = (value: unknown, context: string): RuntimeProduct["defau
   };
 };
 
+const parseCommand = (value: unknown, context: string): ProductVerificationCommand => {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`Product config ${context} must be a non-empty string array`);
+  }
+  const command = value.map((part, index) => {
+    if (typeof part !== "string" || part.trim().length === 0) {
+      throw new Error(`Product config ${context}[${index}] must be a non-empty string`);
+    }
+    return part;
+  });
+  return command as ProductVerificationCommand;
+};
+
+const parseCommands = (
+  value: Record<string, unknown>,
+  field: string,
+  context: string,
+): ProductVerificationCommand[] | undefined => {
+  const commands = value[field];
+  if (commands === undefined) return undefined;
+  if (!Array.isArray(commands)) {
+    throw new Error(`Product config ${context}.${field} must be an array`);
+  }
+  return commands.map((command, index) => parseCommand(command, `${context}.${field}[${index}]`));
+};
+
+const stringArrayField = (
+  value: Record<string, unknown>,
+  field: string,
+  context: string,
+): string[] => {
+  const fieldValue = value[field];
+  if (!Array.isArray(fieldValue) || fieldValue.length === 0) {
+    throw new Error(`Product config ${context}.${field} must be a non-empty string array`);
+  }
+  return fieldValue.map((item, index) => {
+    if (typeof item !== "string" || item.trim().length === 0) {
+      throw new Error(`Product config ${context}.${field}[${index}] must be a non-empty string`);
+    }
+    return item;
+  });
+};
+
+const parseChangedFileGuards = (
+  value: Record<string, unknown>,
+  context: string,
+): ProductChangedFileGuard[] | undefined => {
+  const guards = value.changedFileGuards;
+  if (guards === undefined) return undefined;
+  if (!Array.isArray(guards)) {
+    throw new Error(`Product config ${context}.changedFileGuards must be an array`);
+  }
+  return guards.map((guard, index) => {
+    const guardContext = `${context}.changedFileGuards[${index}]`;
+    if (!isRecord(guard)) throw new Error(`Product config ${guardContext} must be an object`);
+    const parsed: ProductChangedFileGuard = {
+      whenAnyChanged: stringArrayField(guard, "whenAnyChanged", guardContext),
+      mustAlsoChange: stringArrayField(guard, "mustAlsoChange", guardContext),
+    };
+    const message = optionalStringField(guard, "message", guardContext);
+    if (message !== undefined) parsed.message = message;
+    return parsed;
+  });
+};
+
+const parseVerification = (
+  value: unknown,
+  context: string,
+): ProductVerificationPolicy | undefined => {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error(`Product config ${context}.verification must be an object`);
+  const policy: ProductVerificationPolicy = {};
+  const install = parseCommands(value, "install", `${context}.verification`);
+  const checks = parseCommands(value, "checks", `${context}.verification`);
+  const changedFileGuards = parseChangedFileGuards(value, `${context}.verification`);
+  if (install !== undefined) policy.install = install;
+  if (checks !== undefined) policy.checks = checks;
+  if (changedFileGuards !== undefined) policy.changedFileGuards = changedFileGuards;
+  return policy;
+};
+
 const parseProduct = (value: unknown, index: number): RuntimeProduct => {
   const context = `products[${index}]`;
   if (!isRecord(value)) throw new Error(`Product config ${context} must be an object`);
@@ -121,8 +217,10 @@ const parseProduct = (value: unknown, index: number): RuntimeProduct => {
   };
   const repoPath = optionalStringField(value, "repoPath", context);
   const worktreesPath = optionalStringField(value, "worktreesPath", context);
+  const verification = parseVerification(value.verification, context);
   if (repoPath !== undefined) product.repoPath = repoPath;
   if (worktreesPath !== undefined) product.worktreesPath = worktreesPath;
+  if (verification !== undefined) product.verification = verification;
   return product;
 };
 

@@ -15,8 +15,11 @@ export {
 
 export type { IssueStatusLabels, RuntimeConfig } from "./runtime-config.js";
 export type {
+  ProductChangedFileGuard,
   ProductPathResolutionOptions,
   ProductRunMode,
+  ProductVerificationCommand,
+  ProductVerificationPolicy,
   ResolvedProductPaths,
   RuntimeProduct,
   RuntimeProductConfig,

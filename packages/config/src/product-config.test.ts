@@ -16,6 +16,17 @@ describe("product config", () => {
             github: { repo: "lbelyaev/aigile", baseBranch: "main" },
             worktreesPath: "~/.aigile/worktrees/lbelyaev/aigile",
             defaultRun: { startRun: true, mode: "agent_write", publish: true },
+            verification: {
+              install: [["bun", "install", "--frozen-lockfile"]],
+              checks: [["bun", "run", "check"]],
+              changedFileGuards: [
+                {
+                  whenAnyChanged: ["package.json", "packages/*/package.json"],
+                  mustAlsoChange: ["bun.lock"],
+                  message: "Package manifests changed; update bun.lock.",
+                },
+              ],
+            },
           },
         ],
       }),
@@ -27,6 +38,17 @@ describe("product config", () => {
       github: { repo: "lbelyaev/aigile", baseBranch: "main" },
       worktreesPath: "~/.aigile/worktrees/lbelyaev/aigile",
       defaultRun: { startRun: true, mode: "agent_write", publish: true },
+      verification: {
+        install: [["bun", "install", "--frozen-lockfile"]],
+        checks: [["bun", "run", "check"]],
+        changedFileGuards: [
+          {
+            whenAnyChanged: ["package.json", "packages/*/package.json"],
+            mustAlsoChange: ["bun.lock"],
+            message: "Package manifests changed; update bun.lock.",
+          },
+        ],
+      },
     });
   });
 
