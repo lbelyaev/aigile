@@ -236,9 +236,33 @@ export const translateSessionUpdate = (
   return null;
 };
 
-const permissionResult = (decision: PermissionDecision): unknown => {
+const PERMISSION_OPTION_KINDS: Record<
+  Exclude<PermissionDecision, "cancelled">,
+  readonly string[]
+> = {
+  allow_once: ["allow_once", "allow_always"],
+  reject_once: ["reject_once", "reject_always"],
+};
+
+// ACP option ids are agent-defined; the decision maps to an option by its `kind`,
+// not by assuming the kind string is also the option id.
+const selectPermissionOptionId = (
+  options: readonly AcpPermissionOption[],
+  decision: Exclude<PermissionDecision, "cancelled">,
+): string | undefined => {
+  for (const kind of PERMISSION_OPTION_KINDS[decision]) {
+    const match = options.find((option) => option.kind === kind);
+    if (match) return match.optionId;
+  }
+  // Back-compat: some agents historically used the kind value as the option id.
+  return options.find((option) => option.optionId === decision)?.optionId;
+};
+
+const permissionResult = (request: AcpPermissionRequest, decision: PermissionDecision): unknown => {
   if (decision === "cancelled") return { outcome: { outcome: "cancelled" } };
-  return { outcome: { outcome: "selected", optionId: decision } };
+  const optionId = selectPermissionOptionId(request.options, decision);
+  if (optionId === undefined) return { outcome: { outcome: "cancelled" } };
+  return { outcome: { outcome: "selected", optionId } };
 };
 
 const permissionDescription = (rawInput: unknown, fallback: string): string => {
@@ -286,12 +310,12 @@ export const createAcpSession = (rpc: RpcClient, options: AcpSessionOptions): Ac
         decision,
       };
       for (const handler of handlers) handler(event);
-      return permissionResult(decision);
+      return permissionResult(request, decision);
     }
 
     const event: AcpEvent = { type: "approval_request", ...request };
     for (const handler of handlers) handler(event);
-    return permissionResult("cancelled");
+    return permissionResult(request, "cancelled");
   });
 
   return {
