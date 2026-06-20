@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { CodeHostAdapter } from "@aigile/adapters";
 import type { DemoWorkspaceInput } from "@aigile/demo";
 import type { WorkflowArtifact } from "@aigile/types";
+import { loadProductConfigFromJson } from "@aigile/config";
 import {
   createAcpRoleProgressFormatter,
   createDryRunExec,
@@ -21,6 +22,7 @@ import {
   runRunModePreflight,
   runPublishPreflight,
   runIssueWorkspaceStatus,
+  resolveProductCliContext,
   selectDemoMode,
 } from "./main.js";
 
@@ -705,6 +707,129 @@ describe("cli formatting", () => {
     });
   });
 
+  it("parses product config arguments for Linear watch", () => {
+    expect(
+      parseCliArgs([
+        "watch",
+        "--linear",
+        "--product",
+        "aigile",
+        "--products-config",
+        "config/aigile.products.example.json",
+        "--poll-interval",
+        "30s",
+      ]),
+    ).toEqual({
+      mode: "watch",
+      linear: true,
+      product: "aigile",
+      productsConfigPath: "config/aigile.products.example.json",
+      pollIntervalMs: 30_000,
+    });
+  });
+
+  it("resolves product defaults for Linear watch runs", () => {
+    const config = loadProductConfigFromJson(
+      JSON.stringify({
+        products: [
+          {
+            id: "aigile",
+            linear: { team: "LBE", project: "Aigile" },
+            github: { repo: "lbelyaev/aigile", baseBranch: "main" },
+            defaultRun: { startRun: true, mode: "agent_write", publish: true },
+          },
+        ],
+      }),
+    );
+
+    expect(
+      resolveProductCliContext(
+        parseCliArgs([
+          "watch",
+          "--linear",
+          "--product",
+          "aigile",
+          "--runtime-config",
+          "config/aigile.runtimes.example.json",
+          "--poll-interval",
+          "30s",
+        ]),
+        config,
+        { cwd: "/repo/aigile", homeDir: "/home/test" },
+      ),
+    ).toEqual({
+      productId: "aigile",
+      linearTeam: "LBE",
+      linearProject: "Aigile",
+      githubRepo: "lbelyaev/aigile",
+      githubOwner: "lbelyaev",
+      githubRepository: "aigile",
+      baseBranch: "main",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/home/test/.aigile/worktrees/lbelyaev/aigile",
+      dryRun: false,
+      agentWrite: true,
+      publish: true,
+      startRun: true,
+    });
+  });
+
+  it("lets explicit CLI flags override product defaults", () => {
+    const config = loadProductConfigFromJson(
+      JSON.stringify({
+        products: [
+          {
+            id: "aigile",
+            linear: { team: "LBE", project: "Aigile" },
+            github: { repo: "lbelyaev/aigile", baseBranch: "main" },
+            repoPath: "/configured/repo",
+            worktreesPath: "/configured/worktrees",
+            defaultRun: { startRun: true, mode: "agent_write", publish: true },
+          },
+        ],
+      }),
+    );
+
+    expect(
+      resolveProductCliContext(
+        parseCliArgs([
+          "watch",
+          "--linear",
+          "--product",
+          "aigile",
+          "--linear-team",
+          "OPS",
+          "--github-repo",
+          "acme/project",
+          "--base-branch",
+          "develop",
+          "--repo",
+          "/override/repo",
+          "--worktrees",
+          "/override/worktrees",
+          "--dry-run",
+          "--poll-interval",
+          "30s",
+        ]),
+        config,
+        { cwd: "/repo/aigile", homeDir: "/home/test" },
+      ),
+    ).toMatchObject({
+      productId: "aigile",
+      linearTeam: "OPS",
+      githubRepo: "acme/project",
+      githubOwner: "acme",
+      githubRepository: "project",
+      baseBranch: "develop",
+      repoPath: "/override/repo",
+      worktreesPath: "/override/worktrees",
+      dryRun: true,
+      agentWrite: false,
+      publish: true,
+      startRun: true,
+    });
+  });
+
   it("rejects watch without an explicit once pass", () => {
     expect(() => parseCliArgs(["watch"])).toThrow(/requires --once or --poll-interval/i);
   });
@@ -1039,6 +1164,66 @@ describe("cli formatting", () => {
     expect(output).toContain("Run LBE-6: starting");
     expect(output).toContain("Run LBE-6: Final state: merge_ready");
     expect(output).toContain("Run LBE-6: completed");
+    expect(output).toContain("Agents: handled claimed issues");
+  });
+
+  it("prints product and GitHub repo when product-backed watch starts a run", async () => {
+    const startedIssueKeys: string[] = [];
+
+    const output = await runLinearWatchLoopCli({
+      apiKey: "test-key",
+      teamKey: "LBE",
+      productId: "aigile",
+      githubRepo: "lbelyaev/aigile",
+      readyStatus: "Todo",
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 1,
+      sleep: async () => {},
+      startRun: async (issue) => {
+        startedIssueKeys.push(issue.key);
+        return [`Aigile demo run: ${issue.key}`, "Final state: merge_ready"].join("\n");
+      },
+      fetchGraphql: async (query) => {
+        if (query.includes("ReadyIssues")) {
+          return {
+            issues: {
+              nodes: [
+                {
+                  id: "issue-id",
+                  identifier: "LBE-13",
+                  title: "Add product config",
+                  description: "Acceptance:\n- Starts run",
+                  state: { name: "Todo" },
+                  comments: { nodes: [] },
+                },
+              ],
+            },
+          };
+        }
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-in-progress", name: "In Progress" }] } };
+        }
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("issueUpdate")) return {};
+        if (query.includes("commentCreate")) return {};
+        return {
+          issue: {
+            id: "issue-id",
+            identifier: "LBE-13",
+            title: "Add product config",
+            description: "Acceptance:\n- Starts run",
+            state: { name: "In Progress" },
+            comments: { nodes: [{ body: "Aigile claimed this issue for local processing." }] },
+          },
+        };
+      },
+    });
+
+    expect(startedIssueKeys).toEqual(["LBE-13"]);
+    expect(output).toContain("Product: aigile");
+    expect(output).toContain("GitHub repo: lbelyaev/aigile");
+    expect(output).toContain("Run LBE-13: starting");
     expect(output).toContain("Agents: handled claimed issues");
   });
 
