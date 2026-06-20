@@ -78,6 +78,10 @@
         "@aigile/types": "workspace:*",
       },
     },
+    "packages/ticketing": {
+      "name": "@aigile/ticketing",
+      "version": "0.0.0",
+    },
     "packages/types": {
       "name": "@aigile/types",
       "version": "0.0.0",
@@ -123,6 +127,8 @@
     "@aigile/restate": ["@aigile/restate@workspace:packages/restate"],
 
     "@aigile/roles": ["@aigile/roles@workspace:packages/roles"],
+
+    "@aigile/ticketing": ["@aigile/ticketing@workspace:packages/ticketing"],
 
     "@aigile/types": ["@aigile/types@workspace:packages/types"],
 
