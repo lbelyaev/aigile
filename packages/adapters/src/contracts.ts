@@ -7,6 +7,12 @@ export interface IssueRecord {
   description: string;
   acceptanceCriteria: string[];
   status: string;
+  project?: {
+    id: string;
+    name: string;
+    key?: string;
+    slug?: string;
+  };
   priority?: number;
   createdAt?: string;
   comments: string[];

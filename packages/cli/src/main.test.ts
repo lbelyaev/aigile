@@ -1181,6 +1181,7 @@ describe("cli formatting", () => {
       apiKey: "test-key",
       teamKey: "LBE",
       productId: "aigile",
+      linearProject: "Aigile",
       githubRepo: "lbelyaev/aigile",
       readyStatus: "Todo",
       claimStatus: "In Progress",
@@ -1202,6 +1203,7 @@ describe("cli formatting", () => {
                   title: "Add product config",
                   description: "Acceptance:\n- Starts run",
                   state: { name: "Todo" },
+                  project: { id: "project-aigile", name: "Aigile" },
                   comments: { nodes: [] },
                 },
               ],
@@ -1221,6 +1223,7 @@ describe("cli formatting", () => {
             title: "Add product config",
             description: "Acceptance:\n- Starts run",
             state: { name: "In Progress" },
+            project: { id: "project-aigile", name: "Aigile" },
             comments: { nodes: [{ body: "Aigile claimed this issue for local processing." }] },
           },
         };
@@ -1229,9 +1232,57 @@ describe("cli formatting", () => {
 
     expect(startedIssueKeys).toEqual(["LBE-13"]);
     expect(output).toContain("Product: aigile");
+    expect(output).toContain("Project: Aigile");
     expect(output).toContain("GitHub repo: lbelyaev/aigile");
     expect(output).toContain("Run LBE-13: starting");
     expect(output).toContain("Agents: handled claimed issues");
+  });
+
+  it("skips product-backed Linear watch issues outside the configured project", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+
+    const output = await runLinearWatchLoopCli({
+      apiKey: "test-key",
+      teamKey: "LBE",
+      productId: "aigile",
+      linearProject: "Aigile",
+      githubRepo: "lbelyaev/aigile",
+      readyStatus: "Todo",
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 1,
+      sleep: async () => {},
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("ReadyIssues")) {
+          return {
+            issues: {
+              nodes: [
+                {
+                  id: "issue-id",
+                  identifier: "LBE-14",
+                  title: "Other product issue",
+                  description: "Acceptance:\n- Skip",
+                  state: { name: "Todo" },
+                  project: { id: "other-project", name: "Other Project" },
+                  comments: { nodes: [] },
+                },
+              ],
+            },
+          };
+        }
+        throw new Error(`unexpected query: ${query}`);
+      },
+    });
+
+    expect(output).toContain("Product: aigile");
+    expect(output).toContain("Project: Aigile");
+    expect(output).toContain("GitHub repo: lbelyaev/aigile");
+    expect(output).toContain("Poll 1: skipped LBE-14 (project_mismatch)");
+    expect(output).toContain("Poll 1: idle (ready issues: 0)");
+    expect(output).toContain("Agents: not started");
+    expect(calls.filter((call) => call.query.includes("issueUpdate"))).toHaveLength(0);
+    expect(calls.filter((call) => call.query.includes("commentCreate"))).toHaveLength(0);
   });
 
   it("passes publish options into Linear issue workflow runs", async () => {

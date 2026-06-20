@@ -95,6 +95,7 @@ describe("Linear GraphQL issue tracker adapter", () => {
       fetchGraphql: async (query, variables) => {
         expect(query).toContain("ReadyIssues");
         expect(query).toContain("createdAt");
+        expect(query).toContain("project");
         expect(variables).toEqual({
           teamKey: "ENG",
           readyStatus: "Ready for Aigile",
@@ -121,6 +122,7 @@ describe("Linear GraphQL issue tracker adapter", () => {
                 priority: 1,
                 createdAt: "2024-02-01T00:00:00.000Z",
                 state: { name: "Ready for Aigile" },
+                project: { id: "project-id", name: "Aigile" },
                 comments: { nodes: [] },
               },
             ],
@@ -139,6 +141,7 @@ describe("Linear GraphQL issue tracker adapter", () => {
         priority: 1,
         createdAt: "2024-02-01T00:00:00.000Z",
         status: "Ready for Aigile",
+        project: { id: "project-id", name: "Aigile" },
         comments: [],
       },
       {

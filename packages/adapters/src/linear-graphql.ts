@@ -52,6 +52,7 @@ interface LinearIssueResponse {
     priority?: unknown;
     createdAt?: unknown;
     state?: { name?: unknown };
+    project?: { id?: unknown; name?: unknown; key?: unknown; slug?: unknown } | null;
     comments?: { nodes?: Array<{ body?: unknown }> };
   };
 }
@@ -134,6 +135,23 @@ const toIssueRecordFromIssue = (issue: LinearIssueResponse["issue"], key: string
   };
   if (typeof issue.priority === "number") record.priority = issue.priority;
   if (typeof issue.createdAt === "string") record.createdAt = issue.createdAt;
+  if (
+    typeof issue.project?.id === "string" &&
+    issue.project.id.length > 0 &&
+    typeof issue.project.name === "string" &&
+    issue.project.name.length > 0
+  ) {
+    record.project = {
+      id: issue.project.id,
+      name: issue.project.name,
+    };
+    if (typeof issue.project.key === "string" && issue.project.key.length > 0) {
+      record.project.key = issue.project.key;
+    }
+    if (typeof issue.project.slug === "string" && issue.project.slug.length > 0) {
+      record.project.slug = issue.project.slug;
+    }
+  }
   return record;
 };
 
@@ -260,6 +278,7 @@ export const createLinearGraphqlIssueTrackerAdapter = (
           priority
           createdAt
           state { name }
+          project { id name }
           comments { nodes { body } }
         }
       }
@@ -324,6 +343,7 @@ export const createLinearGraphqlReadyIssueSource = (
                   priority
                   createdAt
                   state { name }
+                  project { id name }
                   comments { nodes { body } }
                 }
               }
