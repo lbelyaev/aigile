@@ -32,6 +32,7 @@ export interface AcpProcess {
 export interface CreateAcpProcessOptions {
   cwd?: string;
   env?: Record<string, string>;
+  envPassthrough?: readonly string[];
   timeoutMs?: number;
   killGraceMs?: number;
   spawnProcess?: SpawnAcpProcess;
@@ -55,6 +56,17 @@ export interface ConnectAcpRuntimeInput extends CreateAcpProcessOptions {
 const defaultSpawnProcess: SpawnAcpProcess = (command, args, options) =>
   spawn(command, args, options) as AcpChildProcess;
 
+const BASE_ENV_ALLOWLIST = ["PATH", "HOME"] as const;
+
+const buildAcpProcessEnv = (options: CreateAcpProcessOptions): NodeJS.ProcessEnv => {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of [...BASE_ENV_ALLOWLIST, ...(options.envPassthrough ?? [])]) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return { ...env, ...options.env };
+};
+
 const requirePipe = <T>(value: T | null, name: string): T => {
   if (value === null) throw new Error(`ACP process missing ${name} pipe`);
   return value;
@@ -71,7 +83,7 @@ export const createAcpProcess = (
     stdio: ["pipe", "pipe", "pipe"];
   } = { stdio: ["pipe", "pipe", "pipe"] };
   if (options.cwd !== undefined) spawnOptions.cwd = options.cwd;
-  spawnOptions.env = options.env ? { ...process.env, ...options.env } : process.env;
+  spawnOptions.env = buildAcpProcessEnv(options);
 
   const child = (options.spawnProcess ?? defaultSpawnProcess)(binary, args, {
     ...spawnOptions,
