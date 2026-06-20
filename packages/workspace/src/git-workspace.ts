@@ -180,6 +180,25 @@ const assertIssueBranchContainsBase = async (
   );
 };
 
+const worktreePathForBranch = async (
+  exec: ExecCommand,
+  repoPath: string,
+  branchName: string,
+): Promise<string | undefined> => {
+  const result = await exec("git", ["worktree", "list", "--porcelain"], { cwd: repoPath });
+  assertSuccess(result, "git worktree list");
+
+  let currentPath: string | undefined;
+  for (const line of result.stdout.split(/\r?\n/)) {
+    if (line.startsWith("worktree ")) {
+      currentPath = line.slice("worktree ".length);
+      continue;
+    }
+    if (line === `branch refs/heads/${branchName}`) return currentPath;
+  }
+  return undefined;
+};
+
 const inspectWorkspaceTarget = async (
   exec: ExecCommand,
   repoPath: string,
@@ -268,6 +287,16 @@ export const createGitWorkspaceAdapter = (
         syncedBase,
       );
       if (targetState === "existing_worktree") return workspace;
+      if (targetState === "existing_branch") {
+        const existingWorktreePath = await worktreePathForBranch(
+          exec,
+          options.repoPath,
+          workspace.branchName,
+        );
+        if (existingWorktreePath !== undefined) {
+          return { ...workspace, worktreePath: existingWorktreePath };
+        }
+      }
       const result =
         targetState === "existing_branch"
           ? await exec("git", ["worktree", "add", workspace.worktreePath, workspace.branchName], {

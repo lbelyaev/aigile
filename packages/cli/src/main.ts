@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { formatDistanceStrict } from "date-fns";
 import {
   createFakeCodeHostAdapter,
@@ -355,6 +355,15 @@ export const resolveProductCliContext = (
   options: ProductCliResolutionOptions = {},
 ): ResolvedProductCliContext => {
   const productsConfigPath = args.productsConfigPath ?? "config/aigile.products.json";
+  if (
+    args.product !== undefined &&
+    productConfig === undefined &&
+    !existsSync(productsConfigPath)
+  ) {
+    throw new Error(
+      `product config not found: ${productsConfigPath}. Pass --products-config <path> or create config/aigile.products.json from config/aigile.products.example.json.`,
+    );
+  }
   const product =
     args.product === undefined
       ? undefined

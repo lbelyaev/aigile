@@ -281,10 +281,74 @@ describe("git workspace adapter", () => {
       },
       {
         command: "git",
+        args: ["worktree", "list", "--porcelain"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
         args: ["worktree", "add", "/repo/aigile/.worktrees/LIN-123", "aigile/LIN-123"],
         cwd: "/repo/aigile",
       },
     ]);
+  });
+
+  it("reuses an existing branch checked out in another worktree", async () => {
+    const commands: Array<{ command: string; args: string[]; cwd: string }> = [];
+    const adapter = createGitWorkspaceAdapter({
+      repoPath: "/repo/aigile",
+      worktreesPath: "/home/test/.aigile/worktrees/aigile",
+      exec: async (command, args, options) => {
+        commands.push({ command, args: [...args], cwd: options.cwd });
+        if (command === "git" && args[0] === "fetch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse")
+          return { stdout: "remote-base\n", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge-base")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "show-ref")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "worktree" && args[1] === "list") {
+          return {
+            stdout: [
+              "worktree /repo/aigile",
+              "HEAD main-sha",
+              "branch refs/heads/main",
+              "",
+              "worktree /repo/aigile/.worktrees/LIN-123",
+              "HEAD issue-sha",
+              "branch refs/heads/aigile/LIN-123",
+              "",
+            ].join("\n"),
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    });
+
+    await expect(
+      adapter.createIssueWorkspace({
+        issueKey: "LIN-123",
+        baseBranch: "main",
+      }),
+    ).resolves.toEqual({
+      issueKey: "LIN-123",
+      branchName: "aigile/LIN-123",
+      worktreePath: "/repo/aigile/.worktrees/LIN-123",
+      baseBranch: "main",
+    });
+    expect(commands).toContainEqual({
+      command: "git",
+      args: ["worktree", "list", "--porcelain"],
+      cwd: "/repo/aigile",
+    });
+    expect(commands).not.toContainEqual({
+      command: "git",
+      args: ["worktree", "add", "/home/test/.aigile/worktrees/aigile/LIN-123", "aigile/LIN-123"],
+      cwd: "/repo/aigile",
+    });
   });
 
   it("fails clearly when the existing worktree is on a different branch", async () => {

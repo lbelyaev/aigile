@@ -781,6 +781,18 @@ describe("cli formatting", () => {
     });
   });
 
+  it("reports a setup hint when the default product config file is missing", () => {
+    expect(() =>
+      resolveProductCliContext(
+        parseCliArgs(["watch", "--linear", "--product", "aigile", "--poll-interval", "30s"]),
+        undefined,
+        { cwd: "/repo/aigile", homeDir: "/home/test" },
+      ),
+    ).toThrow(
+      /product config not found: config\/aigile\.products\.json\. Pass --products-config <path> or create config\/aigile\.products\.json from config\/aigile\.products\.example\.json/,
+    );
+  });
+
   it("lets explicit CLI flags override product defaults", () => {
     const config = loadProductConfigFromJson(
       JSON.stringify({
