@@ -59,16 +59,23 @@ describe("GitHub CLI code host adapter", () => {
   });
 
   it("reuses an existing pull request when gh reports one for the branch", async () => {
+    const calls: string[][] = [];
     const adapter = createGitHubCliCodeHostAdapter({
-      exec: async () => ({
-        stdout: "",
-        stderr: [
-          "Warning: 59 uncommitted changes",
-          'a pull request for branch "aigile/LBE-8" into branch "main" already exists:',
-          "https://github.com/lbelyaev/aigile/pull/6",
-        ].join("\n"),
-        exitCode: 1,
-      }),
+      exec: async (_command, args) => {
+        calls.push([...args]);
+        if (args[0] === "pr" && args[1] === "create") {
+          return {
+            stdout: "",
+            stderr: [
+              "Warning: 59 uncommitted changes",
+              'a pull request for branch "aigile/LBE-8" into branch "main" already exists:',
+              "https://github.com/lbelyaev/aigile/pull/6",
+            ].join("\n"),
+            exitCode: 1,
+          };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
     });
 
     const pr = await adapter.createPullRequest({
@@ -88,6 +95,17 @@ describe("GitHub CLI code host adapter", () => {
       checks: [],
       reviews: [],
     });
+    expect(calls).toContainEqual([
+      "pr",
+      "edit",
+      "6",
+      "--repo",
+      "lbelyaev/aigile",
+      "--title",
+      "LBE-8 Detect PR merge conflicts",
+      "--body",
+      "PR body",
+    ]);
   });
 
   it("records comments, check results, and PR reviews", async () => {

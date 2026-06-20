@@ -96,6 +96,29 @@ const createPullRequestRecord = (
   reviews: [],
 });
 
+const updateExistingPullRequest = async (
+  options: GitHubCliCodeHostAdapterOptions,
+  input: PullRequestInput,
+  parsed: { id: string; number: number; url: string },
+): Promise<void> => {
+  const result = await options.exec(
+    "gh",
+    [
+      "pr",
+      "edit",
+      String(parsed.number),
+      "--repo",
+      `${input.owner}/${input.repo}`,
+      "--title",
+      input.title,
+      "--body",
+      input.body,
+    ],
+    execOptions(options.cwd),
+  );
+  assertSuccess(result, "gh pr edit");
+};
+
 const prNumberFromId = (id: string): string => {
   const number = id.split("#")[1];
   if (!number) throw new Error(`Invalid pull request id: ${id}`);
@@ -148,6 +171,7 @@ export const createGitHubCliCodeHostAdapter = (
           throw new Error("gh pr create failed without an existing pull request URL");
         }
         const parsed = parsePullRequestUrl(existingPullRequestUrl, input);
+        await updateExistingPullRequest(options, input, parsed);
         const existingRecord = createPullRequestRecord(input, parsed);
         pullRequests.set(existingRecord.id, existingRecord);
         return structuredClone(existingRecord);
