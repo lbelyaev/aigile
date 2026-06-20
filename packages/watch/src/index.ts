@@ -29,6 +29,13 @@ export type WatchLoopEvent =
       readyCount: number;
       selectedRoute?: WatchProductRoute;
     }
+  | {
+      type: "claimed_issue_run_failed";
+      poll: number;
+      issueKey: string;
+      restoredStatus: string;
+      error: string;
+    }
   | { type: "watch_stopped"; polls: number; reason: WatchLoopStopReason };
 
 export interface WatchLoopInput extends WatchOnceInput {
@@ -212,7 +219,18 @@ export const watchLoop = async (input: WatchLoopInput): Promise<void> => {
         readyCount: result.readyCount,
         ...(result.selectedRoute === undefined ? {} : { selectedRoute: result.selectedRoute }),
       });
-      await input.onClaimedIssue?.(result.claimedIssue);
+      try {
+        await input.onClaimedIssue?.(result.claimedIssue);
+      } catch (error) {
+        await input.tracker.updateIssueStatus(result.claimedIssue.key, result.claimedIssue.status);
+        input.onEvent?.({
+          type: "claimed_issue_run_failed",
+          poll: polls,
+          issueKey: result.claimedIssue.key,
+          restoredStatus: result.claimedIssue.status,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     if (input.maxPolls !== undefined && polls >= input.maxPolls) {
