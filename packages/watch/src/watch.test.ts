@@ -59,15 +59,17 @@ describe("watchOnce", () => {
   });
 
   it("updates status without appending a duplicate default claim comment", async () => {
-    const seedIssues = [{
-      id: "issue-1",
-      key: "LIN-900",
-      title: "Already claimed issue",
-      description: "Do not duplicate the claim comment.",
-      acceptanceCriteria: [],
-      status: "ready",
-      comments: [defaultClaimComment],
-    }];
+    const seedIssues = [
+      {
+        id: "issue-1",
+        key: "LIN-900",
+        title: "Already claimed issue",
+        description: "Do not duplicate the claim comment.",
+        acceptanceCriteria: [],
+        status: "ready",
+        comments: [defaultClaimComment],
+      },
+    ];
     const tracker = createFakeIssueTrackerAdapter(seedIssues);
 
     const result = await watchOnce({
@@ -88,15 +90,17 @@ describe("watchOnce", () => {
 
   it("checks a custom claim comment before appending", async () => {
     const customClaimComment = "Custom claim note.";
-    const seedIssues = [{
-      id: "issue-1",
-      key: "LIN-900",
-      title: "Already claimed issue",
-      description: "Do not duplicate a configured claim comment.",
-      acceptanceCriteria: [],
-      status: "ready",
-      comments: [customClaimComment],
-    }];
+    const seedIssues = [
+      {
+        id: "issue-1",
+        key: "LIN-900",
+        title: "Already claimed issue",
+        description: "Do not duplicate a configured claim comment.",
+        acceptanceCriteria: [],
+        status: "ready",
+        comments: [customClaimComment],
+      },
+    ];
     const tracker = createFakeIssueTrackerAdapter(seedIssues);
 
     const result = await watchOnce({

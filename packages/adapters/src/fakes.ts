@@ -57,11 +57,7 @@ export const createFakeReadyIssueSource = (
 
   return {
     listReadyIssues: async () =>
-      sortReadyIssues(
-        issues
-          .filter((issue) => issue.status === readyStatus)
-          .map(cloneIssue),
-      ),
+      sortReadyIssues(issues.filter((issue) => issue.status === readyStatus).map(cloneIssue)),
   };
 };
 

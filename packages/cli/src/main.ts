@@ -715,25 +715,23 @@ export const runLinearIssueWorkflowCli = async (
   runInput.publishPlan = async (plan) => {
     const body = formatArchitectPlanComment(plan);
     if (input.dryRun === true) {
-      const output = [
-        "Aigile dry-run architect plan comment:",
-        "",
-        body,
-      ].join("\n");
+      const output = ["Aigile dry-run architect plan comment:", "", body].join("\n");
       dryRunPlanOutputs.push(output);
       for (const line of output.split("\n")) input.onProgressLine?.(line);
       return;
     }
-    const tracker = createLinearGraphqlIssueTrackerAdapter(input.fetchGraphql === undefined
-      ? {
-        apiKey: input.apiKey,
-        ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
-      }
-      : {
-        apiKey: input.apiKey,
-        fetchGraphql: input.fetchGraphql,
-        ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
-      });
+    const tracker = createLinearGraphqlIssueTrackerAdapter(
+      input.fetchGraphql === undefined
+        ? {
+            apiKey: input.apiKey,
+            ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
+          }
+        : {
+            apiKey: input.apiKey,
+            fetchGraphql: input.fetchGraphql,
+            ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
+          },
+    );
     await tracker.appendIssueComment(input.issueKey, body);
   };
   const progressFormatter = createAcpRoleProgressFormatter();

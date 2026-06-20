@@ -1,9 +1,6 @@
 export { issueToArtifact, pullRequestToArtifact } from "./contracts.js";
 
-export {
-  compareReadyIssues,
-  sortReadyIssues,
-} from "./ready-issue-ordering.js";
+export { compareReadyIssues, sortReadyIssues } from "./ready-issue-ordering.js";
 
 export {
   createFakeCodeHostAdapter,

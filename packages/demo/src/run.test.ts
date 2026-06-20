@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { CodeHostAdapter, PullRequestRecord } from "@aigile/adapters";
-import { createRoleRuntimeRegistry, createScriptedRoleRunner, type RoleRunner } from "@aigile/roles";
+import {
+  createRoleRuntimeRegistry,
+  createScriptedRoleRunner,
+  type RoleRunner,
+} from "@aigile/roles";
 import { runDemoIssue, runDemoIssueWithRoles } from "./index.js";
 
 const issue = {
@@ -207,7 +211,9 @@ describe("demo orchestration", () => {
       },
     ]);
     expect(result.artifacts.map((artifact) => artifact.kind)).toContain("github.pull_request");
-    expect(result.timeline.map((entry) => entry.label)).toContain("checker_requested_changes -> developing");
+    expect(result.timeline.map((entry) => entry.label)).toContain(
+      "checker_requested_changes -> developing",
+    );
     expect(result.timeline.map((entry) => entry.label)).not.toContain("merge_completed -> merged");
   });
 
@@ -239,6 +245,7 @@ describe("demo orchestration", () => {
           throw new Error("review failed");
         },
         recordCheckResult: async () => undefined,
+        getPullRequestMergeability: async () => ({ status: "mergeable" }),
       },
     });
 
@@ -382,11 +389,7 @@ describe("demo orchestration", () => {
       },
     });
 
-    expect(order.slice(0, 3)).toEqual([
-      "run:architect",
-      "publish:architect.plan",
-      "run:developer",
-    ]);
+    expect(order.slice(0, 3)).toEqual(["run:architect", "publish:architect.plan", "run:developer"]);
   });
 
   it("aborts before developer when architect plan publishing fails", async () => {
@@ -410,15 +413,17 @@ describe("demo orchestration", () => {
       },
     };
 
-    await expect(runDemoIssueWithRoles({
-      issue,
-      registry,
-      runner,
-      publishPlan: async () => {
-        order.push("publish:failed");
-        throw new Error("Linear comment failed");
-      },
-    })).rejects.toThrow("Linear comment failed");
+    await expect(
+      runDemoIssueWithRoles({
+        issue,
+        registry,
+        runner,
+        publishPlan: async () => {
+          order.push("publish:failed");
+          throw new Error("Linear comment failed");
+        },
+      }),
+    ).rejects.toThrow("Linear comment failed");
 
     expect(order).toEqual(["run:architect", "publish:failed"]);
   });

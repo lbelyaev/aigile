@@ -202,15 +202,17 @@ describe("fake source-of-truth adapters", () => {
       },
     ]);
 
-    await expect(source.listReadyIssues()).resolves.toEqual([{
-      id: "issue-1",
-      key: "LIN-ONLY",
-      title: "Only issue",
-      description: "",
-      acceptanceCriteria: [],
-      status: "ready",
-      comments: [],
-    }]);
+    await expect(source.listReadyIssues()).resolves.toEqual([
+      {
+        id: "issue-1",
+        key: "LIN-ONLY",
+        title: "Only issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "ready",
+        comments: [],
+      },
+    ]);
   });
 
   it("turns issue records into workflow artifacts", async () => {

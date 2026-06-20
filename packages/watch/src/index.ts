@@ -71,10 +71,7 @@ export const watchOnce = async (input: WatchOnceInput): Promise<WatchOnceResult>
     claimedIssue: issue,
     actions: hasClaimComment
       ? [`status:${issue.key}:${claimStatus}`]
-      : [
-          `status:${issue.key}:${claimStatus}`,
-          `comment:${issue.key}`,
-        ],
+      : [`status:${issue.key}:${claimStatus}`, `comment:${issue.key}`],
   };
 };
 

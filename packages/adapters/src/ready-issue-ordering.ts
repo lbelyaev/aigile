@@ -7,7 +7,8 @@ const priorityRank = (issue: IssueRecord): number =>
   typeof issue.priority === "number" && issue.priority > 0 ? issue.priority : missingPriorityRank;
 
 const createdAtRank = (issue: IssueRecord): number => {
-  if (typeof issue.createdAt !== "string" || issue.createdAt.length === 0) return missingCreatedAtRank;
+  if (typeof issue.createdAt !== "string" || issue.createdAt.length === 0)
+    return missingCreatedAtRank;
   const createdAt = Date.parse(issue.createdAt);
   return Number.isFinite(createdAt) ? createdAt : missingCreatedAtRank;
 };

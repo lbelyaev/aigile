@@ -26,37 +26,41 @@ import {
 
 describe("cli formatting", () => {
   it("formats architect plan comments deterministically", () => {
-    expect(formatArchitectPlanComment({
-      id: "agent:LBE-10:architect:architect.plan",
-      kind: "architect.plan",
-      source: "agent",
-      payload: {
-        summary: "Post the plan to Linear before implementation.",
-        scope: ["Add a formatter", "Wire the orchestration hook"],
-        acceptanceCriteria: [],
-        verificationCommands: ["bun run check", "bun test packages/cli"],
-        risks: [],
-      },
-    })).toBe([
-      "Aigile architect plan",
-      "",
-      "Summary:",
-      "Post the plan to Linear before implementation.",
-      "",
-      "Scope:",
-      "- Add a formatter",
-      "- Wire the orchestration hook",
-      "",
-      "Acceptance criteria:",
-      "- None.",
-      "",
-      "Verification commands:",
-      "- bun run check",
-      "- bun test packages/cli",
-      "",
-      "Risks:",
-      "- None.",
-    ].join("\n"));
+    expect(
+      formatArchitectPlanComment({
+        id: "agent:LBE-10:architect:architect.plan",
+        kind: "architect.plan",
+        source: "agent",
+        payload: {
+          summary: "Post the plan to Linear before implementation.",
+          scope: ["Add a formatter", "Wire the orchestration hook"],
+          acceptanceCriteria: [],
+          verificationCommands: ["bun run check", "bun test packages/cli"],
+          risks: [],
+        },
+      }),
+    ).toBe(
+      [
+        "Aigile architect plan",
+        "",
+        "Summary:",
+        "Post the plan to Linear before implementation.",
+        "",
+        "Scope:",
+        "- Add a formatter",
+        "- Wire the orchestration hook",
+        "",
+        "Acceptance criteria:",
+        "- None.",
+        "",
+        "Verification commands:",
+        "- bun run check",
+        "- bun test packages/cli",
+        "",
+        "Risks:",
+        "- None.",
+      ].join("\n"),
+    );
   });
 
   it("formats demo output for hand testing", () => {
