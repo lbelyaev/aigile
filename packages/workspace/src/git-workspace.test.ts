@@ -722,11 +722,13 @@ describe("git workspace adapter", () => {
     });
   });
 
-  it("blocks reuse of a checked-out stale issue branch with uncommitted changes", async () => {
+  it("resets a checked-out stale issue branch with abandoned uncommitted changes", async () => {
+    const commands: Array<{ command: string; args: string[]; cwd: string }> = [];
     const adapter = createGitWorkspaceAdapter({
       repoPath: "/repo/aigile",
       worktreesPath: "/repo/aigile/.worktrees",
-      exec: async (command, args) => {
+      exec: async (command, args, options) => {
+        commands.push({ command, args: [...args], cwd: options.cwd });
         if (command === "git" && args[0] === "fetch")
           return { stdout: "", stderr: "", exitCode: 0 };
         if (command === "git" && args[0] === "rev-parse" && args[1] === "--verify")
@@ -753,14 +755,36 @@ describe("git workspace adapter", () => {
         }
         if (command === "git" && args[0] === "status")
           return { stdout: " M packages/cli/src/main.ts\n", stderr: "", exitCode: 0 };
-        throw new Error("worktree should not be reused");
+        if (command === "git" && args[0] === "reset")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "clean")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
       },
     });
 
     await expect(
       adapter.createIssueWorkspace({ issueKey: "LIN-126", baseBranch: "main" }),
-    ).rejects.toThrow(
-      "Issue branch aigile/LIN-126 is stale and has uncommitted changes in /repo/aigile/.worktrees/LIN-126; rebase or recreate it before starting Aigile.",
+    ).resolves.toMatchObject({
+      branchName: "aigile/LIN-126",
+      worktreePath: "/repo/aigile/.worktrees/LIN-126",
+    });
+    expect(commands).toContainEqual({
+      command: "git",
+      args: ["reset", "--hard", "refs/remotes/origin/main"],
+      cwd: "/repo/aigile/.worktrees/LIN-126",
+    });
+    expect(commands).toContainEqual({
+      command: "git",
+      args: ["clean", "-fd"],
+      cwd: "/repo/aigile/.worktrees/LIN-126",
+    });
+    // a dirty worktree must not be fast-forward merged
+    expect(commands).not.toContainEqual(
+      expect.objectContaining({
+        command: "git",
+        args: ["merge", "--ff-only", "refs/remotes/origin/main"],
+      }),
     );
   });
 
