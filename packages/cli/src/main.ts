@@ -43,7 +43,13 @@ import type {
 } from "@aigile/adapters";
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
 import { isArchitectPlanPayload, type WorkflowArtifact } from "@aigile/types";
-import { defaultClaimComment, watchLoop, watchOnce, type WatchLoopEvent } from "@aigile/watch";
+import {
+  defaultClaimComment,
+  watchLoop,
+  watchOnce,
+  type WatchLoopEvent,
+  type WatchProductRoute,
+} from "@aigile/watch";
 import {
   createGitWorkspaceAdapter,
   defaultExecCommand,
@@ -535,25 +541,37 @@ export interface WatchOnceCliInput {
   provider?: string;
   team?: string;
   productId?: string;
+  linearProject?: string;
   githubRepo?: string;
 }
 
 const formatWatchOnceResult = async (
   result: Awaited<ReturnType<typeof watchOnce>>,
   tracker: IssueTrackerAdapter,
-  context: { provider?: string; team?: string; productId?: string; githubRepo?: string } = {},
+  context: {
+    provider?: string;
+    team?: string;
+    productId?: string;
+    linearProject?: string;
+    githubRepo?: string;
+  } = {},
 ): Promise<string> => {
   const claimedIssue =
     result.claimedIssue === undefined ? undefined : await tracker.getIssue(result.claimedIssue.key);
+  const selectedProductId = result.selectedRoute?.productId ?? context.productId;
+  const selectedProject = result.selectedRoute?.linearProject ?? context.linearProject;
+  const selectedGithubRepo = result.selectedRoute?.githubRepo ?? context.githubRepo;
 
   return [
     "Aigile watch: once",
     ...(context.provider === undefined ? [] : [`Provider: ${context.provider}`]),
-    ...(context.productId === undefined ? [] : [`Product: ${context.productId}`]),
+    ...(selectedProductId === undefined ? [] : [`Product: ${selectedProductId}`]),
+    ...(selectedProject === undefined ? [] : [`Project: ${selectedProject}`]),
     ...(context.team === undefined ? [] : [`Team: ${context.team}`]),
-    ...(context.githubRepo === undefined ? [] : [`GitHub repo: ${context.githubRepo}`]),
+    ...(selectedGithubRepo === undefined ? [] : [`GitHub repo: ${selectedGithubRepo}`]),
     `Ready issues: ${result.readyCount}`,
     `Claimed: ${claimedIssue?.key ?? "none"}`,
+    ...(result.skippedIssues ?? []).map((issue) => `Skipped: ${issue.issueKey} (${issue.reason})`),
     ...(claimedIssue === undefined
       ? []
       : [
@@ -578,16 +596,28 @@ export const runWatchOnceCli = async (input: WatchOnceCliInput): Promise<string>
     input.source ??
     createFakeReadyIssueSource(issue === undefined ? [] : [issue], issue?.status ?? "ready");
   const watchInput = { source, tracker };
+  const productRoutes = productRouteFromInput(input);
   const result = await watchOnce(
     input.claimStatus === undefined
-      ? watchInput
-      : { ...watchInput, claimStatus: input.claimStatus },
+      ? { ...watchInput, ...(productRoutes === undefined ? {} : { productRoutes }) }
+      : {
+          ...watchInput,
+          claimStatus: input.claimStatus,
+          ...(productRoutes === undefined ? {} : { productRoutes }),
+        },
   );
 
-  const context: { provider?: string; team?: string; productId?: string; githubRepo?: string } = {};
+  const context: {
+    provider?: string;
+    team?: string;
+    productId?: string;
+    linearProject?: string;
+    githubRepo?: string;
+  } = {};
   if (input.provider !== undefined) context.provider = input.provider;
   if (input.team !== undefined) context.team = input.team;
   if (input.productId !== undefined) context.productId = input.productId;
+  if (input.linearProject !== undefined) context.linearProject = input.linearProject;
   if (input.githubRepo !== undefined) context.githubRepo = input.githubRepo;
   return formatWatchOnceResult(result, tracker, context);
 };
@@ -596,6 +626,7 @@ export interface LinearWatchOnceCliInput {
   apiKey: string;
   teamKey: string;
   productId?: string;
+  linearProject?: string;
   githubRepo?: string;
   readyStatus?: string;
   claimStatus?: string;
@@ -690,6 +721,27 @@ export const formatArchitectPlanComment = (plan: WorkflowArtifact): string => {
     "Risks:",
     ...formatListSection(plan.payload.risks),
   ].join("\n");
+};
+
+const productRouteFromInput = (input: {
+  productId?: string;
+  linearProject?: string;
+  githubRepo?: string;
+}): WatchProductRoute[] | undefined => {
+  if (
+    input.productId === undefined ||
+    input.linearProject === undefined ||
+    input.githubRepo === undefined
+  ) {
+    return undefined;
+  }
+  return [
+    {
+      productId: input.productId,
+      linearProject: input.linearProject,
+      githubRepo: input.githubRepo,
+    },
+  ];
 };
 
 const blockedPublishedComment = (
@@ -857,6 +909,7 @@ export const runLinearWatchOnceCli = async (input: LinearWatchOnceCliInput): Pro
     provider: "linear",
     team: input.teamKey,
     ...(input.productId === undefined ? {} : { productId: input.productId }),
+    ...(input.linearProject === undefined ? {} : { linearProject: input.linearProject }),
     ...(input.githubRepo === undefined ? {} : { githubRepo: input.githubRepo }),
   });
 };
@@ -889,6 +942,9 @@ const createLinearWatchAdapters = (
 
 const formatWatchLoopEvent = (event: WatchLoopEvent): string => {
   if (event.type === "poll_started") return `Poll ${event.poll}: checking for ready issues`;
+  if (event.type === "issue_skipped") {
+    return `Poll ${event.poll}: skipped ${event.issueKey} (${event.reason})`;
+  }
   if (event.type === "poll_idle")
     return `Poll ${event.poll}: idle (ready issues: ${event.readyCount})`;
   if (event.type === "issue_claimed") {
@@ -905,6 +961,7 @@ const runResultStateLine = (output: string): string | undefined =>
 export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Promise<string> => {
   const { source, tracker } = createLinearWatchAdapters(input);
   const lines: string[] = [];
+  const productRoutes = productRouteFromInput(input);
   const emit = (line: string): void => {
     lines.push(line);
     input.onLine?.(line);
@@ -912,6 +969,7 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
   emit("Aigile watch: loop");
   emit("Provider: linear");
   if (input.productId !== undefined) emit(`Product: ${input.productId}`);
+  if (input.linearProject !== undefined) emit(`Project: ${input.linearProject}`);
   emit(`Team: ${input.teamKey}`);
   if (input.githubRepo !== undefined) emit(`GitHub repo: ${input.githubRepo}`);
   emit(`Poll interval: ${input.pollIntervalMs}ms`);
@@ -921,6 +979,7 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
     tracker,
     pollIntervalMs: input.pollIntervalMs,
     ...(input.claimStatus === undefined ? {} : { claimStatus: input.claimStatus }),
+    ...(productRoutes === undefined ? {} : { productRoutes }),
     ...(input.maxPolls === undefined ? {} : { maxPolls: input.maxPolls }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
     ...(input.sleep === undefined ? {} : { sleep: input.sleep }),
@@ -1212,6 +1271,8 @@ const main = async (): Promise<void> => {
           onLine: (line) => process.stdout.write(`${line}\n`),
         };
         if (watchContext.productId !== undefined) loopInput.productId = watchContext.productId;
+        if (watchContext.linearProject !== undefined)
+          loopInput.linearProject = watchContext.linearProject;
         if (watchContext.githubRepo !== undefined) loopInput.githubRepo = watchContext.githubRepo;
         if (args.readyStatus !== undefined) loopInput.readyStatus = args.readyStatus;
         if (args.claimStatus !== undefined) loopInput.claimStatus = args.claimStatus;
@@ -1289,6 +1350,8 @@ const main = async (): Promise<void> => {
         teamKey: watchContext.linearTeam,
       };
       if (watchContext.productId !== undefined) linearInput.productId = watchContext.productId;
+      if (watchContext.linearProject !== undefined)
+        linearInput.linearProject = watchContext.linearProject;
       if (watchContext.githubRepo !== undefined) linearInput.githubRepo = watchContext.githubRepo;
       if (args.readyStatus !== undefined) linearInput.readyStatus = args.readyStatus;
       if (args.claimStatus !== undefined) linearInput.claimStatus = args.claimStatus;

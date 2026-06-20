@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createFakeIssueTrackerAdapter, createFakeReadyIssueSource } from "@aigile/adapters";
-import { defaultClaimComment, watchLoop, watchOnce } from "./index.js";
+import { defaultClaimComment, routeReadyIssuesForProducts, watchLoop, watchOnce } from "./index.js";
 
 describe("watchOnce", () => {
   it("claims the first ready issue and posts an operator comment", async () => {
@@ -202,5 +202,130 @@ describe("watchOnce", () => {
     });
 
     expect(claimedIssueKeys).toEqual(["LIN-900"]);
+  });
+
+  it("claims a product-backed issue when the Linear project matches", async () => {
+    const seedIssues = [
+      {
+        id: "issue-1",
+        key: "LIN-900",
+        title: "Product issue",
+        description: "Claim matching project.",
+        acceptanceCriteria: [],
+        status: "ready",
+        project: { id: "project-a", name: "Aigile" },
+        comments: [],
+      },
+    ];
+    const tracker = createFakeIssueTrackerAdapter(seedIssues);
+
+    const result = await watchOnce({
+      source: createFakeReadyIssueSource(seedIssues),
+      tracker,
+      productRoutes: [
+        { productId: "aigile", linearProject: "Aigile", githubRepo: "lbelyaev/aigile" },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      readyCount: 1,
+      claimedIssue: { key: "LIN-900" },
+      selectedRoute: {
+        productId: "aigile",
+        linearProject: "Aigile",
+        githubRepo: "lbelyaev/aigile",
+      },
+      actions: ["status:LIN-900:aigile:claimed", "comment:LIN-900"],
+    });
+  });
+
+  it("skips a product-backed issue when the Linear project does not match", async () => {
+    const seedIssues = [
+      {
+        id: "issue-1",
+        key: "LIN-900",
+        title: "Wrong product issue",
+        description: "Skip mismatched project.",
+        acceptanceCriteria: [],
+        status: "ready",
+        project: { id: "project-b", name: "Other Project" },
+        comments: [],
+      },
+    ];
+    const tracker = createFakeIssueTrackerAdapter(seedIssues);
+
+    const result = await watchOnce({
+      source: createFakeReadyIssueSource(seedIssues),
+      tracker,
+      productRoutes: [
+        { productId: "aigile", linearProject: "Aigile", githubRepo: "lbelyaev/aigile" },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      readyCount: 0,
+      actions: ["skip:LIN-900:project_mismatch", "no_ready_issues"],
+      skippedIssues: [{ issueKey: "LIN-900", reason: "project_mismatch" }],
+    });
+    expect(await tracker.getIssue("LIN-900")).toMatchObject({ status: "ready", comments: [] });
+  });
+
+  it("skips a product-backed issue with no Linear project and reports the reason", async () => {
+    const seedIssues = [
+      {
+        id: "issue-1",
+        key: "LIN-900",
+        title: "Unprojected issue",
+        description: "Skip missing project.",
+        acceptanceCriteria: [],
+        status: "ready",
+        comments: [],
+      },
+    ];
+    const tracker = createFakeIssueTrackerAdapter(seedIssues);
+
+    const result = await watchOnce({
+      source: createFakeReadyIssueSource(seedIssues),
+      tracker,
+      productRoutes: [
+        { productId: "aigile", linearProject: "Aigile", githubRepo: "lbelyaev/aigile" },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      readyCount: 0,
+      actions: ["skip:LIN-900:no_project", "no_ready_issues"],
+      skippedIssues: [{ issueKey: "LIN-900", reason: "no_project" }],
+    });
+    expect(await tracker.getIssue("LIN-900")).toMatchObject({ status: "ready", comments: [] });
+  });
+
+  it("uses Linear project to disambiguate products on the same Linear team", () => {
+    const routed = routeReadyIssuesForProducts(
+      [
+        {
+          id: "issue-1",
+          key: "LIN-900",
+          title: "API issue",
+          description: "",
+          acceptanceCriteria: [],
+          status: "ready",
+          project: { id: "api-project", name: "API" },
+          comments: [],
+        },
+      ],
+      [
+        { productId: "web", linearProject: "Web", githubRepo: "lbelyaev/web" },
+        { productId: "api", linearProject: "API", githubRepo: "lbelyaev/api" },
+      ],
+    );
+
+    expect(routed.readyIssues).toMatchObject([
+      {
+        issue: { key: "LIN-900" },
+        route: { productId: "api", linearProject: "API", githubRepo: "lbelyaev/api" },
+      },
+    ]);
+    expect(routed.skippedIssues).toEqual([]);
   });
 });
