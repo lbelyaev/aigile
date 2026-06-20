@@ -142,6 +142,7 @@ describe("demo orchestration", () => {
         if (pullRequest === undefined) throw new Error("pull request missing");
         return structuredClone(pullRequest);
       },
+      getPullRequestMergeability: async () => ({ status: "mergeable" }),
       appendPullRequestComment: async (_id, comment) => {
         if (pullRequest === undefined) throw new Error("pull request missing");
         pullRequest.comments.push(comment);

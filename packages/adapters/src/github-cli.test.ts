@@ -58,6 +58,38 @@ describe("GitHub CLI code host adapter", () => {
     });
   });
 
+  it("reuses an existing pull request when gh reports one for the branch", async () => {
+    const adapter = createGitHubCliCodeHostAdapter({
+      exec: async () => ({
+        stdout: "",
+        stderr: [
+          "Warning: 59 uncommitted changes",
+          'a pull request for branch "aigile/LBE-8" into branch "main" already exists:',
+          "https://github.com/lbelyaev/aigile/pull/6",
+        ].join("\n"),
+        exitCode: 1,
+      }),
+    });
+
+    const pr = await adapter.createPullRequest({
+      owner: "lbelyaev",
+      repo: "aigile",
+      branch: "aigile/LBE-8",
+      baseBranch: "main",
+      title: "LBE-8 Detect PR merge conflicts",
+      body: "PR body",
+    });
+
+    expect(pr).toMatchObject({
+      id: "lbelyaev/aigile#6",
+      number: 6,
+      url: "https://github.com/lbelyaev/aigile/pull/6",
+      comments: [],
+      checks: [],
+      reviews: [],
+    });
+  });
+
   it("records comments, check results, and PR reviews", async () => {
     const calls: string[][] = [];
     const adapter = createGitHubCliCodeHostAdapter({
@@ -214,9 +246,150 @@ describe("GitHub CLI code host adapter", () => {
       body: "PR body",
     });
 
-    await expect(adapter.submitPullRequestReview(pr.id, {
-      event: "approve",
-      body: "Checker passed",
-    })).rejects.toThrow(/gh pr review failed.*review rejected/);
+    await expect(
+      adapter.submitPullRequestReview(pr.id, {
+        event: "approve",
+        body: "Checker passed",
+      }),
+    ).rejects.toThrow(/gh pr review failed.*review rejected/);
+  });
+
+  it("reads mergeable pull request state with gh", async () => {
+    const calls: string[][] = [];
+    const adapter = createGitHubCliCodeHostAdapter({
+      exec: async (_command, args) => {
+        calls.push([...args]);
+        if (args[0] === "pr" && args[1] === "create") {
+          return { stdout: "https://github.com/aigile/aigile/pull/9", stderr: "", exitCode: 0 };
+        }
+        return {
+          stdout: JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    });
+    const pr = await adapter.createPullRequest({
+      owner: "aigile",
+      repo: "aigile",
+      branch: "aigile/LIN-123",
+      baseBranch: "main",
+      title: "LIN-123 Build workflow",
+      body: "PR body",
+    });
+
+    await expect(adapter.getPullRequestMergeability(pr.id)).resolves.toEqual({
+      status: "mergeable",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+    });
+    expect(calls).toContainEqual([
+      "pr",
+      "view",
+      "9",
+      "--repo",
+      "aigile/aigile",
+      "--json",
+      "mergeable,mergeStateStatus",
+    ]);
+  });
+
+  it("maps conflicting and dirty pull request states to conflicting", async () => {
+    for (const payload of [
+      { mergeable: "CONFLICTING", mergeStateStatus: "UNKNOWN" },
+      { mergeable: "MERGEABLE", mergeStateStatus: "DIRTY" },
+    ]) {
+      const adapter = createGitHubCliCodeHostAdapter({
+        exec: async (_command, args) => {
+          if (args[0] === "pr" && args[1] === "create") {
+            return { stdout: "https://github.com/aigile/aigile/pull/10", stderr: "", exitCode: 0 };
+          }
+          return { stdout: JSON.stringify(payload), stderr: "", exitCode: 0 };
+        },
+      });
+      const pr = await adapter.createPullRequest({
+        owner: "aigile",
+        repo: "aigile",
+        branch: "aigile/LIN-123",
+        baseBranch: "main",
+        title: "LIN-123 Build workflow",
+        body: "PR body",
+      });
+
+      await expect(adapter.getPullRequestMergeability(pr.id)).resolves.toMatchObject({
+        status: "conflicting",
+      });
+    }
+  });
+
+  it("maps unknown or empty pull request states to unknown", async () => {
+    for (const payload of [{ mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" }, {}]) {
+      const adapter = createGitHubCliCodeHostAdapter({
+        exec: async (_command, args) => {
+          if (args[0] === "pr" && args[1] === "create") {
+            return { stdout: "https://github.com/aigile/aigile/pull/11", stderr: "", exitCode: 0 };
+          }
+          return { stdout: JSON.stringify(payload), stderr: "", exitCode: 0 };
+        },
+      });
+      const pr = await adapter.createPullRequest({
+        owner: "aigile",
+        repo: "aigile",
+        branch: "aigile/LIN-123",
+        baseBranch: "main",
+        title: "LIN-123 Build workflow",
+        body: "PR body",
+      });
+
+      await expect(adapter.getPullRequestMergeability(pr.id)).resolves.toMatchObject({
+        status: "unknown",
+      });
+    }
+  });
+
+  it("fails mergeability reads when gh fails", async () => {
+    const adapter = createGitHubCliCodeHostAdapter({
+      exec: async (_command, args) => {
+        if (args[0] === "pr" && args[1] === "create") {
+          return { stdout: "https://github.com/aigile/aigile/pull/12", stderr: "", exitCode: 0 };
+        }
+        return { stdout: "", stderr: "not found", exitCode: 1 };
+      },
+    });
+    const pr = await adapter.createPullRequest({
+      owner: "aigile",
+      repo: "aigile",
+      branch: "aigile/LIN-123",
+      baseBranch: "main",
+      title: "LIN-123 Build workflow",
+      body: "PR body",
+    });
+
+    await expect(adapter.getPullRequestMergeability(pr.id)).rejects.toThrow(
+      /gh pr view failed \(1\): not found/i,
+    );
+  });
+
+  it("fails mergeability reads when gh returns invalid JSON", async () => {
+    const adapter = createGitHubCliCodeHostAdapter({
+      exec: async (_command, args) => {
+        if (args[0] === "pr" && args[1] === "create") {
+          return { stdout: "https://github.com/aigile/aigile/pull/13", stderr: "", exitCode: 0 };
+        }
+        return { stdout: "not json", stderr: "", exitCode: 0 };
+      },
+    });
+    const pr = await adapter.createPullRequest({
+      owner: "aigile",
+      repo: "aigile",
+      branch: "aigile/LIN-123",
+      baseBranch: "main",
+      title: "LIN-123 Build workflow",
+      body: "PR body",
+    });
+
+    await expect(adapter.getPullRequestMergeability(pr.id)).rejects.toThrow(
+      /could not parse pull request mergeability json/i,
+    );
   });
 });

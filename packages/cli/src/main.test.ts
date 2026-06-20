@@ -1053,6 +1053,7 @@ describe("cli formatting", () => {
       getPullRequest: async () => {
         throw new Error("getPullRequest should not be called");
       },
+      getPullRequestMergeability: async () => ({ status: "mergeable" }),
       appendPullRequestComment: async () => {},
       submitPullRequestReview: async () => {},
       recordCheckResult: async () => {},
@@ -1198,6 +1199,18 @@ describe("cli formatting", () => {
 
   it("syncs published Linear runs to Done with pull request evidence", async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const codeHost: CodeHostAdapter = {
+      createPullRequest: async () => {
+        throw new Error("createPullRequest should not be called");
+      },
+      getPullRequest: async () => {
+        throw new Error("getPullRequest should not be called");
+      },
+      getPullRequestMergeability: async () => ({ status: "mergeable" }),
+      appendPullRequestComment: async () => {},
+      submitPullRequestReview: async () => {},
+      recordCheckResult: async () => {},
+    };
 
     const output = await runLinearIssueWorkflowCli({
       apiKey: "test-key",
@@ -1208,6 +1221,7 @@ describe("cli formatting", () => {
       runtimeConfigPath: "config/aigile.runtimes.example.json",
       agentWrite: true,
       publish: true,
+      codeHost,
       fetchGraphql: async (query, variables) => {
         calls.push({ query, variables });
         if (query.includes("IssueByKey")) {
@@ -1290,6 +1304,165 @@ describe("cli formatting", () => {
         ].join("\n"),
       },
     ]);
+  });
+
+  it("does not mark published Linear runs Done when pull requests have conflicts", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const codeHost: CodeHostAdapter = {
+      createPullRequest: async () => {
+        throw new Error("createPullRequest should not be called");
+      },
+      getPullRequest: async () => {
+        throw new Error("getPullRequest should not be called");
+      },
+      getPullRequestMergeability: async () => ({ status: "conflicting" }),
+      appendPullRequestComment: async () => {},
+      submitPullRequestReview: async () => {},
+      recordCheckResult: async () => {},
+    };
+
+    const output = await runLinearIssueWorkflowCli({
+      apiKey: "test-key",
+      issueKey: "LBE-8",
+      teamKey: "LBE",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      agentWrite: true,
+      publish: true,
+      codeHost,
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("IssueByKey")) {
+          return {
+            issue: {
+              id: "issue-id",
+              identifier: "LBE-8",
+              title: "Detect PR merge conflicts",
+              description: "Acceptance:\n- Do not mark Done on conflicts",
+              state: { name: "In Progress" },
+              comments: { nodes: [] },
+            },
+          };
+        }
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("commentCreate")) return {};
+        throw new Error(`unexpected query: ${query}`);
+      },
+      runWorkspace: async (input) => ({
+        issueKey: input.issue.key,
+        finalState: "merged",
+        pullRequest: {
+          id: "lbelyaev/aigile#8",
+          number: 8,
+          url: "https://github.com/lbelyaev/aigile/pull/8",
+          owner: "lbelyaev",
+          repo: "aigile",
+          branch: "aigile/LBE-8",
+          baseBranch: "main",
+          title: "LBE-8 Detect PR merge conflicts",
+          body: "Demo PR",
+          comments: [],
+          checks: [],
+          reviews: [],
+        },
+        artifacts: [],
+        timeline: [{ label: "merge_completed -> merged", elapsedMs: 1 }],
+        durationMs: 1,
+      }),
+    });
+
+    expect(output).toContain("Final state: escalated");
+    expect(output).toContain("Pull request: https://github.com/lbelyaev/aigile/pull/8");
+    expect(calls.some((call) => call.query.includes("issueUpdate"))).toBe(false);
+    expect(calls.map((call) => call.variables)).toEqual([
+      { key: "LBE-8" },
+      { key: "LBE-8" },
+      {
+        key: "issue-id",
+        body: [
+          "Aigile published this issue to GitHub, but the pull request is blocked and was not marked Done.",
+          "",
+          "Outcome: blocked/escalated",
+          "Reason: pull request has merge conflicts",
+          "Pull request: https://github.com/lbelyaev/aigile/pull/8",
+          "Verification: unavailable",
+          "Checker: unavailable",
+        ].join("\n"),
+      },
+    ]);
+  });
+
+  it("does not mark published Linear runs Done when pull request mergeability is unknown", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const codeHost: CodeHostAdapter = {
+      createPullRequest: async () => {
+        throw new Error("createPullRequest should not be called");
+      },
+      getPullRequest: async () => {
+        throw new Error("getPullRequest should not be called");
+      },
+      getPullRequestMergeability: async () => ({ status: "unknown" }),
+      appendPullRequestComment: async () => {},
+      submitPullRequestReview: async () => {},
+      recordCheckResult: async () => {},
+    };
+
+    await runLinearIssueWorkflowCli({
+      apiKey: "test-key",
+      issueKey: "LBE-9",
+      teamKey: "LBE",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      agentWrite: true,
+      publish: true,
+      codeHost,
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("IssueByKey")) {
+          return {
+            issue: {
+              id: "issue-id",
+              identifier: "LBE-9",
+              title: "Unknown mergeability",
+              description: "Acceptance:\n- Block unknown",
+              state: { name: "In Progress" },
+              comments: { nodes: [] },
+            },
+          };
+        }
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("commentCreate")) return {};
+        throw new Error(`unexpected query: ${query}`);
+      },
+      runWorkspace: async (input) => ({
+        issueKey: input.issue.key,
+        finalState: "merged",
+        pullRequest: {
+          id: "lbelyaev/aigile#9",
+          number: 9,
+          url: "https://github.com/lbelyaev/aigile/pull/9",
+          owner: "lbelyaev",
+          repo: "aigile",
+          branch: "aigile/LBE-9",
+          baseBranch: "main",
+          title: "LBE-9 Unknown mergeability",
+          body: "Demo PR",
+          comments: [],
+          checks: [],
+          reviews: [],
+        },
+        artifacts: [],
+        timeline: [{ label: "merge_completed -> merged", elapsedMs: 1 }],
+        durationMs: 1,
+      }),
+    });
+
+    expect(calls.some((call) => call.query.includes("issueUpdate"))).toBe(false);
+    expect(calls.at(-1)?.variables).toMatchObject({
+      body: expect.stringContaining("Reason: pull request mergeability is unknown"),
+    });
   });
 
   it("does not sync dry-run terminal results to Linear", async () => {

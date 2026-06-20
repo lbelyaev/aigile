@@ -42,6 +42,14 @@ export interface PullRequestReviewInput {
   body: string;
 }
 
+export type PullRequestMergeabilityStatus = "mergeable" | "conflicting" | "unknown";
+
+export interface PullRequestMergeability {
+  status: PullRequestMergeabilityStatus;
+  mergeable?: string;
+  mergeStateStatus?: string;
+}
+
 export interface PullRequestRecord extends PullRequestInput {
   id: string;
   number: number;
@@ -54,6 +62,7 @@ export interface PullRequestRecord extends PullRequestInput {
 export interface CodeHostAdapter {
   createPullRequest: (input: PullRequestInput) => Promise<PullRequestRecord>;
   getPullRequest: (id: string) => Promise<PullRequestRecord>;
+  getPullRequestMergeability: (id: string) => Promise<PullRequestMergeability>;
   appendPullRequestComment: (id: string, comment: string) => Promise<void>;
   submitPullRequestReview: (id: string, review: PullRequestReviewInput) => Promise<void>;
   recordCheckResult: (id: string, result: CheckResult) => Promise<void>;

@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { formatDistanceStrict } from "date-fns";
 import {
+  createFakeCodeHostAdapter,
   createFakeIssueTrackerAdapter,
   createFakeReadyIssueSource,
   createGitHubCliCodeHostAdapter,
@@ -27,6 +28,7 @@ import type {
   IssueRecord,
   IssueTrackerAdapter,
   LinearFetchGraphql,
+  PullRequestMergeabilityStatus,
   ReadyIssueSource,
 } from "@aigile/adapters";
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
@@ -598,14 +600,52 @@ export const formatArchitectPlanComment = (plan: WorkflowArtifact): string => {
   ].join("\n");
 };
 
+const blockedPublishedComment = (
+  result: DemoResult,
+  status: Exclude<PullRequestMergeabilityStatus, "mergeable">,
+): string =>
+  [
+    "Aigile published this issue to GitHub, but the pull request is blocked and was not marked Done.",
+    "",
+    "Outcome: blocked/escalated",
+    `Reason: ${status === "conflicting" ? "pull request has merge conflicts" : "pull request mergeability is unknown"}`,
+    `Pull request: ${result.pullRequest?.url ?? "unavailable"}`,
+    `Verification: ${artifactIdByKind(result, "verification.result")}`,
+    `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
+  ].join("\n");
+
+const publishedResultBlockedByMergeability = (result: DemoResult): DemoResult => ({
+  ...result,
+  finalState: "escalated",
+});
+
+const getPublishedMergeabilityStatus = async (
+  codeHost: CodeHostAdapter | undefined,
+  result: DemoResult,
+): Promise<PullRequestMergeabilityStatus> => {
+  if (result.pullRequest === undefined || codeHost === undefined) return "unknown";
+  try {
+    return (await codeHost.getPullRequestMergeability(result.pullRequest.id)).status;
+  } catch {
+    return "unknown";
+  }
+};
+
 const syncLinearIssueWorkflowResult = async (
   input: LinearIssueWorkflowCliInput,
   result: DemoResult,
-): Promise<void> => {
-  if (input.dryRun === true) return;
+  codeHost?: CodeHostAdapter,
+): Promise<DemoResult> => {
+  if (input.dryRun === true) return result;
   const shouldSyncSatisfied = result.finalState === "satisfied";
   const shouldSyncPublished = input.publish === true && result.finalState === "merged";
-  if (!shouldSyncSatisfied && !shouldSyncPublished) return;
+  if (!shouldSyncSatisfied && !shouldSyncPublished) return result;
+
+  const mergeabilityStatus = shouldSyncPublished
+    ? await getPublishedMergeabilityStatus(codeHost ?? input.codeHost, result)
+    : "mergeable";
+  const syncResult =
+    mergeabilityStatus === "mergeable" ? result : publishedResultBlockedByMergeability(result);
 
   const tracker = createLinearGraphqlIssueTrackerAdapter(
     input.fetchGraphql === undefined
@@ -619,13 +659,18 @@ const syncLinearIssueWorkflowResult = async (
           ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
         },
   );
-  if (input.teamKey !== undefined) {
+  if (input.teamKey !== undefined && mergeabilityStatus === "mergeable") {
     await tracker.updateIssueStatus(input.issueKey, "Done");
   }
   await tracker.appendIssueComment(
     input.issueKey,
-    shouldSyncSatisfied ? alreadySatisfiedComment(result) : publishedComment(result),
+    shouldSyncSatisfied
+      ? alreadySatisfiedComment(result)
+      : mergeabilityStatus === "mergeable"
+        ? publishedComment(result)
+        : blockedPublishedComment(result, mergeabilityStatus),
   );
+  return syncResult;
 };
 
 export const fetchLinearIssueForRun = async (input: LinearRunIssueInput): Promise<IssueRecord> => {
@@ -659,10 +704,11 @@ export const runLinearIssueWorkflowCli = async (
     runInput.exec = createDryRunExec();
   }
   if (input.publish === true) {
+    const codeHost = input.codeHost ?? createFakeCodeHostAdapter();
     runInput.publish = true;
     runInput.remote = input.remote ?? "origin";
     if (input.pullRequestTarget !== undefined) runInput.pullRequestTarget = input.pullRequestTarget;
-    if (input.codeHost !== undefined) runInput.codeHost = input.codeHost;
+    runInput.codeHost = codeHost;
   }
   if (input.agentWrite === true && input.publish !== true) runInput.createPullRequest = false;
   const dryRunPlanOutputs: string[] = [];
@@ -699,8 +745,8 @@ export const runLinearIssueWorkflowCli = async (
     },
   });
   const result = await (input.runWorkspace ?? runDemoIssueWithWorkspace)(runInput);
-  await syncLinearIssueWorkflowResult(input, result);
-  const formattedResult = formatDemoResult(result);
+  const syncedResult = await syncLinearIssueWorkflowResult(input, result, runInput.codeHost);
+  const formattedResult = formatDemoResult(syncedResult);
   return dryRunPlanOutputs.length === 0
     ? formattedResult
     : [...dryRunPlanOutputs, "", formattedResult].join("\n");
