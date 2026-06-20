@@ -312,6 +312,74 @@ describe("GitHub CLI code host adapter", () => {
     ]);
   });
 
+  it("reads merged pull request state with gh", async () => {
+    const calls: string[][] = [];
+    const adapter = createGitHubCliCodeHostAdapter({
+      exec: async (_command, args) => {
+        calls.push([...args]);
+        if (args[0] === "pr" && args[1] === "create") {
+          return { stdout: "https://github.com/aigile/aigile/pull/14", stderr: "", exitCode: 0 };
+        }
+        return {
+          stdout: JSON.stringify({
+            state: "MERGED",
+            merged: true,
+            mergedAt: "2026-06-20T12:00:00Z",
+          }),
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    });
+    const pr = await adapter.createPullRequest({
+      owner: "aigile",
+      repo: "aigile",
+      branch: "aigile/LIN-123",
+      baseBranch: "main",
+      title: "LIN-123 Build workflow",
+      body: "PR body",
+    });
+
+    await expect(adapter.getPullRequestMergeState(pr.id)).resolves.toEqual({
+      status: "merged",
+      state: "MERGED",
+      merged: true,
+      mergedAt: "2026-06-20T12:00:00Z",
+    });
+    expect(calls).toContainEqual([
+      "pr",
+      "view",
+      "14",
+      "--repo",
+      "aigile/aigile",
+      "--json",
+      "state,merged,mergedAt",
+    ]);
+  });
+
+  it("treats absent merged pull request fields as unknown", async () => {
+    const adapter = createGitHubCliCodeHostAdapter({
+      exec: async (_command, args) => {
+        if (args[0] === "pr" && args[1] === "create") {
+          return { stdout: "https://github.com/aigile/aigile/pull/15", stderr: "", exitCode: 0 };
+        }
+        return { stdout: JSON.stringify({}), stderr: "", exitCode: 0 };
+      },
+    });
+    const pr = await adapter.createPullRequest({
+      owner: "aigile",
+      repo: "aigile",
+      branch: "aigile/LIN-123",
+      baseBranch: "main",
+      title: "LIN-123 Build workflow",
+      body: "PR body",
+    });
+
+    await expect(adapter.getPullRequestMergeState(pr.id)).resolves.toEqual({
+      status: "unknown",
+    });
+  });
+
   it("maps conflicting and dirty pull request states to conflicting", async () => {
     for (const payload of [
       { mergeable: "CONFLICTING", mergeStateStatus: "UNKNOWN" },

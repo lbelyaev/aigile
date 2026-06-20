@@ -1,4 +1,8 @@
-export { loadRuntimeConfigFromJson, runtimeConfigToRegistry } from "./runtime-config.js";
+export {
+  DEFAULT_ISSUE_STATUS_LABELS,
+  loadRuntimeConfigFromJson,
+  runtimeConfigToRegistry,
+} from "./runtime-config.js";
 export {
   defaultProductWorktreesPath,
   expandHomePath,
@@ -9,7 +13,7 @@ export {
   splitGithubRepo,
 } from "./product-config.js";
 
-export type { RuntimeConfig } from "./runtime-config.js";
+export type { IssueStatusLabels, RuntimeConfig } from "./runtime-config.js";
 export type {
   ProductPathResolutionOptions,
   ProductRunMode,

@@ -9,7 +9,24 @@ import {
 export interface RuntimeConfig {
   runtimes: AcpRuntimeProfile[];
   assignments: RoleAssignment[];
+  issueStatusLabels: IssueStatusLabels;
 }
+
+export interface IssueStatusLabels {
+  planning: string;
+  developing: string;
+  blocked: string;
+  inReview: string;
+  done: string;
+}
+
+export const DEFAULT_ISSUE_STATUS_LABELS: IssueStatusLabels = {
+  planning: "planning",
+  developing: "developing",
+  blocked: "escalated",
+  inReview: "In Review",
+  done: "Done",
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -22,6 +39,31 @@ const parseJson = (json: string): unknown => {
       `Runtime config was not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+};
+
+const readOptionalLabel = (
+  value: Record<string, unknown>,
+  key: keyof IssueStatusLabels,
+): string => {
+  const label = value[key];
+  if (label === undefined) return DEFAULT_ISSUE_STATUS_LABELS[key];
+  if (typeof label !== "string" || label.trim().length === 0) {
+    throw new Error(`Runtime config issueStatusLabels.${key} must be a non-empty string`);
+  }
+  return label;
+};
+
+const loadIssueStatusLabels = (value: Record<string, unknown>): IssueStatusLabels => {
+  const labels = value.issueStatusLabels;
+  if (labels === undefined) return DEFAULT_ISSUE_STATUS_LABELS;
+  if (!isRecord(labels)) throw new Error("Runtime config issueStatusLabels must be an object");
+  return {
+    planning: readOptionalLabel(labels, "planning"),
+    developing: readOptionalLabel(labels, "developing"),
+    blocked: readOptionalLabel(labels, "blocked"),
+    inReview: readOptionalLabel(labels, "inReview"),
+    done: readOptionalLabel(labels, "done"),
+  };
 };
 
 export const loadRuntimeConfigFromJson = (json: string): RuntimeConfig => {
@@ -40,7 +82,7 @@ export const loadRuntimeConfigFromJson = (json: string): RuntimeConfig => {
     return assignment;
   });
 
-  return { runtimes, assignments };
+  return { runtimes, assignments, issueStatusLabels: loadIssueStatusLabels(value) };
 };
 
 export const runtimeConfigToRegistry = (config: RuntimeConfig): RoleRuntimeRegistry =>

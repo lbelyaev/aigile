@@ -20,6 +20,24 @@ describe("GitHub demo orchestration", () => {
         if (args[0] === "pr" && args[1] === "create") {
           return { stdout: "https://github.com/aigile/aigile/pull/99", stderr: "", exitCode: 0 };
         }
+        if (args[0] === "pr" && args[1] === "view" && args.at(-1) === "state,merged,mergedAt") {
+          return {
+            stdout: JSON.stringify({ state: "OPEN", merged: false }),
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        if (
+          args[0] === "pr" &&
+          args[1] === "view" &&
+          args.at(-1) === "mergeable,mergeStateStatus"
+        ) {
+          return {
+            stdout: JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+            stderr: "",
+            exitCode: 0,
+          };
+        }
         return { stdout: "", stderr: "", exitCode: 0 };
       },
     });

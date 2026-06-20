@@ -54,6 +54,7 @@
       "dependencies": {
         "@aigile/acp": "workspace:*",
         "@aigile/adapters": "workspace:*",
+        "@aigile/config": "workspace:*",
         "@aigile/roles": "workspace:*",
         "@aigile/types": "workspace:*",
         "@aigile/verifier": "workspace:*",

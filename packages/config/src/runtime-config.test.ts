@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { loadRuntimeConfigFromJson, runtimeConfigToRegistry } from "./index.js";
+import {
+  DEFAULT_ISSUE_STATUS_LABELS,
+  loadRuntimeConfigFromJson,
+  runtimeConfigToRegistry,
+} from "./index.js";
 
 describe("runtime config", () => {
   it("loads provider-neutral ACP runtime assignments from JSON", () => {
@@ -68,6 +72,54 @@ describe("runtime config", () => {
       transport: "stdio",
       command: ["agent-acp", "--checker"],
     });
+  });
+
+  it("loads configurable issue status labels with defaults", () => {
+    const defaulted = loadRuntimeConfigFromJson(
+      JSON.stringify({
+        runtimes: [
+          {
+            id: "checker-runtime",
+            transport: "stdio",
+            command: ["agent-acp", "--checker"],
+          },
+        ],
+        assignments: [
+          {
+            roleId: "checker",
+            runtimeProfileId: "checker-runtime",
+          },
+        ],
+      }),
+    );
+
+    expect(defaulted.issueStatusLabels).toEqual(DEFAULT_ISSUE_STATUS_LABELS);
+
+    const configured = loadRuntimeConfigFromJson(
+      JSON.stringify({
+        runtimes: [
+          {
+            id: "checker-runtime",
+            transport: "stdio",
+            command: ["agent-acp", "--checker"],
+          },
+        ],
+        assignments: [
+          {
+            roleId: "checker",
+            runtimeProfileId: "checker-runtime",
+          },
+        ],
+        issueStatusLabels: {
+          inReview: "Ready for QA",
+          done: "Shipped",
+        },
+      }),
+    );
+
+    expect(configured.issueStatusLabels.inReview).toBe("Ready for QA");
+    expect(configured.issueStatusLabels.done).toBe("Shipped");
+    expect(configured.issueStatusLabels.developing).toBe(DEFAULT_ISSUE_STATUS_LABELS.developing);
   });
 
   it("rejects invalid runtime config", () => {

@@ -4,6 +4,8 @@ import type {
   PullRequestInput,
   PullRequestMergeability,
   PullRequestMergeabilityStatus,
+  PullRequestMergeState,
+  PullRequestMergeStateStatus,
   PullRequestRecord,
   PullRequestReviewInput,
 } from "./contracts.js";
@@ -76,6 +78,39 @@ const parseMergeabilityPayload = (stdout: string): PullRequestMergeability => {
     status,
     ...(mergeable === undefined ? {} : { mergeable }),
     ...(mergeStateStatus === undefined ? {} : { mergeStateStatus }),
+  };
+};
+
+const optionalBoolean = (value: unknown): boolean | undefined =>
+  typeof value === "boolean" ? value : undefined;
+
+const parseMergeStatePayload = (stdout: string): PullRequestMergeState => {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(stdout) as unknown;
+  } catch (error) {
+    throw new Error(
+      `Could not parse pull request merge state JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("Could not parse pull request merge state JSON: expected object");
+  }
+  const state = optionalString((payload as { state?: unknown }).state);
+  const merged = optionalBoolean((payload as { merged?: unknown }).merged);
+  const mergedAt = optionalString((payload as { mergedAt?: unknown }).mergedAt);
+  const stateValue = state?.toUpperCase();
+  let status: PullRequestMergeStateStatus = "unknown";
+  if (merged === true || stateValue === "MERGED" || mergedAt !== undefined) {
+    status = "merged";
+  } else if (merged === false || stateValue === "OPEN" || stateValue === "CLOSED") {
+    status = "unmerged";
+  }
+  return {
+    status,
+    ...(state === undefined ? {} : { state }),
+    ...(merged === undefined ? {} : { merged }),
+    ...(mergedAt === undefined ? {} : { mergedAt }),
   };
 };
 
@@ -204,6 +239,25 @@ export const createGitHubCliCodeHostAdapter = (
       );
       assertSuccess(result, "gh pr view");
       return parseMergeabilityPayload(result.stdout);
+    },
+    getPullRequestMergeState: async (id) => {
+      const record = pullRequests.get(id);
+      if (!record) throw new Error(`Pull request not found: ${id}`);
+      const result = await options.exec(
+        "gh",
+        [
+          "pr",
+          "view",
+          prNumberFromId(id),
+          "--repo",
+          repoFromRecord(record),
+          "--json",
+          "state,merged,mergedAt",
+        ],
+        execOptions(options.cwd),
+      );
+      assertSuccess(result, "gh pr view");
+      return parseMergeStatePayload(result.stdout);
     },
     appendPullRequestComment: async (id, comment) => {
       const record = pullRequests.get(id);

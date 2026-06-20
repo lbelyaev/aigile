@@ -313,6 +313,22 @@ describe("fake source-of-truth adapters", () => {
     });
   });
 
+  it("reports configured fake pull request merge state", async () => {
+    const codeHost = createFakeCodeHostAdapter({ merged: true });
+    const pr = await codeHost.createPullRequest({
+      owner: "example",
+      repo: "aigile",
+      branch: "aigile/LIN-123",
+      baseBranch: "main",
+      title: "LIN-123 Build workflow",
+      body: "Implements the workflow.",
+    });
+
+    await expect(codeHost.getPullRequestMergeState(pr.id)).resolves.toEqual({
+      status: "merged",
+    });
+  });
+
   it("turns pull request records into workflow artifacts", async () => {
     const codeHost = createFakeCodeHostAdapter();
     const pr = await codeHost.createPullRequest({
