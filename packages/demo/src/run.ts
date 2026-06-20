@@ -224,10 +224,10 @@ const verificationEventForResult = (artifact: WorkflowArtifact): WorkflowEvent["
     artifact.payload === null ||
     Array.isArray(artifact.payload)
   ) {
-    return "verification_passed";
+    return "verification_failed";
   }
   const status = (artifact.payload as { status?: unknown }).status;
-  return status === "failed" ? "verification_failed" : "verification_passed";
+  return status === "passed" ? "verification_passed" : "verification_failed";
 };
 
 const developerAttemptHasChanges = (artifact: WorkflowArtifact): boolean => {

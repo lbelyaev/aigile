@@ -433,6 +433,35 @@ describe("demo orchestration", () => {
     );
   });
 
+  it.each([
+    ["error status", { status: "error" }],
+    ["undefined status", { status: undefined }],
+    ["missing status", { summary: "Verifier omitted status." }],
+    ["malformed non-object payload", "not a verification result"],
+    ["malformed null payload", null],
+    ["malformed array payload", []],
+  ])("routes %s verification back to development", async (_case, payload) => {
+    const result = await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner: runnerWithCheckerVerdict("pass"),
+      verificationArtifact: {
+        id: `verifier:LIN-123:${_case}`,
+        kind: "verification.result",
+        source: "verifier",
+        payload,
+      },
+    });
+
+    expect(result.finalState).toBe("developing");
+    expect(result.pullRequest).toBeUndefined();
+    expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("checker.verdict");
+    expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("github.pull_request");
+    expect(result.timeline.map((entry) => entry.label)).toContain(
+      "verification_failed -> developing",
+    );
+  });
+
   it("publishes the architect plan after approval and before developer starts", async () => {
     const order: string[] = [];
     const runner: RoleRunner = {
