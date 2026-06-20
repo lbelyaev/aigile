@@ -9,6 +9,12 @@ describe("git workspace adapter", () => {
       worktreesPath: "/repo/aigile/.worktrees",
       exec: async (command, args, options) => {
         commands.push({ command, args: [...args], cwd: options.cwd });
+        if (command === "git" && args[0] === "fetch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse")
+          return { stdout: "remote-base\n", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge-base")
+          return { stdout: "", stderr: "", exitCode: 0 };
         if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
         if (command === "git" && args[0] === "show-ref")
           return { stdout: "", stderr: "", exitCode: 1 };
@@ -29,6 +35,26 @@ describe("git workspace adapter", () => {
     });
     expect(commands).toEqual([
       {
+        command: "git",
+        args: ["fetch", "origin", "main"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["rev-parse", "--verify", "refs/remotes/origin/main"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["rev-parse", "--verify", "refs/heads/main"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["merge-base", "--is-ancestor", "refs/heads/main", "refs/remotes/origin/main"],
+        cwd: "/repo/aigile",
+      },
+      {
         command: "test",
         args: ["-e", "/repo/aigile/.worktrees/LIN-123"],
         cwd: "/repo/aigile",
@@ -46,7 +72,7 @@ describe("git workspace adapter", () => {
           "-b",
           "aigile/LIN-123",
           "/repo/aigile/.worktrees/LIN-123",
-          "main",
+          "refs/remotes/origin/main",
         ],
         cwd: "/repo/aigile",
       },
@@ -60,6 +86,12 @@ describe("git workspace adapter", () => {
       worktreesPath: "/repo/aigile/.worktrees",
       exec: async (command, args, options) => {
         commands.push({ command, args: [...args], cwd: options.cwd });
+        if (command === "git" && args[0] === "fetch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse")
+          return { stdout: "remote-base\n", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge-base")
+          return { stdout: "", stderr: "", exitCode: 0 };
         return { stdout: "", stderr: "", exitCode: 1 };
       },
     });
@@ -76,6 +108,26 @@ describe("git workspace adapter", () => {
       baseBranch: "main",
     });
     expect(commands).toEqual([
+      {
+        command: "git",
+        args: ["fetch", "origin", "main"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["rev-parse", "--verify", "refs/remotes/origin/main"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["rev-parse", "--verify", "refs/heads/main"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["merge-base", "--is-ancestor", "refs/heads/main", "refs/remotes/origin/main"],
+        cwd: "/repo/aigile",
+      },
       {
         command: "test",
         args: ["-e", "/repo/aigile/.worktrees/LIN-123"],
@@ -96,6 +148,12 @@ describe("git workspace adapter", () => {
       worktreesPath: "/repo/aigile/.worktrees",
       exec: async (command, args, options) => {
         commands.push({ command, args: [...args], cwd: options.cwd });
+        if (command === "git" && args[0] === "fetch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse" && args[1] === "--verify")
+          return { stdout: "remote-base\n", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge-base")
+          return { stdout: "", stderr: "", exitCode: 0 };
         if (command === "test") return { stdout: "", stderr: "", exitCode: 0 };
         if (command === "git" && args[0] === "rev-parse") {
           return { stdout: "aigile/LIN-123\n", stderr: "", exitCode: 0 };
@@ -117,6 +175,26 @@ describe("git workspace adapter", () => {
     });
     expect(commands).toEqual([
       {
+        command: "git",
+        args: ["fetch", "origin", "main"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["rev-parse", "--verify", "refs/remotes/origin/main"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["rev-parse", "--verify", "refs/heads/main"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["merge-base", "--is-ancestor", "refs/heads/main", "refs/remotes/origin/main"],
+        cwd: "/repo/aigile",
+      },
+      {
         command: "test",
         args: ["-e", "/repo/aigile/.worktrees/LIN-123"],
         cwd: "/repo/aigile",
@@ -125,6 +203,11 @@ describe("git workspace adapter", () => {
         command: "git",
         args: ["rev-parse", "--abbrev-ref", "HEAD"],
         cwd: "/repo/aigile/.worktrees/LIN-123",
+      },
+      {
+        command: "git",
+        args: ["merge-base", "--is-ancestor", "refs/remotes/origin/main", "aigile/LIN-123"],
+        cwd: "/repo/aigile",
       },
     ]);
   });
@@ -136,6 +219,12 @@ describe("git workspace adapter", () => {
       worktreesPath: "/repo/aigile/.worktrees",
       exec: async (command, args, options) => {
         commands.push({ command, args: [...args], cwd: options.cwd });
+        if (command === "git" && args[0] === "fetch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse")
+          return { stdout: "remote-base\n", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge-base")
+          return { stdout: "", stderr: "", exitCode: 0 };
         if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
         if (command === "git" && args[0] === "show-ref")
           return { stdout: "", stderr: "", exitCode: 0 };
@@ -156,6 +245,26 @@ describe("git workspace adapter", () => {
     });
     expect(commands).toEqual([
       {
+        command: "git",
+        args: ["fetch", "origin", "main"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["rev-parse", "--verify", "refs/remotes/origin/main"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["rev-parse", "--verify", "refs/heads/main"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["merge-base", "--is-ancestor", "refs/heads/main", "refs/remotes/origin/main"],
+        cwd: "/repo/aigile",
+      },
+      {
         command: "test",
         args: ["-e", "/repo/aigile/.worktrees/LIN-123"],
         cwd: "/repo/aigile",
@@ -163,6 +272,11 @@ describe("git workspace adapter", () => {
       {
         command: "git",
         args: ["show-ref", "--verify", "--quiet", "refs/heads/aigile/LIN-123"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["merge-base", "--is-ancestor", "refs/remotes/origin/main", "aigile/LIN-123"],
         cwd: "/repo/aigile",
       },
       {
@@ -178,6 +292,12 @@ describe("git workspace adapter", () => {
       repoPath: "/repo/aigile",
       worktreesPath: "/repo/aigile/.worktrees",
       exec: async (command, args) => {
+        if (command === "git" && args[0] === "fetch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse" && args[1] === "--verify")
+          return { stdout: "remote-base\n", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge-base")
+          return { stdout: "", stderr: "", exitCode: 0 };
         if (command === "test") return { stdout: "", stderr: "", exitCode: 0 };
         if (command === "git" && args[0] === "rev-parse") {
           return { stdout: "aigile/LIN-999\n", stderr: "", exitCode: 0 };
@@ -333,11 +453,139 @@ describe("git workspace adapter", () => {
     });
   });
 
+  it("creates new worktrees from a fetched remote base when the local base is stale", async () => {
+    const commands: Array<{ command: string; args: string[]; cwd: string }> = [];
+    const adapter = createGitWorkspaceAdapter({
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      exec: async (command, args, options) => {
+        commands.push({ command, args: [...args], cwd: options.cwd });
+        if (command === "git" && args[0] === "fetch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse")
+          return { stdout: "sha\n", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge-base")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "show-ref")
+          return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "worktree")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        throw new Error("unexpected command");
+      },
+    });
+
+    await adapter.createIssueWorkspace({ issueKey: "LIN-124", baseBranch: "main" });
+
+    expect(commands).toContainEqual({
+      command: "git",
+      args: ["fetch", "origin", "main"],
+      cwd: "/repo/aigile",
+    });
+    expect(commands).toContainEqual({
+      command: "git",
+      args: [
+        "worktree",
+        "add",
+        "-b",
+        "aigile/LIN-124",
+        "/repo/aigile/.worktrees/LIN-124",
+        "refs/remotes/origin/main",
+      ],
+      cwd: "/repo/aigile",
+    });
+  });
+
+  it("fails when the local base diverged from the fetched remote base", async () => {
+    const adapter = createGitWorkspaceAdapter({
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      exec: async (command, args) => {
+        if (command === "git" && args[0] === "fetch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse")
+          return { stdout: "sha\n", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge-base")
+          return { stdout: "", stderr: "", exitCode: 1 };
+        throw new Error("workspace checks should not run");
+      },
+    });
+
+    await expect(
+      adapter.checkIssueWorkspaceAvailability({ issueKey: "LIN-125", baseBranch: "main" }),
+    ).rejects.toThrow(
+      "Base branch main cannot be fast-forwarded to origin/main; synchronize or reset the local base branch before starting Aigile.",
+    );
+  });
+
+  it("fails clearly when fetching the base branch fails", async () => {
+    const adapter = createGitWorkspaceAdapter({
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      exec: async (command, args) => {
+        if (command === "git" && args[0] === "fetch") {
+          return { stdout: "", stderr: "fatal: no such remote", exitCode: 128 };
+        }
+        throw new Error("workspace checks should not run");
+      },
+    });
+
+    await expect(
+      adapter.createIssueWorkspace({ issueKey: "LIN-404", baseBranch: "main" }),
+    ).rejects.toThrow("Failed to fetch origin main before starting Aigile: fatal: no such remote");
+  });
+
+  it("blocks reuse of an existing stale issue branch", async () => {
+    const adapter = createGitWorkspaceAdapter({
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      exec: async (command, args) => {
+        if (command === "git" && args[0] === "fetch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse")
+          return { stdout: "sha\n", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge-base" && args[2] === "refs/heads/main") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "show-ref")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (
+          command === "git" &&
+          args[0] === "merge-base" &&
+          args[2] === "refs/remotes/origin/main"
+        ) {
+          return { stdout: "", stderr: "", exitCode: 1 };
+        }
+        if (
+          command === "git" &&
+          args[0] === "merge-base" &&
+          args[3] === "refs/remotes/origin/main"
+        ) {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        throw new Error("worktree add should not run");
+      },
+    });
+
+    await expect(
+      adapter.createIssueWorkspace({ issueKey: "LIN-126", baseBranch: "main" }),
+    ).rejects.toThrow(
+      "Issue branch aigile/LIN-126 is stale relative to origin/main; rebase or recreate it before starting Aigile.",
+    );
+  });
+
   it("fails when git command exits non-zero", async () => {
     const adapter = createGitWorkspaceAdapter({
       repoPath: "/repo/aigile",
       worktreesPath: "/repo/aigile/.worktrees",
       exec: async (command, args) => {
+        if (command === "git" && args[0] === "fetch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse")
+          return { stdout: "sha\n", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge-base")
+          return { stdout: "", stderr: "", exitCode: 0 };
         if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
         if (command === "git" && args[0] === "show-ref")
           return { stdout: "", stderr: "", exitCode: 1 };

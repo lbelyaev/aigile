@@ -479,7 +479,14 @@ describe("cli formatting", () => {
     await expect(
       exec(
         "git",
-        ["worktree", "add", "-b", "aigile/LIN-456", "/repo/aigile/.worktrees/LIN-456", "main"],
+        [
+          "worktree",
+          "add",
+          "-b",
+          "aigile/LIN-456",
+          "/repo/aigile/.worktrees/LIN-456",
+          "refs/remotes/origin/main",
+        ],
         { cwd: "/repo/aigile" },
       ),
     ).resolves.toMatchObject({ exitCode: 0 });
@@ -1701,6 +1708,27 @@ describe("cli formatting", () => {
     expect(output).toContain("Publish: ready acme/project via upstream -> develop");
     expect(output).toContain("Agents: not started");
     expect(calls).toEqual([
+      { command: "git", args: ["fetch", "upstream", "develop"], cwd: "/repo/aigile" },
+      {
+        command: "git",
+        args: ["rev-parse", "--verify", "refs/remotes/upstream/develop"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: ["rev-parse", "--verify", "refs/heads/develop"],
+        cwd: "/repo/aigile",
+      },
+      {
+        command: "git",
+        args: [
+          "merge-base",
+          "--is-ancestor",
+          "refs/heads/develop",
+          "refs/remotes/upstream/develop",
+        ],
+        cwd: "/repo/aigile",
+      },
       { command: "test", args: ["-e", "/repo/aigile/.worktrees/LIN-789"], cwd: "/repo/aigile" },
       {
         command: "git",
@@ -1746,6 +1774,29 @@ describe("cli formatting", () => {
       args: ["repo", "view", "lbelyaev/aigile", "--json", "name"],
       cwd: "/repo/aigile",
     });
+  });
+
+  it("fails run preflight before agents when the local base diverged from the remote base", async () => {
+    await expect(
+      runRunModePreflight({
+        issueKey: "LIN-790",
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        remote: "origin",
+        baseBranch: "main",
+        exec: async (command, args) => {
+          if (command === "git" && args[0] === "fetch")
+            return { stdout: "", stderr: "", exitCode: 0 };
+          if (command === "git" && args[0] === "rev-parse")
+            return { stdout: "sha\n", stderr: "", exitCode: 0 };
+          if (command === "git" && args[0] === "merge-base")
+            return { stdout: "", stderr: "", exitCode: 1 };
+          throw new Error("workspace availability should stop before collision checks");
+        },
+      }),
+    ).rejects.toThrow(
+      "Base branch main cannot be fast-forwarded to origin/main; synchronize or reset the local base branch before starting Aigile.",
+    );
   });
 
   it("formats issue workspace status for dirty worktrees", async () => {

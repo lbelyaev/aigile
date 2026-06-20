@@ -704,6 +704,7 @@ export const runDemoIssueWithWorkspace = async (input: DemoWorkspaceInput): Prom
   const workspaceOptions = {
     repoPath: input.repoPath,
     worktreesPath: input.worktreesPath,
+    remote: input.remote ?? "origin",
   };
   const workspaceAdapter = createGitWorkspaceAdapter(
     input.exec === undefined ? workspaceOptions : { ...workspaceOptions, exec: input.exec },

@@ -16,6 +16,7 @@ export type ExecCommand = (
 export interface IssueWorkspaceInput {
   issueKey: string;
   baseBranch: string;
+  remote?: string;
 }
 
 export interface IssueWorkspace {
@@ -50,6 +51,7 @@ export interface GitWorkspaceAdapter {
 export interface GitWorkspaceAdapterOptions {
   repoPath: string;
   worktreesPath: string;
+  remote?: string;
   exec?: ExecCommand;
 }
 
@@ -89,10 +91,100 @@ const assertSuccess = (result: ExecResult, operation: string): void => {
 
 type WorkspaceTargetState = "available" | "existing_worktree" | "existing_branch";
 
+interface SyncedBaseBranch {
+  remote: string;
+  baseBranch: string;
+  remoteRef: string;
+}
+
+const remoteBaseRef = (remote: string, baseBranch: string): string =>
+  `refs/remotes/${remote}/${baseBranch}`;
+
+const localBaseRef = (baseBranch: string): string => `refs/heads/${baseBranch}`;
+
+const commandOutput = (result: ExecResult): string => (result.stderr || result.stdout).trimEnd();
+
+const syncBaseBranch = async (
+  exec: ExecCommand,
+  repoPath: string,
+  baseBranch: string,
+  remote: string,
+): Promise<SyncedBaseBranch> => {
+  const fetchResult = await exec("git", ["fetch", remote, baseBranch], { cwd: repoPath });
+  if (fetchResult.exitCode !== 0) {
+    throw new Error(
+      `Failed to fetch ${remote} ${baseBranch} before starting Aigile: ${commandOutput(fetchResult)}`,
+    );
+  }
+
+  const remoteRef = remoteBaseRef(remote, baseBranch);
+  const remoteResult = await exec("git", ["rev-parse", "--verify", remoteRef], {
+    cwd: repoPath,
+  });
+  if (remoteResult.exitCode !== 0) {
+    throw new Error(
+      `Fetched ${remote} ${baseBranch}, but ${remoteRef} could not be resolved: ${commandOutput(remoteResult)}`,
+    );
+  }
+
+  const localRef = localBaseRef(baseBranch);
+  const localResult = await exec("git", ["rev-parse", "--verify", localRef], {
+    cwd: repoPath,
+  });
+  if (localResult.exitCode === 0) {
+    const fastForwardResult = await exec(
+      "git",
+      ["merge-base", "--is-ancestor", localRef, remoteRef],
+      { cwd: repoPath },
+    );
+    if (fastForwardResult.exitCode !== 0) {
+      throw new Error(
+        `Base branch ${baseBranch} cannot be fast-forwarded to ${remote}/${baseBranch}; synchronize or reset the local base branch before starting Aigile.`,
+      );
+    }
+  } else if (localResult.exitCode !== 128 && localResult.exitCode !== 1) {
+    throw new Error(
+      `Unable to inspect local base branch ${baseBranch}: ${commandOutput(localResult)}`,
+    );
+  }
+
+  return { remote, baseBranch, remoteRef };
+};
+
+const assertIssueBranchContainsBase = async (
+  exec: ExecCommand,
+  repoPath: string,
+  branchName: string,
+  syncedBase: SyncedBaseBranch,
+): Promise<void> => {
+  const containsBaseResult = await exec(
+    "git",
+    ["merge-base", "--is-ancestor", syncedBase.remoteRef, branchName],
+    { cwd: repoPath },
+  );
+  if (containsBaseResult.exitCode === 0) return;
+
+  const staleResult = await exec(
+    "git",
+    ["merge-base", "--is-ancestor", branchName, syncedBase.remoteRef],
+    { cwd: repoPath },
+  );
+  if (staleResult.exitCode === 0) {
+    throw new Error(
+      `Issue branch ${branchName} is stale relative to ${syncedBase.remote}/${syncedBase.baseBranch}; rebase or recreate it before starting Aigile.`,
+    );
+  }
+
+  throw new Error(
+    `Issue branch ${branchName} diverged from ${syncedBase.remote}/${syncedBase.baseBranch}; rebase or recreate it before starting Aigile.`,
+  );
+};
+
 const inspectWorkspaceTarget = async (
   exec: ExecCommand,
   repoPath: string,
   workspace: IssueWorkspace,
+  syncedBase: SyncedBaseBranch,
 ): Promise<WorkspaceTargetState> => {
   const pathResult = await exec("test", ["-e", workspace.worktreePath], { cwd: repoPath });
   if (pathResult.exitCode === 0) {
@@ -110,6 +202,7 @@ const inspectWorkspaceTarget = async (
         `Issue worktree path already exists for branch ${existingBranch}, expected ${workspace.branchName}`,
       );
     }
+    await assertIssueBranchContainsBase(exec, repoPath, workspace.branchName, syncedBase);
     return "existing_worktree";
   }
 
@@ -119,6 +212,7 @@ const inspectWorkspaceTarget = async (
     { cwd: repoPath },
   );
   if (branchResult.exitCode === 0) {
+    await assertIssueBranchContainsBase(exec, repoPath, workspace.branchName, syncedBase);
     return "existing_branch";
   }
   if (branchResult.exitCode !== 1) {
@@ -131,6 +225,7 @@ export const createGitWorkspaceAdapter = (
   options: GitWorkspaceAdapterOptions,
 ): GitWorkspaceAdapter => {
   const exec = options.exec ?? defaultExecCommand;
+  const remote = options.remote ?? "origin";
 
   const buildWorkspace = (input: IssueWorkspaceInput): IssueWorkspace => {
     const slug = safeIssueSlug(input.issueKey);
@@ -146,7 +241,13 @@ export const createGitWorkspaceAdapter = (
     input: IssueWorkspaceInput,
   ): Promise<IssueWorkspace> => {
     const workspace = buildWorkspace(input);
-    await inspectWorkspaceTarget(exec, options.repoPath, workspace);
+    const syncedBase = await syncBaseBranch(
+      exec,
+      options.repoPath,
+      input.baseBranch,
+      input.remote ?? remote,
+    );
+    await inspectWorkspaceTarget(exec, options.repoPath, workspace, syncedBase);
     return workspace;
   };
 
@@ -154,7 +255,18 @@ export const createGitWorkspaceAdapter = (
     checkIssueWorkspaceAvailability,
     createIssueWorkspace: async (input) => {
       const workspace = buildWorkspace(input);
-      const targetState = await inspectWorkspaceTarget(exec, options.repoPath, workspace);
+      const syncedBase = await syncBaseBranch(
+        exec,
+        options.repoPath,
+        input.baseBranch,
+        input.remote ?? remote,
+      );
+      const targetState = await inspectWorkspaceTarget(
+        exec,
+        options.repoPath,
+        workspace,
+        syncedBase,
+      );
       if (targetState === "existing_worktree") return workspace;
       const result =
         targetState === "existing_branch"
@@ -169,7 +281,7 @@ export const createGitWorkspaceAdapter = (
                 "-b",
                 workspace.branchName,
                 workspace.worktreePath,
-                input.baseBranch,
+                syncedBase.remoteRef,
               ],
               { cwd: options.repoPath },
             );
