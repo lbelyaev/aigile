@@ -75,7 +75,16 @@ const parseNdjsonStream = (input: Readable, onValue: (value: unknown) => void): 
     while (newlineIndex >= 0) {
       const line = buffer.slice(0, newlineIndex).trim();
       buffer = buffer.slice(newlineIndex + 1);
-      if (line.length > 0) onValue(JSON.parse(line));
+      if (line.length > 0) {
+        let value: unknown;
+        try {
+          value = JSON.parse(line);
+        } catch {
+          newlineIndex = buffer.indexOf("\n");
+          continue;
+        }
+        onValue(value);
+      }
       newlineIndex = buffer.indexOf("\n");
     }
   });
