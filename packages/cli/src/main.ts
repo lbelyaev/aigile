@@ -414,6 +414,7 @@ export const runRunModePreflight = async (input: RunModePreflightInput): Promise
   const workspace = await createGitWorkspaceAdapter({
     repoPath: input.repoPath,
     worktreesPath: input.worktreesPath,
+    remote: input.remote ?? "origin",
     exec,
   }).checkIssueWorkspaceAvailability({
     issueKey: input.issueKey,
