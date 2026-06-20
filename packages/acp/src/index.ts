@@ -1,6 +1,11 @@
 export { createRpcClient } from "./rpc.js";
 
-export { createAcpSession, extractTokenUsage, translateSessionUpdate } from "./session.js";
+export {
+  DEFAULT_ACP_PROMPT_TIMEOUT_MS,
+  createAcpSession,
+  extractTokenUsage,
+  translateSessionUpdate,
+} from "./session.js";
 
 export { connectAcpRuntime, createAcpProcess } from "./process.js";
 

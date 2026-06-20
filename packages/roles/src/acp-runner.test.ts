@@ -124,6 +124,29 @@ describe("ACP role runner", () => {
       },
     });
     expect(connectInput.sessionParams).not.toHaveProperty("model");
+    expect(connectInput.promptTimeoutMs).toBe(30 * 60 * 1_000);
+  });
+
+  it("allows the ACP prompt timeout to be configured for runtime connects", () => {
+    const connectInput = buildAcpRuntimeConnectInput(
+      {
+        roleId: "architect",
+        issueId: "LIN-123",
+        runtime: {
+          id: "runtime-architect",
+          transport: "stdio",
+          command: ["agent-acp"],
+        },
+        assignment: {
+          roleId: "architect",
+          runtimeProfileId: "runtime-architect",
+        },
+        inputArtifacts: [],
+      },
+      { promptTimeoutMs: 2_500 },
+    );
+
+    expect(connectInput.promptTimeoutMs).toBe(2_500);
   });
 
   it("builds a dry-run permission policy from execution policy artifacts", () => {
@@ -533,6 +556,53 @@ describe("ACP role runner", () => {
     expect(progress).toContain("policy_violation");
     expect(progress).not.toContain("artifact_parsed");
     expect(killed).toBe(true);
+  });
+
+  it("kills the runtime when setup after connect throws", async () => {
+    const progress: string[] = [];
+    let killCount = 0;
+    const connector: AcpRuntimeConnector = async () => ({
+      session: {
+        sessionId: "role-session-1",
+        acpSessionId: "acp-session-1",
+        prompt: async () => {
+          throw new Error("prompt should not start");
+        },
+        cancel: () => undefined,
+        onEvent: () => {
+          throw new Error("subscribe failed");
+        },
+      },
+      process: {
+        kill: async () => {
+          killCount += 1;
+        },
+      },
+    });
+    const runner = createAcpRoleRunner({
+      connector,
+      onProgress: (event) => progress.push(event.type),
+    });
+
+    await expect(
+      runner.run({
+        roleId: "developer",
+        issueId: "LIN-123",
+        runtime: {
+          id: "runtime-developer",
+          transport: "stdio",
+          command: ["agent-acp"],
+        },
+        assignment: {
+          roleId: "developer",
+          runtimeProfileId: "runtime-developer",
+        },
+        inputArtifacts: [],
+      }),
+    ).rejects.toThrow("subscribe failed");
+    expect(killCount).toBe(1);
+    expect(progress).toContain("runtime_stopped");
+    expect(progress).not.toContain("prompt_started");
   });
 
   it("runs a role through an ACP runtime and returns an artifact", async () => {

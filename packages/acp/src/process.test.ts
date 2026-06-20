@@ -218,6 +218,64 @@ describe("ACP process connector", () => {
     await connected.process.kill();
   });
 
+  it("kills the spawned process when initialize rejects during connect", async () => {
+    const mock = createMockSpawn();
+    const writes = collectWrites(mock.stdin);
+
+    const connectedPromise = connectAcpRuntime({
+      command: ["agent-acp"],
+      spawnProcess: mock.spawn,
+      initializeParams: { client: "aigile" },
+      sessionParams: { cwd: "/repo", mcpServers: [] },
+      sessionId: "role-session-1",
+    });
+
+    expect(JSON.parse(writes[0]!.trim())).toMatchObject({
+      id: 1,
+      method: "initialize",
+    });
+    mock.stdout.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        error: { code: -32000, message: "initialize failed" },
+      }) + "\n",
+    );
+
+    await expect(connectedPromise).rejects.toThrow("initialize failed");
+    expect(mock.killSignals).toEqual(["SIGTERM"]);
+  });
+
+  it("kills the spawned process when session creation rejects during connect", async () => {
+    const mock = createMockSpawn();
+    const writes = collectWrites(mock.stdin);
+
+    const connectedPromise = connectAcpRuntime({
+      command: ["agent-acp"],
+      spawnProcess: mock.spawn,
+      initializeParams: { client: "aigile" },
+      sessionParams: { cwd: "/repo", mcpServers: [] },
+      sessionId: "role-session-1",
+    });
+
+    mock.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { ok: true } }) + "\n");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(JSON.parse(writes[1]!.trim())).toMatchObject({
+      id: 2,
+      method: "session/new",
+    });
+    mock.stdout.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        error: { code: -32000, message: "session failed" },
+      }) + "\n",
+    );
+
+    await expect(connectedPromise).rejects.toThrow("session failed");
+    expect(mock.killSignals).toEqual(["SIGTERM"]);
+  });
+
   it("escalates process shutdown when a runtime ignores SIGTERM", async () => {
     const mock = createStubbornMockSpawn();
     const process = createAcpProcess(["agent-acp"], {
