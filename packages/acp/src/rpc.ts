@@ -23,6 +23,13 @@ export interface JsonRpcResponse {
   };
 }
 
+export class MethodNotHandledError extends Error {
+  constructor(method: string) {
+    super(`Method not handled: ${method}`);
+    this.name = "MethodNotHandledError";
+  }
+}
+
 export type RequestHandler = (method: string, params: unknown) => Promise<unknown>;
 
 export interface RpcClient {
@@ -110,8 +117,17 @@ export const createRpcClient = (
         const result = await handler(request.method, request.params);
         write({ jsonrpc: "2.0", id: request.id, result });
         return;
-      } catch {
-        continue;
+      } catch (error) {
+        if (error instanceof MethodNotHandledError) continue;
+        write({
+          jsonrpc: "2.0",
+          id: request.id,
+          error: {
+            code: -32603,
+            message: error instanceof Error ? error.message : String(error),
+          },
+        });
+        return;
       }
     }
     write({

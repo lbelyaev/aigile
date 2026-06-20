@@ -1,4 +1,4 @@
-export { createRpcClient } from "./rpc.js";
+export { MethodNotHandledError, createRpcClient } from "./rpc.js";
 
 export {
   DEFAULT_ACP_PROMPT_TIMEOUT_MS,
