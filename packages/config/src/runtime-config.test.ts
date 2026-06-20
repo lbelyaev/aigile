@@ -11,6 +11,9 @@ describe("runtime config", () => {
             transport: "stdio",
             command: ["agent-acp", "--architect"],
             defaultModel: "configured-model",
+            capabilities: {
+              skills: ["code_review"],
+            },
           },
         ],
         assignments: [
@@ -28,6 +31,9 @@ describe("runtime config", () => {
       transport: "stdio",
       command: ["agent-acp", "--architect"],
       defaultModel: "configured-model",
+      capabilities: {
+        skills: ["code_review"],
+      },
     });
     expect(config.assignments[0]).toEqual({
       roleId: "architect",

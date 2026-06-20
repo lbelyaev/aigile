@@ -47,6 +47,7 @@ describe("role prompt builder", () => {
     expect(prompt).toContain("the developer role may edit files in the worktree");
     expect(prompt).toContain("must not commit, push, or open pull requests");
     expect(prompt).toContain("Execution policy artifacts are authoritative");
+    expect(prompt).toContain("No agent-native skills were advertised");
     expect(prompt).toContain("Do not edit files");
     expect(prompt).toContain("No Markdown");
     expect(prompt).toContain('"artifactKind"');
@@ -54,5 +55,47 @@ describe("role prompt builder", () => {
     expect(prompt).toContain("execution.policy");
     expect(prompt).not.toContain("Codex");
     expect(prompt).not.toContain("Claude");
+  });
+
+  it("asks checker runtimes to prefer advertised code review skills", () => {
+    const prompt = buildRolePrompt({
+      roleId: "checker",
+      issueId: "LIN-456",
+      instruction: getDefaultRoleInstruction("checker"),
+      runtimeCapabilities: {
+        skills: ["code_review", "repo_read"],
+      },
+      inputArtifacts: [
+        {
+          id: "workspace:LIN-456:diff",
+          kind: "workspace.diff",
+          source: "system",
+          payload: { summary: "1 file changed" },
+        },
+      ],
+    });
+
+    expect(prompt).toContain("Advertised agent-native skills: code_review, repo_read");
+    expect(prompt).toContain("Prefer the runtime's native code_review skill/tool/plugin");
+    expect(prompt).toContain("checker.verdict JSON contract is authoritative");
+    expect(prompt).toContain('"artifactKind": "checker.verdict"');
+    expect(prompt).not.toContain("Claude");
+    expect(prompt).not.toContain("Codex");
+  });
+
+  it("falls checker prompts back to manual review when no code review skill is advertised", () => {
+    const prompt = buildRolePrompt({
+      roleId: "checker",
+      issueId: "LIN-789",
+      instruction: getDefaultRoleInstruction("checker"),
+      runtimeCapabilities: {
+        skills: ["repo_read"],
+      },
+      inputArtifacts: [],
+    });
+
+    expect(prompt).toContain("Advertised agent-native skills: repo_read");
+    expect(prompt).toContain("No code_review skill was advertised");
+    expect(prompt).toContain("perform a focused manual code review");
   });
 });

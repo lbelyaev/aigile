@@ -53,6 +53,7 @@ export interface AcpRuntimeCapabilities {
   permissionRequests?: boolean;
   sessionResume?: boolean;
   multimodal?: boolean;
+  skills?: readonly string[];
 }
 
 export interface AcpRuntimeProfile {
@@ -125,7 +126,9 @@ const isCapabilities = (value: unknown): value is AcpRuntimeCapabilities =>
   ["streaming", "permissionRequests", "sessionResume", "multimodal"].every((key) => {
     const entry = value[key];
     return entry === undefined || typeof entry === "boolean";
-  });
+  }) &&
+  (value.skills === undefined ||
+    (Array.isArray(value.skills) && value.skills.every(isNonEmptyString)));
 
 export const isAcpRuntimeProfile = (value: unknown): value is AcpRuntimeProfile => {
   if (!isRecord(value)) return false;

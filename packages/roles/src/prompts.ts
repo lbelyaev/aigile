@@ -1,10 +1,11 @@
-import type { WorkflowArtifact } from "@aigile/types";
+import type { AcpRuntimeCapabilities, WorkflowArtifact } from "@aigile/types";
 
 export interface BuildRolePromptInput {
   roleId: string;
   issueId: string;
   instruction: string;
   inputArtifacts: readonly WorkflowArtifact[];
+  runtimeCapabilities?: AcpRuntimeCapabilities;
 }
 
 const DEFAULT_ROLE_INSTRUCTIONS: Record<string, string> = {
@@ -63,6 +64,35 @@ const artifactKindForRole = (roleId: string): string =>
 
 const payloadExampleForRole = (roleId: string): unknown => PAYLOAD_EXAMPLES_BY_ROLE[roleId] ?? {};
 
+const runtimeSkillSet = (capabilities: AcpRuntimeCapabilities | undefined): Set<string> =>
+  new Set((capabilities?.skills ?? []).map((skill) => skill.trim()).filter(Boolean));
+
+const runtimeCapabilitySection = (input: BuildRolePromptInput): string[] => {
+  const skills = runtimeSkillSet(input.runtimeCapabilities);
+  const advertisedSkills = [...skills].sort();
+  const lines = ["Runtime capabilities:"];
+  if (advertisedSkills.length === 0) {
+    lines.push("- No agent-native skills were advertised by this runtime profile.");
+  } else {
+    lines.push(`- Advertised agent-native skills: ${advertisedSkills.join(", ")}`);
+  }
+  if (input.roleId === "checker") {
+    if (skills.has("code_review")) {
+      lines.push(
+        "- Prefer the runtime's native code_review skill/tool/plugin to inspect the supplied plan, diff, implementation artifact, and verification result.",
+      );
+    } else {
+      lines.push(
+        "- No code_review skill was advertised; perform a focused manual code review from the supplied artifacts and any narrowly necessary file reads.",
+      );
+    }
+    lines.push(
+      "- The checker.verdict JSON contract is authoritative regardless of which skill or fallback path is used.",
+    );
+  }
+  return lines;
+};
+
 export const buildRolePrompt = (input: BuildRolePromptInput): string =>
   [
     `Role: ${input.roleId}`,
@@ -77,6 +107,8 @@ export const buildRolePrompt = (input: BuildRolePromptInput): string =>
     "- Do not edit files unless this is the developer role and the plan requires it.",
     "- Do not run broad repository discovery commands.",
     "- No Markdown, no prose, no commentary outside the final JSON object.",
+    "",
+    ...runtimeCapabilitySection(input),
     "",
     "Instructions:",
     input.instruction,

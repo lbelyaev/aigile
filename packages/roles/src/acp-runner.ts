@@ -169,6 +169,9 @@ const buildPrompt = (input: RoleRunInput): string =>
       .filter((line): line is string => line !== undefined)
       .join("\n"),
     inputArtifacts: input.inputArtifacts,
+    ...(input.runtime.capabilities === undefined
+      ? {}
+      : { runtimeCapabilities: input.runtime.capabilities }),
   });
 
 const EXPECTED_ARTIFACT_KIND_BY_ROLE: Record<string, string> = {

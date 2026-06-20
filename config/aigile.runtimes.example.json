@@ -3,7 +3,10 @@
     {
       "id": "claude-acp",
       "transport": "stdio",
-      "command": ["npx", "-y", "@agentclientprotocol/claude-agent-acp"]
+      "command": ["npx", "-y", "@agentclientprotocol/claude-agent-acp"],
+      "capabilities": {
+        "skills": ["code_review"]
+      }
     },
     {
       "id": "codex-acp",

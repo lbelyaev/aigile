@@ -23,6 +23,7 @@ describe("domain schemas", () => {
           streaming: true,
           permissionRequests: true,
           sessionResume: false,
+          skills: ["code_review", "repo_read"],
         },
       }),
     ).toBe(true);
