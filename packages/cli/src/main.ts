@@ -961,13 +961,12 @@ const createLinearWatchAdapters = (
   };
 };
 
-const formatWatchLoopEvent = (event: WatchLoopEvent): string => {
-  if (event.type === "poll_started") return `Poll ${event.poll}: checking for ready issues`;
+const formatWatchLoopEvent = (event: WatchLoopEvent): string | undefined => {
+  if (event.type === "poll_started") return undefined;
   if (event.type === "issue_skipped") {
     return `Poll ${event.poll}: skipped ${event.issueKey} (${event.reason})`;
   }
-  if (event.type === "poll_idle")
-    return `Poll ${event.poll}: idle (ready issues: ${event.readyCount})`;
+  if (event.type === "poll_idle") return undefined;
   if (event.type === "issue_claimed") {
     return `Poll ${event.poll}: claimed ${event.issueKey} (ready issues: ${event.readyCount})`;
   }
@@ -997,6 +996,7 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
   emit(`Team: ${input.teamKey}`);
   if (input.githubRepo !== undefined) emit(`GitHub repo: ${input.githubRepo}`);
   emit(`Poll interval: ${input.pollIntervalMs}ms`);
+  emit("Polling for ready issues...");
 
   await watchLoop({
     source,
@@ -1007,7 +1007,10 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
     ...(input.maxPolls === undefined ? {} : { maxPolls: input.maxPolls }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
     ...(input.sleep === undefined ? {} : { sleep: input.sleep }),
-    onEvent: (event) => emit(formatWatchLoopEvent(event)),
+    onEvent: (event) => {
+      const line = formatWatchLoopEvent(event);
+      if (line !== undefined) emit(line);
+    },
     ...(input.startRun === undefined
       ? {}
       : {

@@ -1113,10 +1113,10 @@ describe("cli formatting", () => {
     expect(output).toContain("Provider: linear");
     expect(output).toContain("Team: LBE");
     expect(output).toContain("Poll interval: 1ms");
-    expect(output).toContain("Poll 1: checking for ready issues");
+    expect(output).toContain("Polling for ready issues...");
+    expect(output).not.toContain("checking for ready issues");
     expect(output).toContain("Poll 1: claimed LBE-5 (ready issues: 1)");
-    expect(output).toContain("Poll 2: checking for ready issues");
-    expect(output).toContain("Poll 2: idle (ready issues: 0)");
+    expect(output).not.toContain("idle (ready issues: 0)");
     expect(output).toContain("Stopped: max_polls after 2 polls");
     expect(output).toContain("Agents: not started");
     expect(calls.filter((call) => call.query.includes("issueUpdate"))).toHaveLength(1);
@@ -1356,8 +1356,9 @@ describe("cli formatting", () => {
     expect(output).toContain("Product: aigile");
     expect(output).toContain("Project: Aigile");
     expect(output).toContain("GitHub repo: lbelyaev/aigile");
+    expect(output).toContain("Polling for ready issues...");
     expect(output).toContain("Poll 1: skipped LBE-14 (project_mismatch)");
-    expect(output).toContain("Poll 1: idle (ready issues: 0)");
+    expect(output).not.toContain("idle (ready issues: 0)");
     expect(output).toContain("Agents: not started");
     expect(calls.filter((call) => call.query.includes("issueUpdate"))).toHaveLength(0);
     expect(calls.filter((call) => call.query.includes("commentCreate"))).toHaveLength(0);
