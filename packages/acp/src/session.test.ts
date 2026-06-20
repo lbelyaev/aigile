@@ -293,4 +293,31 @@ describe("ACP session translation", () => {
       outcome: { outcome: "cancelled" },
     });
   });
+
+  it("forwards the tool-call kind to the permission policy", async () => {
+    const rpc = mockRpc();
+    let receivedKind: string | undefined;
+    const session = createAcpSession(rpc, {
+      acpSessionId: "acp-1",
+      sessionId: "role-session-1",
+      decidePermission: (request) => {
+        receivedKind = request.kind;
+        return "allow_once";
+      },
+    });
+    session.onEvent(() => {});
+
+    await rpc.emitRequest("session/request_permission", {
+      sessionId: "acp-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "bun run typecheck",
+        kind: "execute",
+        rawInput: { command: "bun run typecheck" },
+      },
+      options: [{ optionId: "proceed-once", name: "Allow", kind: "allow_once" }],
+    });
+
+    expect(receivedKind).toBe("execute");
+  });
 });

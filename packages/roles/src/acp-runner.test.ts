@@ -333,6 +333,129 @@ describe("ACP role runner", () => {
     ).toBe("allow_once");
   });
 
+  it("classifies agent-write permissions by ACP tool kind regardless of tool label", () => {
+    const connectInput = buildAcpRuntimeConnectInput({
+      roleId: "developer",
+      issueId: "LIN-123",
+      runtime: { id: "runtime-developer", transport: "stdio", command: ["agent-acp"] },
+      assignment: { roleId: "developer", runtimeProfileId: "runtime-developer" },
+      inputArtifacts: [
+        {
+          id: "policy:LIN-123:agent-write",
+          kind: "execution.policy",
+          source: "system",
+          payload: {
+            mode: "agent_write",
+            fileWrites: "allowed",
+            commits: "forbidden",
+            shellCommands: "workspace",
+          },
+        },
+      ],
+    });
+
+    // codex labels shell calls with the command text and kind "execute"
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "exec-1",
+        tool: "bun run typecheck",
+        kind: "execute",
+        description: JSON.stringify({ command: "bun run typecheck" }),
+        options: [],
+      }),
+    ).toBe("allow_once");
+    // destructive / commit execute is still rejected
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "exec-2",
+        tool: "git commit -m wip",
+        kind: "execute",
+        description: JSON.stringify({ command: "git commit -m wip" }),
+        options: [],
+      }),
+    ).toBe("reject_once");
+    // edit kind is allowed even when the tool label is not "Edit"
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "edit-1",
+        tool: "apply_patch",
+        kind: "edit",
+        description: "/repo/aigile/packages/acp/src/process.ts",
+        options: [],
+      }),
+    ).toBe("allow_once");
+    // broad-discovery execute is rejected regardless of label
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "exec-3",
+        tool: "find . -type f",
+        kind: "execute",
+        description: JSON.stringify({ command: "find . -type f" }),
+        options: [],
+      }),
+    ).toBe("reject_once");
+  });
+
+  it("rejects writes and non-read execution by ACP tool kind in dry-run", () => {
+    const connectInput = buildAcpRuntimeConnectInput({
+      roleId: "developer",
+      issueId: "LIN-123",
+      runtime: { id: "runtime-developer", transport: "stdio", command: ["agent-acp"] },
+      assignment: { roleId: "developer", runtimeProfileId: "runtime-developer" },
+      inputArtifacts: [
+        {
+          id: "policy:LIN-123:dry-run",
+          kind: "execution.policy",
+          source: "system",
+          payload: {
+            mode: "dry_run",
+            fileWrites: "forbidden",
+            commits: "forbidden",
+            shellCommands: "read_only",
+          },
+        },
+      ],
+    });
+
+    // edit kind rejected in dry-run even with a non-"Edit" label
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "edit-1",
+        tool: "apply_patch",
+        kind: "edit",
+        description: "/repo/aigile/packages/acp/src/process.ts",
+        options: [],
+      }),
+    ).toBe("reject_once");
+    // non-read execute rejected
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "exec-1",
+        tool: "bun run typecheck",
+        kind: "execute",
+        description: JSON.stringify({ command: "bun run typecheck" }),
+        options: [],
+      }),
+    ).toBe("reject_once");
+    // read-only execute allowed
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:developer",
+        requestId: "exec-2",
+        tool: "git status --short",
+        kind: "execute",
+        description: JSON.stringify({ command: "git status --short" }),
+        options: [],
+      }),
+    ).toBe("allow_once");
+  });
+
   it("rejects observed broad-discovery tool starts for agent-write policy", async () => {
     const progress: string[] = [];
     let killed = false;

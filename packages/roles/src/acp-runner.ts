@@ -292,29 +292,47 @@ const isReadOnlyPermission = (request: AcpPermissionRequest): boolean => {
   ].some((pattern) => pattern.test(command));
 };
 
+// ACP tool-call kinds (agent-defined): file-mutating vs. read-only categories.
+const WRITE_TOOL_KINDS = new Set(["edit", "delete", "move"]);
+const READ_TOOL_KINDS = new Set(["read", "search", "fetch"]);
+
+const isEditToolName = (tool: string): boolean =>
+  /(^|\s)(edit|write|multiedit|notebookedit)(\s|$)/.test(tool.toLowerCase());
+
+// Classify a shell/execute command: reject destructive or broad-discovery commands,
+// otherwise allow ordinary commands (tests, typecheck, builds, targeted reads).
+const decideExecutePermission = (
+  request: AcpPermissionRequest,
+  mode: "dry_run" | "agent_write",
+): PermissionDecision => {
+  if (isBroadDiscoveryPermission(request)) return "reject_once";
+  if (isWriteLikePermission(request)) return "reject_once";
+  if (mode === "dry_run") return isReadOnlyPermission(request) ? "allow_once" : "reject_once";
+  return "allow_once";
+};
+
 const buildExecutionPolicyPermissionDecision = (
   input: RoleRunInput,
 ): ((request: AcpPermissionRequest) => PermissionDecision | undefined) | undefined => {
   const mode = executionPolicyMode(input);
   if (mode === undefined) return undefined;
   return (request) => {
-    if (mode === "dry_run") {
-      if (isBroadDiscoveryPermission(request)) return "reject_once";
-      if (isWriteLikePermission(request)) return "reject_once";
-      if (request.tool.toLowerCase() === "bash" && isReadOnlyPermission(request))
-        return "allow_once";
-      return "reject_once";
-    }
+    // Commits / pushes / PR creation are Aigile's job, never the agent's, in any mode.
     if (isCommitLikePermission(request) || isPrOpeningPermission(request)) return "reject_once";
-    if (/(^|\s)(edit|write|multiedit|notebookedit)(\s|$)/.test(request.tool.toLowerCase())) {
-      return "allow_once";
+
+    // Prefer the ACP tool-call kind; it does not depend on agent-specific tool labels.
+    const kind = request.kind?.toLowerCase();
+    if (kind !== undefined) {
+      if (WRITE_TOOL_KINDS.has(kind)) return mode === "agent_write" ? "allow_once" : "reject_once";
+      if (kind === "execute") return decideExecutePermission(request, mode);
+      if (READ_TOOL_KINDS.has(kind))
+        return isBroadDiscoveryPermission(request) ? "reject_once" : "allow_once";
+      // Unknown kind: fall through to label/command heuristics below.
     }
-    if (request.tool.toLowerCase() === "bash") {
-      if (isBroadDiscoveryPermission(request)) return "reject_once";
-      if (isWriteLikePermission(request)) return "reject_once";
-      return "allow_once";
-    }
-    return undefined;
+
+    // Fallback for agents that omit `kind`: classify by tool label, then by command.
+    if (isEditToolName(request.tool)) return mode === "agent_write" ? "allow_once" : "reject_once";
+    return decideExecutePermission(request, mode);
   };
 };
 

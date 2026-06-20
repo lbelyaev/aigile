@@ -56,6 +56,8 @@ export interface AcpPermissionRequest {
   requestId: string;
   description: string;
   options: AcpPermissionOption[];
+  // ACP tool-call kind (e.g. "execute", "edit", "read"); agent-defined, may be absent.
+  kind?: string;
 }
 
 export interface AcpSession {
@@ -298,6 +300,7 @@ export const createAcpSession = (rpc: RpcClient, options: AcpSessionOptions): Ac
       description: permissionDescription(permission.toolCall?.rawInput, tool),
       options: permission.options ?? [],
     };
+    if (permission.toolCall?.kind !== undefined) request.kind = permission.toolCall.kind;
 
     const decision = options.decidePermission?.(request);
     if (decision) {
