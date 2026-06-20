@@ -1186,6 +1186,72 @@ describe("cli formatting", () => {
     expect(output).toContain("Agents: handled claimed issues");
   });
 
+  it("restores claimed Linear issues and reports run start failures", async () => {
+    const statusUpdates: unknown[] = [];
+
+    const output = await runLinearWatchLoopCli({
+      apiKey: "test-key",
+      teamKey: "LBE",
+      readyStatus: "Todo",
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 1,
+      sleep: async () => {},
+      startRun: async () => {
+        throw new Error("Issue branch aigile/LBE-18 is stale relative to origin/main");
+      },
+      fetchGraphql: async (query, variables) => {
+        if (query.includes("ReadyIssues")) {
+          return {
+            issues: {
+              nodes: [
+                {
+                  id: "issue-id",
+                  identifier: "LBE-18",
+                  title: "Infer product route",
+                  description: "Acceptance:\n- Routes from ticket metadata",
+                  state: { name: "Todo" },
+                  comments: { nodes: [] },
+                },
+              ],
+            },
+          };
+        }
+        if (query.includes("WorkflowStateByName")) {
+          return {
+            workflowStates: {
+              nodes: [
+                {
+                  id:
+                    typeof variables?.name === "string" && variables.name === "Todo"
+                      ? "state-todo"
+                      : "state-in-progress",
+                  name: variables?.name,
+                },
+              ],
+            },
+          };
+        }
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("issueUpdate")) {
+          statusUpdates.push(variables);
+          return {};
+        }
+        if (query.includes("commentCreate")) return {};
+        return {};
+      },
+    });
+
+    expect(output).toContain("Poll 1: claimed LBE-18 (ready issues: 1)");
+    expect(output).toContain("Run LBE-18: starting");
+    expect(output).toContain(
+      "Poll 1: run failed for LBE-18; restored status to Todo: Issue branch aigile/LBE-18 is stale relative to origin/main",
+    );
+    expect(output).toContain("Agents: handled claimed issues");
+    expect(statusUpdates).toHaveLength(2);
+    expect(statusUpdates.at(-1)).toMatchObject({ status: "state-todo" });
+  });
+
   it("prints product and GitHub repo when product-backed watch starts a run", async () => {
     const startedIssueKeys: string[] = [];
 

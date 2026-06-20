@@ -204,6 +204,54 @@ describe("watchOnce", () => {
     expect(claimedIssueKeys).toEqual(["LIN-900"]);
   });
 
+  it("restores the prior status and keeps the loop alive when claimed issue handling fails", async () => {
+    const seedIssues = [
+      {
+        id: "issue-1",
+        key: "LIN-900",
+        title: "Watcher loop",
+        description: "Start work after claim.",
+        acceptanceCriteria: [],
+        status: "Todo",
+        comments: [],
+      },
+    ];
+    const tracker = createFakeIssueTrackerAdapter(seedIssues);
+    const events: string[] = [];
+
+    await watchLoop({
+      source: createFakeReadyIssueSource(seedIssues, "Todo"),
+      tracker,
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 2,
+      sleep: async () => {},
+      onEvent: (event) => {
+        events.push(
+          event.type === "claimed_issue_run_failed"
+            ? `${event.type}:${event.issueKey}:${event.restoredStatus}:${event.error}`
+            : event.type,
+        );
+      },
+      onClaimedIssue: async () => {
+        throw new Error("worktree is stale");
+      },
+    });
+
+    expect(events).toEqual([
+      "poll_started",
+      "issue_claimed",
+      "claimed_issue_run_failed:LIN-900:Todo:worktree is stale",
+      "poll_started",
+      "poll_idle",
+      "watch_stopped",
+    ]);
+    expect(await tracker.getIssue("LIN-900")).toMatchObject({
+      status: "Todo",
+      comments: [defaultClaimComment],
+    });
+  });
+
   it("claims a product-backed issue when the Linear project matches", async () => {
     const seedIssues = [
       {

@@ -599,7 +599,172 @@ describe("git workspace adapter", () => {
     ).rejects.toThrow("Failed to fetch origin main before starting Aigile: fatal: no such remote");
   });
 
-  it("blocks reuse of an existing stale issue branch", async () => {
+  it("fast-forwards an existing stale issue branch with no worktree before attaching it", async () => {
+    const commands: Array<{ command: string; args: string[]; cwd: string }> = [];
+    const adapter = createGitWorkspaceAdapter({
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      exec: async (command, args, options) => {
+        commands.push({ command, args: [...args], cwd: options.cwd });
+        if (command === "git" && args[0] === "fetch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse")
+          return { stdout: "sha\n", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge-base" && args[2] === "refs/heads/main") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "show-ref")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (
+          command === "git" &&
+          args[0] === "merge-base" &&
+          args[2] === "refs/remotes/origin/main"
+        ) {
+          return { stdout: "", stderr: "", exitCode: 1 };
+        }
+        if (
+          command === "git" &&
+          args[0] === "merge-base" &&
+          args[3] === "refs/remotes/origin/main"
+        ) {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (command === "git" && args[0] === "worktree" && args[1] === "list") {
+          return {
+            stdout: ["worktree /repo/aigile", "HEAD main-sha", "branch refs/heads/main", ""].join(
+              "\n",
+            ),
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        if (command === "git" && args[0] === "branch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "worktree" && args[1] === "add")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
+      },
+    });
+
+    await expect(
+      adapter.createIssueWorkspace({ issueKey: "LIN-126", baseBranch: "main" }),
+    ).resolves.toMatchObject({
+      branchName: "aigile/LIN-126",
+      worktreePath: "/repo/aigile/.worktrees/LIN-126",
+    });
+    expect(commands).toContainEqual({
+      command: "git",
+      args: ["branch", "-f", "aigile/LIN-126", "refs/remotes/origin/main"],
+      cwd: "/repo/aigile",
+    });
+    expect(commands).toContainEqual({
+      command: "git",
+      args: ["worktree", "add", "/repo/aigile/.worktrees/LIN-126", "aigile/LIN-126"],
+      cwd: "/repo/aigile",
+    });
+  });
+
+  it("fast-forwards a clean checked-out stale issue branch before reuse", async () => {
+    const commands: Array<{ command: string; args: string[]; cwd: string }> = [];
+    const adapter = createGitWorkspaceAdapter({
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      exec: async (command, args, options) => {
+        commands.push({ command, args: [...args], cwd: options.cwd });
+        if (command === "git" && args[0] === "fetch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse" && args[1] === "--verify")
+          return { stdout: "sha\n", stderr: "", exitCode: 0 };
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse")
+          return { stdout: "aigile/LIN-126\n", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge-base" && args[2] === "refs/heads/main") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (
+          command === "git" &&
+          args[0] === "merge-base" &&
+          args[2] === "refs/remotes/origin/main"
+        ) {
+          return { stdout: "", stderr: "", exitCode: 1 };
+        }
+        if (
+          command === "git" &&
+          args[0] === "merge-base" &&
+          args[3] === "refs/remotes/origin/main"
+        ) {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (command === "git" && args[0] === "status")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
+      },
+    });
+
+    await expect(
+      adapter.createIssueWorkspace({ issueKey: "LIN-126", baseBranch: "main" }),
+    ).resolves.toMatchObject({
+      branchName: "aigile/LIN-126",
+      worktreePath: "/repo/aigile/.worktrees/LIN-126",
+    });
+    expect(commands).toContainEqual({
+      command: "git",
+      args: ["status", "--short"],
+      cwd: "/repo/aigile/.worktrees/LIN-126",
+    });
+    expect(commands).toContainEqual({
+      command: "git",
+      args: ["merge", "--ff-only", "refs/remotes/origin/main"],
+      cwd: "/repo/aigile/.worktrees/LIN-126",
+    });
+  });
+
+  it("blocks reuse of a checked-out stale issue branch with uncommitted changes", async () => {
+    const adapter = createGitWorkspaceAdapter({
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      exec: async (command, args) => {
+        if (command === "git" && args[0] === "fetch")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse" && args[1] === "--verify")
+          return { stdout: "sha\n", stderr: "", exitCode: 0 };
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse")
+          return { stdout: "aigile/LIN-126\n", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "merge-base" && args[2] === "refs/heads/main") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (
+          command === "git" &&
+          args[0] === "merge-base" &&
+          args[2] === "refs/remotes/origin/main"
+        ) {
+          return { stdout: "", stderr: "", exitCode: 1 };
+        }
+        if (
+          command === "git" &&
+          args[0] === "merge-base" &&
+          args[3] === "refs/remotes/origin/main"
+        ) {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        if (command === "git" && args[0] === "status")
+          return { stdout: " M packages/cli/src/main.ts\n", stderr: "", exitCode: 0 };
+        throw new Error("worktree should not be reused");
+      },
+    });
+
+    await expect(
+      adapter.createIssueWorkspace({ issueKey: "LIN-126", baseBranch: "main" }),
+    ).rejects.toThrow(
+      "Issue branch aigile/LIN-126 is stale and has uncommitted changes in /repo/aigile/.worktrees/LIN-126; rebase or recreate it before starting Aigile.",
+    );
+  });
+
+  it("blocks reuse of an existing diverged issue branch", async () => {
     const adapter = createGitWorkspaceAdapter({
       repoPath: "/repo/aigile",
       worktreesPath: "/repo/aigile/.worktrees",
@@ -626,7 +791,7 @@ describe("git workspace adapter", () => {
           args[0] === "merge-base" &&
           args[3] === "refs/remotes/origin/main"
         ) {
-          return { stdout: "", stderr: "", exitCode: 0 };
+          return { stdout: "", stderr: "", exitCode: 1 };
         }
         throw new Error("worktree add should not run");
       },
@@ -635,7 +800,7 @@ describe("git workspace adapter", () => {
     await expect(
       adapter.createIssueWorkspace({ issueKey: "LIN-126", baseBranch: "main" }),
     ).rejects.toThrow(
-      "Issue branch aigile/LIN-126 is stale relative to origin/main; rebase or recreate it before starting Aigile.",
+      "Issue branch aigile/LIN-126 diverged from origin/main; rebase or recreate it before starting Aigile.",
     );
   });
 

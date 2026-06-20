@@ -971,6 +971,9 @@ const formatWatchLoopEvent = (event: WatchLoopEvent): string => {
   if (event.type === "issue_claimed") {
     return `Poll ${event.poll}: claimed ${event.issueKey} (ready issues: ${event.readyCount})`;
   }
+  if (event.type === "claimed_issue_run_failed") {
+    return `Poll ${event.poll}: run failed for ${event.issueKey}; restored status to ${event.restoredStatus}: ${event.error}`;
+  }
   return `Stopped: ${event.reason} after ${event.polls} polls`;
 };
 

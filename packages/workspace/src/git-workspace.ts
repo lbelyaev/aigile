@@ -156,6 +156,7 @@ const assertIssueBranchContainsBase = async (
   repoPath: string,
   branchName: string,
   syncedBase: SyncedBaseBranch,
+  worktreePath?: string,
 ): Promise<void> => {
   const containsBaseResult = await exec(
     "git",
@@ -170,14 +171,52 @@ const assertIssueBranchContainsBase = async (
     { cwd: repoPath },
   );
   if (staleResult.exitCode === 0) {
-    throw new Error(
-      `Issue branch ${branchName} is stale relative to ${syncedBase.remote}/${syncedBase.baseBranch}; rebase or recreate it before starting Aigile.`,
-    );
+    await recoverStaleIssueBranch(exec, repoPath, branchName, syncedBase, worktreePath);
+    return;
   }
 
   throw new Error(
     `Issue branch ${branchName} diverged from ${syncedBase.remote}/${syncedBase.baseBranch}; rebase or recreate it before starting Aigile.`,
   );
+};
+
+const assertCleanWorktree = async (
+  exec: ExecCommand,
+  branchName: string,
+  worktreePath: string,
+): Promise<void> => {
+  const statusResult = await exec("git", ["status", "--short"], { cwd: worktreePath });
+  assertSuccess(statusResult, "git status --short");
+  if (statusResult.stdout.trim().length > 0) {
+    throw new Error(
+      `Issue branch ${branchName} is stale and has uncommitted changes in ${worktreePath}; rebase or recreate it before starting Aigile.`,
+    );
+  }
+};
+
+const recoverStaleIssueBranch = async (
+  exec: ExecCommand,
+  repoPath: string,
+  branchName: string,
+  syncedBase: SyncedBaseBranch,
+  worktreePath?: string,
+): Promise<void> => {
+  const existingWorktreePath =
+    worktreePath ?? (await worktreePathForBranch(exec, repoPath, branchName));
+
+  if (existingWorktreePath !== undefined) {
+    await assertCleanWorktree(exec, branchName, existingWorktreePath);
+    const mergeResult = await exec("git", ["merge", "--ff-only", syncedBase.remoteRef], {
+      cwd: existingWorktreePath,
+    });
+    assertSuccess(mergeResult, `git merge --ff-only ${syncedBase.remoteRef}`);
+    return;
+  }
+
+  const resetBranchResult = await exec("git", ["branch", "-f", branchName, syncedBase.remoteRef], {
+    cwd: repoPath,
+  });
+  assertSuccess(resetBranchResult, `git branch -f ${branchName} ${syncedBase.remoteRef}`);
 };
 
 const worktreePathForBranch = async (
@@ -221,7 +260,13 @@ const inspectWorkspaceTarget = async (
         `Issue worktree path already exists for branch ${existingBranch}, expected ${workspace.branchName}`,
       );
     }
-    await assertIssueBranchContainsBase(exec, repoPath, workspace.branchName, syncedBase);
+    await assertIssueBranchContainsBase(
+      exec,
+      repoPath,
+      workspace.branchName,
+      syncedBase,
+      workspace.worktreePath,
+    );
     return "existing_worktree";
   }
 
