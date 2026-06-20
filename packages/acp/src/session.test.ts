@@ -250,4 +250,47 @@ describe("ACP session translation", () => {
       },
     ]);
   });
+
+  it("selects the agent-defined option id matching the decision kind", async () => {
+    const rpc = mockRpc();
+    const session = createAcpSession(rpc, {
+      acpSessionId: "acp-1",
+      sessionId: "role-session-1",
+      decidePermission: () => "allow_once",
+    });
+    session.onEvent(() => {});
+
+    await expect(
+      rpc.emitRequest("session/request_permission", {
+        sessionId: "acp-1",
+        toolCall: { toolCallId: "tool-1", title: "Bash", rawInput: { command: "bun test" } },
+        options: [
+          { optionId: "proceed-once", name: "Allow", kind: "allow_once" },
+          { optionId: "deny-once", name: "Reject", kind: "reject_once" },
+        ],
+      }),
+    ).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "proceed-once" },
+    });
+  });
+
+  it("cancels when no option matches the decision kind", async () => {
+    const rpc = mockRpc();
+    const session = createAcpSession(rpc, {
+      acpSessionId: "acp-1",
+      sessionId: "role-session-1",
+      decidePermission: () => "allow_once",
+    });
+    session.onEvent(() => {});
+
+    await expect(
+      rpc.emitRequest("session/request_permission", {
+        sessionId: "acp-1",
+        toolCall: { toolCallId: "tool-1", title: "Bash", rawInput: { command: "rm -rf /" } },
+        options: [{ optionId: "deny-once", name: "Reject", kind: "reject_once" }],
+      }),
+    ).resolves.toEqual({
+      outcome: { outcome: "cancelled" },
+    });
+  });
 });
