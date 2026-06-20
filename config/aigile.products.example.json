@@ -1,0 +1,21 @@
+{
+  "products": [
+    {
+      "id": "aigile",
+      "linear": {
+        "team": "LBE",
+        "project": "Aigile"
+      },
+      "github": {
+        "repo": "lbelyaev/aigile",
+        "baseBranch": "main"
+      },
+      "worktreesPath": "~/.aigile/worktrees/lbelyaev/aigile",
+      "defaultRun": {
+        "startRun": true,
+        "mode": "agent_write",
+        "publish": true
+      }
+    }
+  ]
+}

@@ -20,6 +20,7 @@ bun run demo:workspace
 bun run demo:github
 bun run demo:linear
 bun run packages/cli/src/main.ts run LIN-123 --repo /tmp/aigile-demo-repo --worktrees /tmp/aigile-demo-repo/.worktrees --dry-run
+bun run packages/cli/src/main.ts watch --linear --product aigile --products-config config/aigile.products.example.json --runtime-config config/aigile.runtimes.example.json --poll-interval 30s --max-polls 1
 ```
 
 ## Restate

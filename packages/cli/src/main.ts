@@ -11,7 +11,15 @@ import {
   listLinearTeams,
   listLinearWorkflowStateNames,
 } from "@aigile/adapters";
-import { loadRuntimeConfigFromJson, runtimeConfigToRegistry } from "@aigile/config";
+import {
+  findProductConfig,
+  loadProductConfigFromFile,
+  loadRuntimeConfigFromJson,
+  resolveProductPaths,
+  runtimeConfigToRegistry,
+  splitGithubRepo,
+  type RuntimeProductConfig,
+} from "@aigile/config";
 import {
   runDemoIssue,
   runDemoIssueFromLinear,
@@ -259,6 +267,8 @@ export interface CliArgs {
   description?: string;
   acceptanceCriteria?: string[];
   runtimeConfigPath?: string;
+  productsConfigPath?: string;
+  product?: string;
   repoPath?: string;
   worktreesPath?: string;
   baseBranch?: string;
@@ -277,6 +287,27 @@ export interface CliArgs {
   pollIntervalMs?: number;
   maxPolls?: number;
   startRun?: boolean;
+}
+
+export interface ProductCliResolutionOptions {
+  cwd?: string;
+  homeDir?: string;
+}
+
+export interface ResolvedProductCliContext {
+  productId?: string;
+  linearTeam?: string;
+  linearProject?: string;
+  githubRepo?: string;
+  githubOwner?: string;
+  githubRepository?: string;
+  baseBranch: string;
+  repoPath: string;
+  worktreesPath: string;
+  dryRun: boolean;
+  agentWrite: boolean;
+  publish: boolean;
+  startRun: boolean;
 }
 
 export interface PublishPreflightInput {
@@ -308,6 +339,56 @@ export const parseGitHubRepoFromRemoteUrl = (remoteUrl: string): string | undefi
   if (httpsMatch) return httpsMatch[1];
   const sshUrlMatch = /^ssh:\/\/git@github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(trimmed);
   return sshUrlMatch?.[1];
+};
+
+export const resolveProductCliContext = (
+  args: CliArgs,
+  productConfig?: RuntimeProductConfig,
+  options: ProductCliResolutionOptions = {},
+): ResolvedProductCliContext => {
+  const productsConfigPath = args.productsConfigPath ?? "config/aigile.products.json";
+  const product =
+    args.product === undefined
+      ? undefined
+      : findProductConfig(
+          productConfig ?? loadProductConfigFromFile(productsConfigPath),
+          args.product,
+        );
+  const productPaths =
+    product === undefined
+      ? undefined
+      : resolveProductPaths(product, {
+          cwd: options.cwd ?? process.cwd(),
+          ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
+        });
+  const linearTeam = args.linearTeam ?? product?.linear.team;
+  const githubRepo = args.githubRepo ?? product?.github.repo;
+  const githubParts = githubRepo === undefined ? undefined : splitGithubRepo(githubRepo);
+  const mode =
+    args.dryRun === true
+      ? "dry_run"
+      : args.agentWrite === true
+        ? "agent_write"
+        : product?.defaultRun.mode;
+  return {
+    ...(product === undefined ? {} : { productId: product.id }),
+    ...(linearTeam === undefined ? {} : { linearTeam }),
+    ...(product?.linear.project === undefined ? {} : { linearProject: product.linear.project }),
+    ...(githubRepo === undefined ? {} : { githubRepo }),
+    ...(githubParts === undefined
+      ? {}
+      : { githubOwner: githubParts.owner, githubRepository: githubParts.repo }),
+    baseBranch: args.baseBranch ?? product?.github.baseBranch ?? "main",
+    repoPath: args.repoPath ?? productPaths?.repoPath ?? options.cwd ?? process.cwd(),
+    worktreesPath:
+      args.worktreesPath ??
+      productPaths?.worktreesPath ??
+      `${options.cwd ?? process.cwd()}/.worktrees`,
+    dryRun: mode === "dry_run",
+    agentWrite: mode === "agent_write",
+    publish: args.publish ?? product?.defaultRun.publish ?? false,
+    startRun: args.startRun ?? product?.defaultRun.startRun ?? false,
+  };
 };
 
 const resolveGitHubRepo = (explicitRepo: string | undefined, remoteUrl: string): string => {
@@ -451,12 +532,14 @@ export interface WatchOnceCliInput {
   claimStatus?: string;
   provider?: string;
   team?: string;
+  productId?: string;
+  githubRepo?: string;
 }
 
 const formatWatchOnceResult = async (
   result: Awaited<ReturnType<typeof watchOnce>>,
   tracker: IssueTrackerAdapter,
-  context: { provider?: string; team?: string } = {},
+  context: { provider?: string; team?: string; productId?: string; githubRepo?: string } = {},
 ): Promise<string> => {
   const claimedIssue =
     result.claimedIssue === undefined ? undefined : await tracker.getIssue(result.claimedIssue.key);
@@ -464,7 +547,9 @@ const formatWatchOnceResult = async (
   return [
     "Aigile watch: once",
     ...(context.provider === undefined ? [] : [`Provider: ${context.provider}`]),
+    ...(context.productId === undefined ? [] : [`Product: ${context.productId}`]),
     ...(context.team === undefined ? [] : [`Team: ${context.team}`]),
+    ...(context.githubRepo === undefined ? [] : [`GitHub repo: ${context.githubRepo}`]),
     `Ready issues: ${result.readyCount}`,
     `Claimed: ${claimedIssue?.key ?? "none"}`,
     ...(claimedIssue === undefined
@@ -497,15 +582,19 @@ export const runWatchOnceCli = async (input: WatchOnceCliInput): Promise<string>
       : { ...watchInput, claimStatus: input.claimStatus },
   );
 
-  const context: { provider?: string; team?: string } = {};
+  const context: { provider?: string; team?: string; productId?: string; githubRepo?: string } = {};
   if (input.provider !== undefined) context.provider = input.provider;
   if (input.team !== undefined) context.team = input.team;
+  if (input.productId !== undefined) context.productId = input.productId;
+  if (input.githubRepo !== undefined) context.githubRepo = input.githubRepo;
   return formatWatchOnceResult(result, tracker, context);
 };
 
 export interface LinearWatchOnceCliInput {
   apiKey: string;
   teamKey: string;
+  productId?: string;
+  githubRepo?: string;
   readyStatus?: string;
   claimStatus?: string;
   fetchGraphql?: LinearFetchGraphql;
@@ -759,6 +848,8 @@ export const runLinearWatchOnceCli = async (input: LinearWatchOnceCliInput): Pro
     claimStatus: input.claimStatus ?? "In Progress",
     provider: "linear",
     team: input.teamKey,
+    ...(input.productId === undefined ? {} : { productId: input.productId }),
+    ...(input.githubRepo === undefined ? {} : { githubRepo: input.githubRepo }),
   });
 };
 
@@ -812,7 +903,9 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
   };
   emit("Aigile watch: loop");
   emit("Provider: linear");
+  if (input.productId !== undefined) emit(`Product: ${input.productId}`);
   emit(`Team: ${input.teamKey}`);
+  if (input.githubRepo !== undefined) emit(`GitHub repo: ${input.githubRepo}`);
   emit(`Poll interval: ${input.pollIntervalMs}ms`);
 
   await watchLoop({
@@ -944,6 +1037,8 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     const readyStatus = optionValue(args, "--ready-status");
     const claimStatus = optionValue(args, "--claim-status");
     const runtimeConfigPath = optionValue(args, "--runtime-config");
+    const productsConfigPath = optionValue(args, "--products-config");
+    const product = optionValue(args, "--product");
     const repoPath = optionValue(args, "--repo");
     const worktreesPath = optionValue(args, "--worktrees");
     const baseBranch = optionValue(args, "--base-branch");
@@ -959,6 +1054,8 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (readyStatus !== undefined) parsed.readyStatus = readyStatus;
     if (claimStatus !== undefined) parsed.claimStatus = claimStatus;
     if (runtimeConfigPath !== undefined) parsed.runtimeConfigPath = runtimeConfigPath;
+    if (productsConfigPath !== undefined) parsed.productsConfigPath = productsConfigPath;
+    if (product !== undefined) parsed.product = product;
     if (repoPath !== undefined) parsed.repoPath = repoPath;
     if (worktreesPath !== undefined) parsed.worktreesPath = worktreesPath;
     if (baseBranch !== undefined) parsed.baseBranch = baseBranch;
@@ -980,7 +1077,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
         throw new Error("watch --start-run requires --poll-interval");
       if (parsed.runtimeConfigPath === undefined)
         throw new Error("watch --start-run requires --runtime-config");
-      if (parsed.dryRun !== true && parsed.agentWrite !== true) {
+      if (parsed.product === undefined && parsed.dryRun !== true && parsed.agentWrite !== true) {
         throw new Error("watch --start-run requires --dry-run or --agent-write");
       }
     }
@@ -1078,19 +1175,21 @@ const main = async (): Promise<void> => {
     return;
   }
   if (args.mode === "watch") {
+    const watchContext = resolveProductCliContext(args);
     if (args.preflightOnly) {
       if (!args.linear) throw new Error("watch --preflight requires --linear");
       const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
       const apiKey = process.env[apiKeyEnv];
       if (!apiKey) throw new Error(`watch --linear requires ${apiKeyEnv} to be set`);
       const preflightInput: LinearWatchPreflightCliInput = { apiKey };
-      if (args.linearTeam !== undefined) preflightInput.teamKey = args.linearTeam;
+      if (watchContext.linearTeam !== undefined) preflightInput.teamKey = watchContext.linearTeam;
       const output = await runLinearWatchPreflightCli(preflightInput);
       process.stdout.write(`${output}\n`);
       return;
     }
     if (args.linear) {
-      if (args.linearTeam === undefined) throw new Error("watch --linear requires --linear-team");
+      if (watchContext.linearTeam === undefined)
+        throw new Error("watch --linear requires --linear-team or --product");
       const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
       const apiKey = process.env[apiKeyEnv];
       if (!apiKey) throw new Error(`watch --linear requires ${apiKeyEnv} to be set`);
@@ -1099,59 +1198,77 @@ const main = async (): Promise<void> => {
         process.once("SIGINT", () => controller.abort());
         const loopInput: LinearWatchLoopCliInput = {
           apiKey,
-          teamKey: args.linearTeam,
+          teamKey: watchContext.linearTeam,
           pollIntervalMs: args.pollIntervalMs,
           signal: controller.signal,
           onLine: (line) => process.stdout.write(`${line}\n`),
         };
+        if (watchContext.productId !== undefined) loopInput.productId = watchContext.productId;
+        if (watchContext.githubRepo !== undefined) loopInput.githubRepo = watchContext.githubRepo;
         if (args.readyStatus !== undefined) loopInput.readyStatus = args.readyStatus;
         if (args.claimStatus !== undefined) loopInput.claimStatus = args.claimStatus;
         if (args.maxPolls !== undefined) loopInput.maxPolls = args.maxPolls;
-        if (args.startRun) {
+        if (watchContext.startRun) {
           if (args.runtimeConfigPath === undefined)
             throw new Error("watch --start-run requires --runtime-config");
-          if (args.dryRun !== true && args.agentWrite !== true) {
+          if (watchContext.dryRun !== true && watchContext.agentWrite !== true) {
             throw new Error("watch --start-run requires --dry-run or --agent-write");
           }
           const publishRunInput: Pick<
             LinearIssueWorkflowCliInput,
             "publish" | "remote" | "pullRequestTarget" | "codeHost"
           > = {};
-          if (args.publish === true && args.dryRun !== true) {
+          if (watchContext.publish === true && watchContext.dryRun !== true) {
             const remote = args.remote ?? "origin";
-            const baseBranch = args.baseBranch ?? "main";
             const publishPreflightInput: PublishPreflightInput = {
-              repoPath: args.repoPath ?? process.cwd(),
+              repoPath: watchContext.repoPath,
               remote,
-              baseBranch,
+              baseBranch: watchContext.baseBranch,
             };
-            if (args.githubRepo !== undefined) publishPreflightInput.githubRepo = args.githubRepo;
+            if (watchContext.githubRepo !== undefined)
+              publishPreflightInput.githubRepo = watchContext.githubRepo;
             const publishPreflight = await runPublishPreflight(publishPreflightInput);
             const [owner, repo] = publishPreflight.githubRepo.split("/");
             if (!owner || !repo) throw new Error("--github-repo must be in owner/repo format");
             publishRunInput.publish = true;
             publishRunInput.remote = remote;
-            publishRunInput.pullRequestTarget = { owner, repo, baseBranch };
+            publishRunInput.pullRequestTarget = {
+              owner,
+              repo,
+              baseBranch: watchContext.baseBranch,
+            };
             publishRunInput.codeHost = createGitHubCliCodeHostAdapter({
-              cwd: args.repoPath ?? process.cwd(),
+              cwd: watchContext.repoPath,
               exec: async (command, commandArgs, options) =>
                 defaultExecCommand(command, commandArgs, { cwd: options.cwd ?? process.cwd() }),
             });
-          } else if (args.publish === true) {
+          } else if (watchContext.publish === true) {
             publishRunInput.publish = true;
             publishRunInput.remote = args.remote ?? "origin";
+            if (
+              watchContext.githubOwner !== undefined &&
+              watchContext.githubRepository !== undefined
+            ) {
+              publishRunInput.pullRequestTarget = {
+                owner: watchContext.githubOwner,
+                repo: watchContext.githubRepository,
+                baseBranch: watchContext.baseBranch,
+              };
+            }
           }
           loopInput.startRun = async (issue) =>
             runLinearIssueWorkflowCli({
               apiKey,
               issueKey: issue.key,
-              ...(args.linearTeam === undefined ? {} : { teamKey: args.linearTeam }),
-              repoPath: args.repoPath ?? process.cwd(),
-              worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
+              ...(watchContext.linearTeam === undefined
+                ? {}
+                : { teamKey: watchContext.linearTeam }),
+              repoPath: watchContext.repoPath,
+              worktreesPath: watchContext.worktreesPath,
               runtimeConfigPath: args.runtimeConfigPath!,
-              ...(args.baseBranch === undefined ? {} : { baseBranch: args.baseBranch }),
-              ...(args.dryRun === true ? { dryRun: true } : {}),
-              ...(args.agentWrite === true ? { agentWrite: true } : {}),
+              baseBranch: watchContext.baseBranch,
+              ...(watchContext.dryRun === true ? { dryRun: true } : {}),
+              ...(watchContext.agentWrite === true ? { agentWrite: true } : {}),
               ...publishRunInput,
               onProgressLine: (line) => process.stderr.write(`${line}\n`),
             });
@@ -1161,8 +1278,10 @@ const main = async (): Promise<void> => {
       }
       const linearInput: LinearWatchOnceCliInput = {
         apiKey,
-        teamKey: args.linearTeam,
+        teamKey: watchContext.linearTeam,
       };
+      if (watchContext.productId !== undefined) linearInput.productId = watchContext.productId;
+      if (watchContext.githubRepo !== undefined) linearInput.githubRepo = watchContext.githubRepo;
       if (args.readyStatus !== undefined) linearInput.readyStatus = args.readyStatus;
       if (args.claimStatus !== undefined) linearInput.claimStatus = args.claimStatus;
       const output = await runLinearWatchOnceCli(linearInput);
