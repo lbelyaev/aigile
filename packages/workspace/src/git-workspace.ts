@@ -180,18 +180,26 @@ const assertIssueBranchContainsBase = async (
   );
 };
 
-const assertCleanWorktree = async (
-  exec: ExecCommand,
-  branchName: string,
-  worktreePath: string,
-): Promise<void> => {
+const worktreeIsDirty = async (exec: ExecCommand, worktreePath: string): Promise<boolean> => {
   const statusResult = await exec("git", ["status", "--short"], { cwd: worktreePath });
   assertSuccess(statusResult, "git status --short");
-  if (statusResult.stdout.trim().length > 0) {
-    throw new Error(
-      `Issue branch ${branchName} is stale and has uncommitted changes in ${worktreePath}; rebase or recreate it before starting Aigile.`,
-    );
-  }
+  return statusResult.stdout.trim().length > 0;
+};
+
+// Issue worktrees are owned entirely by Aigile and keyed per issue, so uncommitted
+// changes are abandoned leftovers from a failed run. Discard them and reset the
+// worktree to the base branch rather than refusing to recover (which wedges the issue).
+const resetWorktreeToBase = async (
+  exec: ExecCommand,
+  worktreePath: string,
+  syncedBase: SyncedBaseBranch,
+): Promise<void> => {
+  const resetResult = await exec("git", ["reset", "--hard", syncedBase.remoteRef], {
+    cwd: worktreePath,
+  });
+  assertSuccess(resetResult, `git reset --hard ${syncedBase.remoteRef}`);
+  const cleanResult = await exec("git", ["clean", "-fd"], { cwd: worktreePath });
+  assertSuccess(cleanResult, "git clean -fd");
 };
 
 const recoverStaleIssueBranch = async (
@@ -205,7 +213,10 @@ const recoverStaleIssueBranch = async (
     worktreePath ?? (await worktreePathForBranch(exec, repoPath, branchName));
 
   if (existingWorktreePath !== undefined) {
-    await assertCleanWorktree(exec, branchName, existingWorktreePath);
+    if (await worktreeIsDirty(exec, existingWorktreePath)) {
+      await resetWorktreeToBase(exec, existingWorktreePath, syncedBase);
+      return;
+    }
     const mergeResult = await exec("git", ["merge", "--ff-only", syncedBase.remoteRef], {
       cwd: existingWorktreePath,
     });
