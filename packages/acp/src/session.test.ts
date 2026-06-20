@@ -1,21 +1,34 @@
 import { describe, expect, it } from "bun:test";
+import { PassThrough } from "node:stream";
 import {
+  createRpcClient,
   createAcpSession,
   translateSessionUpdate,
   type JsonRpcNotification,
+  type RequestOptions,
   type RpcClient,
 } from "./index.js";
 
 const mockRpc = (): RpcClient & {
   emitNotification: (notification: JsonRpcNotification) => void;
   emitRequest: (method: string, params: unknown) => Promise<unknown>;
+  notifications: Array<{ method: string; params: unknown }>;
+  requests: Array<{ method: string; params: unknown; options: RequestOptions | undefined }>;
 } => {
   let notificationHandler: ((notification: JsonRpcNotification) => void) | undefined;
   let requestHandler: ((method: string, params: unknown) => Promise<unknown>) | undefined;
+  const notifications: Array<{ method: string; params: unknown }> = [];
+  const requests: Array<{ method: string; params: unknown; options: RequestOptions | undefined }> =
+    [];
 
   return {
-    sendRequest: async () => undefined,
-    sendNotification: () => undefined,
+    sendRequest: async (method, params, options) => {
+      requests.push({ method, params, options });
+      return undefined;
+    },
+    sendNotification: (method, params) => {
+      notifications.push({ method, params });
+    },
     sendResponse: () => undefined,
     sendErrorResponse: () => undefined,
     onNotification: (handler) => {
@@ -38,7 +51,19 @@ const mockRpc = (): RpcClient & {
       if (!requestHandler) throw new Error("missing request handler");
       return requestHandler(method, params);
     },
+    notifications,
+    requests,
   };
+};
+
+const collectWrites = (stream: PassThrough): string[] => {
+  const writes: string[] = [];
+  stream.on("data", (chunk: Buffer) => {
+    for (const line of chunk.toString().split("\n")) {
+      if (line.trim().length > 0) writes.push(line);
+    }
+  });
+  return writes;
 };
 
 describe("ACP session translation", () => {
@@ -319,5 +344,48 @@ describe("ACP session translation", () => {
     });
 
     expect(receivedKind).toBe("execute");
+  });
+
+  it("uses the configured prompt timeout for session/prompt", async () => {
+    const rpc = mockRpc();
+    const session = createAcpSession(rpc, {
+      acpSessionId: "acp-1",
+      sessionId: "role-session-1",
+      promptTimeoutMs: 1_234,
+    });
+
+    await session.prompt("hello");
+
+    expect(rpc.requests).toEqual([
+      {
+        method: "session/prompt",
+        params: {
+          sessionId: "acp-1",
+          prompt: [{ type: "text", text: "hello" }],
+        },
+        options: { timeoutMs: 1_234 },
+      },
+    ]);
+  });
+
+  it("rejects and cancels the ACP session when prompt exceeds its timeout", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const writes = collectWrites(output);
+    const rpc = createRpcClient(input, output);
+    const session = createAcpSession(rpc, {
+      acpSessionId: "acp-1",
+      sessionId: "role-session-1",
+      promptTimeoutMs: 5,
+    });
+
+    await expect(session.prompt("hello")).rejects.toThrow(
+      'RPC request "session/prompt" timed out after 5ms',
+    );
+
+    expect(writes.map((write) => JSON.parse(write.trim()).method)).toEqual([
+      "session/prompt",
+      "session/cancel",
+    ]);
   });
 });

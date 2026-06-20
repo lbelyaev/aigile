@@ -49,6 +49,7 @@ export interface ConnectAcpRuntimeInput extends CreateAcpProcessOptions {
   initializeParams?: unknown;
   sessionParams: Record<string, unknown>;
   sessionId: string;
+  promptTimeoutMs?: AcpSessionOptions["promptTimeoutMs"];
   decidePermission?: AcpSessionOptions["decidePermission"];
 }
 
@@ -141,22 +142,32 @@ export const connectAcpRuntime = async (
   input: ConnectAcpRuntimeInput,
 ): Promise<ConnectedAcpRuntime> => {
   const processHandle = createAcpProcess(input.command, input);
-  const initializeResult = await processHandle.rpc.sendRequest(
-    "initialize",
-    input.initializeParams ?? {},
-  );
-  const sessionResult = await processHandle.rpc.sendRequest("session/new", input.sessionParams);
-  const sessionOptions: AcpSessionOptions = {
-    sessionId: input.sessionId,
-    acpSessionId: extractSessionId(sessionResult),
-  };
-  if (input.decidePermission !== undefined)
-    sessionOptions.decidePermission = input.decidePermission;
-  const session = createAcpSession(processHandle.rpc, sessionOptions);
+  try {
+    const initializeResult = await processHandle.rpc.sendRequest(
+      "initialize",
+      input.initializeParams ?? {},
+    );
+    const sessionResult = await processHandle.rpc.sendRequest("session/new", input.sessionParams);
+    const sessionOptions: AcpSessionOptions = {
+      sessionId: input.sessionId,
+      acpSessionId: extractSessionId(sessionResult),
+    };
+    if (input.promptTimeoutMs !== undefined) sessionOptions.promptTimeoutMs = input.promptTimeoutMs;
+    if (input.decidePermission !== undefined)
+      sessionOptions.decidePermission = input.decidePermission;
+    const session = createAcpSession(processHandle.rpc, sessionOptions);
 
-  return {
-    process: processHandle,
-    session,
-    initializeResult,
-  };
+    return {
+      process: processHandle,
+      session,
+      initializeResult,
+    };
+  } catch (error) {
+    try {
+      await processHandle.kill();
+    } catch {
+      // Preserve the connect failure; callers can still kill defensively in their own finally.
+    }
+    throw error;
+  }
 };

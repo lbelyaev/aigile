@@ -1,4 +1,5 @@
 import {
+  DEFAULT_ACP_PROMPT_TIMEOUT_MS,
   connectAcpRuntime,
   extractTokenUsage,
   type AcpPermissionRequest,
@@ -86,9 +87,25 @@ export type AcpRoleProgressEvent =
 export interface AcpRoleRunnerOptions {
   connector?: AcpRuntimeConnector;
   onProgress?: (event: AcpRoleProgressEvent) => void;
+  promptTimeoutMs?: number;
 }
 
-export const buildAcpRuntimeConnectInput = (input: RoleRunInput): ConnectAcpRuntimeInput => {
+export interface BuildAcpRuntimeConnectInputOptions {
+  promptTimeoutMs?: number;
+}
+
+const resolvePromptTimeoutMs = (timeoutMs: number | undefined): number => {
+  const resolved = timeoutMs ?? DEFAULT_ACP_PROMPT_TIMEOUT_MS;
+  if (!Number.isFinite(resolved) || resolved <= 0) {
+    throw new Error("ACP prompt timeout must be a finite positive number");
+  }
+  return resolved;
+};
+
+export const buildAcpRuntimeConnectInput = (
+  input: RoleRunInput,
+  options: BuildAcpRuntimeConnectInputOptions = {},
+): ConnectAcpRuntimeInput => {
   if (input.runtime.transport !== "stdio" || !input.runtime.command) {
     throw new Error(
       `ACP role runner currently supports stdio command runtimes only: ${input.runtime.id}`,
@@ -98,6 +115,7 @@ export const buildAcpRuntimeConnectInput = (input: RoleRunInput): ConnectAcpRunt
   const connectInput: ConnectAcpRuntimeInput = {
     command: input.runtime.command,
     sessionId: `${input.issueId}:${input.roleId}`,
+    promptTimeoutMs: resolvePromptTimeoutMs(options.promptTimeoutMs),
     initializeParams: {
       protocolVersion: 1,
       clientCapabilities: {},
@@ -363,7 +381,9 @@ export const createAcpRoleRunner = (options: AcpRoleRunnerOptions = {}): RoleRun
   const connector =
     options.connector ??
     (async (input) => {
-      const connectInput = buildAcpRuntimeConnectInput(input);
+      const connectOptions: BuildAcpRuntimeConnectInputOptions =
+        options.promptTimeoutMs === undefined ? {} : { promptTimeoutMs: options.promptTimeoutMs };
+      const connectInput = buildAcpRuntimeConnectInput(input, connectOptions);
       connectInput.forwardStderr = (chunk) =>
         options.onProgress?.({
           type: "runtime_stderr",
@@ -378,101 +398,106 @@ export const createAcpRoleRunner = (options: AcpRoleRunnerOptions = {}): RoleRun
       options.onProgress?.({ type: "role_started", ...progressBase(input) });
       options.onProgress?.({ type: "runtime_connecting", ...progressBase(input) });
       const connection = await connector(input);
-      options.onProgress?.({
-        type: "runtime_connected",
-        ...progressBase(input),
-        model: runtimeModel(input),
-        acpSessionId: connection.session.acpSessionId,
-      });
-      let streamedText = "";
-      let fileReadCount = 0;
-      let tokenUsage: RuntimeTokenUsage | undefined;
-      let policyViolation:
-        | { reason: "broad_discovery" | "file_read_budget"; detail: string }
-        | undefined;
-      const unsubscribe = connection.session.onEvent((event) => {
-        if (event.type === "text_delta") {
-          streamedText += event.delta;
-          tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
-          options.onProgress?.({ type: "text_delta", ...progressBase(input), delta: event.delta });
-          return;
-        }
-        if (event.type === "thinking_delta") {
-          tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
-          options.onProgress?.({
-            type: "thinking_delta",
-            ...progressBase(input),
-            delta: event.delta,
-          });
-          return;
-        }
-        if (event.type === "token_usage") {
-          tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
-          if (tokenUsage !== undefined) {
+      let unsubscribe = (): void => undefined;
+      try {
+        options.onProgress?.({
+          type: "runtime_connected",
+          ...progressBase(input),
+          model: runtimeModel(input),
+          acpSessionId: connection.session.acpSessionId,
+        });
+        let streamedText = "";
+        let fileReadCount = 0;
+        let tokenUsage: RuntimeTokenUsage | undefined;
+        let policyViolation:
+          | { reason: "broad_discovery" | "file_read_budget"; detail: string }
+          | undefined;
+        unsubscribe = connection.session.onEvent((event) => {
+          if (event.type === "text_delta") {
+            streamedText += event.delta;
+            tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
             options.onProgress?.({
-              type: "token_usage",
+              type: "text_delta",
               ...progressBase(input),
-              usage: tokenUsage,
-            });
-          }
-          return;
-        }
-        if (event.type === "tool_start") {
-          options.onProgress?.({ type: "tool_start", ...progressBase(input), tool: event.tool });
-          const command = toolCommand(event.tool, event.params);
-          const mode = executionPolicyMode(input);
-          if (mode !== undefined && isBroadDiscoveryCommand(command)) {
-            policyViolation = { reason: "broad_discovery", detail: command };
-            options.onProgress?.({
-              type: "policy_violation",
-              ...progressBase(input),
-              reason: policyViolation.reason,
-              detail: policyViolation.detail,
+              delta: event.delta,
             });
             return;
           }
-          if (mode === "dry_run" && isFileReadCommand(command)) {
-            fileReadCount += 1;
-            if (fileReadCount > 5 && policyViolation === undefined) {
-              policyViolation = {
-                reason: "file_read_budget",
-                detail: `${fileReadCount}/5 ${command}`,
-              };
+          if (event.type === "thinking_delta") {
+            tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
+            options.onProgress?.({
+              type: "thinking_delta",
+              ...progressBase(input),
+              delta: event.delta,
+            });
+            return;
+          }
+          if (event.type === "token_usage") {
+            tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
+            if (tokenUsage !== undefined) {
+              options.onProgress?.({
+                type: "token_usage",
+                ...progressBase(input),
+                usage: tokenUsage,
+              });
+            }
+            return;
+          }
+          if (event.type === "tool_start") {
+            options.onProgress?.({ type: "tool_start", ...progressBase(input), tool: event.tool });
+            const command = toolCommand(event.tool, event.params);
+            const mode = executionPolicyMode(input);
+            if (mode !== undefined && isBroadDiscoveryCommand(command)) {
+              policyViolation = { reason: "broad_discovery", detail: command };
               options.onProgress?.({
                 type: "policy_violation",
                 ...progressBase(input),
                 reason: policyViolation.reason,
                 detail: policyViolation.detail,
               });
+              return;
             }
+            if (mode === "dry_run" && isFileReadCommand(command)) {
+              fileReadCount += 1;
+              if (fileReadCount > 5 && policyViolation === undefined) {
+                policyViolation = {
+                  reason: "file_read_budget",
+                  detail: `${fileReadCount}/5 ${command}`,
+                };
+                options.onProgress?.({
+                  type: "policy_violation",
+                  ...progressBase(input),
+                  reason: policyViolation.reason,
+                  detail: policyViolation.detail,
+                });
+              }
+            }
+            return;
           }
-          return;
-        }
-        if (event.type === "tool_end") {
-          tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
-          options.onProgress?.({ type: "tool_end", ...progressBase(input), tool: event.tool });
-          return;
-        }
-        if (event.type === "permission_decision") {
-          options.onProgress?.({
-            type: "permission_decision",
-            ...progressBase(input),
-            tool: event.tool,
-            description: event.description,
-            decision: event.decision,
-          });
-          return;
-        }
-        if (event.type === "approval_request") {
-          options.onProgress?.({
-            type: "approval_request",
-            ...progressBase(input),
-            tool: event.tool,
-            description: event.description,
-          });
-        }
-      });
-      try {
+          if (event.type === "tool_end") {
+            tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
+            options.onProgress?.({ type: "tool_end", ...progressBase(input), tool: event.tool });
+            return;
+          }
+          if (event.type === "permission_decision") {
+            options.onProgress?.({
+              type: "permission_decision",
+              ...progressBase(input),
+              tool: event.tool,
+              description: event.description,
+              decision: event.decision,
+            });
+            return;
+          }
+          if (event.type === "approval_request") {
+            options.onProgress?.({
+              type: "approval_request",
+              ...progressBase(input),
+              tool: event.tool,
+              description: event.description,
+            });
+          }
+        });
         options.onProgress?.({ type: "prompt_started", ...progressBase(input) });
         const promptResult = await connection.session.prompt(buildPrompt(input));
         tokenUsage = mergeTokenUsage(tokenUsage, extractTokenUsage(promptResult));
@@ -497,9 +522,12 @@ export const createAcpRoleRunner = (options: AcpRoleRunnerOptions = {}): RoleRun
           payload: structuredClone(response.payload),
         } satisfies WorkflowArtifact;
       } finally {
-        unsubscribe();
-        await connection.process.kill();
-        options.onProgress?.({ type: "runtime_stopped", ...progressBase(input) });
+        try {
+          unsubscribe();
+        } finally {
+          await connection.process.kill();
+          options.onProgress?.({ type: "runtime_stopped", ...progressBase(input) });
+        }
       }
     },
   };

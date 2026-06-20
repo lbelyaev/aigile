@@ -47,6 +47,7 @@ export interface AcpTokenUsage {
 export interface AcpSessionOptions {
   sessionId: string;
   acpSessionId: string;
+  promptTimeoutMs?: number;
   decidePermission?: (request: AcpPermissionRequest) => PermissionDecision | undefined;
 }
 
@@ -102,6 +103,8 @@ interface AcpRequestPermissionParams {
   };
   options?: AcpPermissionOption[];
 }
+
+export const DEFAULT_ACP_PROMPT_TIMEOUT_MS = 30 * 60 * 1_000;
 
 const extractText = (content: AcpSessionUpdate["content"]): string => {
   if (!content) return "";
@@ -272,8 +275,21 @@ const permissionDescription = (rawInput: unknown, fallback: string): string => {
   return JSON.stringify(rawInput);
 };
 
+const normalizePromptTimeoutMs = (timeoutMs: number | undefined): number => {
+  const resolved = timeoutMs ?? DEFAULT_ACP_PROMPT_TIMEOUT_MS;
+  if (!Number.isFinite(resolved) || resolved <= 0) {
+    throw new Error("ACP prompt timeout must be a finite positive number");
+  }
+  return resolved;
+};
+
+const isPromptTimeoutError = (error: unknown, timeoutMs: number): boolean =>
+  error instanceof Error &&
+  error.message === `RPC request "session/prompt" timed out after ${timeoutMs}ms`;
+
 export const createAcpSession = (rpc: RpcClient, options: AcpSessionOptions): AcpSession => {
   const handlers: Array<(event: AcpEvent) => void> = [];
+  const promptTimeoutMs = normalizePromptTimeoutMs(options.promptTimeoutMs);
 
   rpc.onNotification((notification) => {
     const event = translateSessionUpdate(notification, options.sessionId, options.acpSessionId);
@@ -324,15 +340,27 @@ export const createAcpSession = (rpc: RpcClient, options: AcpSessionOptions): Ac
   return {
     sessionId: options.sessionId,
     acpSessionId: options.acpSessionId,
-    prompt: (text) =>
-      rpc.sendRequest(
-        "session/prompt",
-        {
-          sessionId: options.acpSessionId,
-          prompt: [{ type: "text", text }],
-        },
-        { timeoutMs: null },
-      ),
+    prompt: async (text) => {
+      try {
+        return await rpc.sendRequest(
+          "session/prompt",
+          {
+            sessionId: options.acpSessionId,
+            prompt: [{ type: "text", text }],
+          },
+          { timeoutMs: promptTimeoutMs },
+        );
+      } catch (error) {
+        if (isPromptTimeoutError(error, promptTimeoutMs)) {
+          try {
+            rpc.sendNotification("session/cancel", { sessionId: options.acpSessionId });
+          } catch {
+            // The runner may already be killing the process; cancellation is best-effort.
+          }
+        }
+        throw error;
+      }
+    },
     cancel: () => rpc.sendNotification("session/cancel", { sessionId: options.acpSessionId }),
     onEvent: (handler) => {
       handlers.push(handler);
