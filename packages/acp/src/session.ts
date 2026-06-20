@@ -1,4 +1,4 @@
-import type { JsonRpcNotification, RpcClient } from "./rpc.js";
+import { MethodNotHandledError, type JsonRpcNotification, type RpcClient } from "./rpc.js";
 
 export type AcpEvent =
   | { type: "text_delta"; sessionId: string; delta: string; usage?: AcpTokenUsage }
@@ -299,7 +299,7 @@ export const createAcpSession = (rpc: RpcClient, options: AcpSessionOptions): Ac
 
   rpc.onRequest(async (method, params) => {
     if (method !== "session/request_permission") {
-      throw new Error(`Unhandled ACP request: ${method}`);
+      throw new MethodNotHandledError(method);
     }
 
     const permission = params as AcpRequestPermissionParams;
