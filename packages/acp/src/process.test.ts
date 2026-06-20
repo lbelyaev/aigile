@@ -20,12 +20,22 @@ const createMockSpawn = (): {
   stderr: PassThrough;
   child: AcpChildProcess;
   killSignals: NodeJS.Signals[];
+  calls: Array<{
+    command: string;
+    args: readonly string[];
+    options: Parameters<SpawnAcpProcess>[2];
+  }>;
 } => {
   const stdout = new PassThrough();
   const stdin = new PassThrough();
   const stderr = new PassThrough();
   const exitHandlers: Array<(code: number | null) => void> = [];
   const killSignals: NodeJS.Signals[] = [];
+  const calls: Array<{
+    command: string;
+    args: readonly string[];
+    options: Parameters<SpawnAcpProcess>[2];
+  }> = [];
   const child: AcpChildProcess = {
     stdin,
     stdout,
@@ -45,12 +55,16 @@ const createMockSpawn = (): {
     },
   };
   return {
-    spawn: () => child,
+    spawn: (command, args, options) => {
+      calls.push({ command, args, options });
+      return child;
+    },
     stdout,
     stdin,
     stderr,
     child,
     killSignals,
+    calls,
   };
 };
 
@@ -64,6 +78,75 @@ const createStubbornMockSpawn = (): ReturnType<typeof createMockSpawn> => {
 };
 
 describe("ACP process connector", () => {
+  it("allowlists the spawned agent environment", async () => {
+    const originalPath = process.env.PATH;
+    const originalHome = process.env.HOME;
+    const originalRuntimeAllowed = process.env.RUNTIME_ALLOWED;
+    const originalSentinelSecret = process.env.SENTINEL_SECRET;
+    const originalUndeclaredParent = process.env.UNDECLARED_PARENT;
+    try {
+      process.env.PATH = "/parent-path";
+      process.env.HOME = "/parent-home";
+      process.env.RUNTIME_ALLOWED = "runtime";
+      process.env.SENTINEL_SECRET = "secret";
+      process.env.UNDECLARED_PARENT = "inherited";
+
+      const mock = createMockSpawn();
+      const processHandle = createAcpProcess(["agent-acp"], {
+        spawnProcess: mock.spawn,
+        envPassthrough: ["RUNTIME_ALLOWED", "MISSING_ALLOWED"],
+        env: { AIGILE: "1", PATH: "/explicit-path" },
+      });
+
+      expect(mock.calls).toHaveLength(1);
+      expect(mock.calls[0]!.options.env).toEqual({
+        PATH: "/explicit-path",
+        HOME: "/parent-home",
+        RUNTIME_ALLOWED: "runtime",
+        AIGILE: "1",
+      });
+      expect(mock.calls[0]!.options.env).not.toHaveProperty("SENTINEL_SECRET");
+      expect(mock.calls[0]!.options.env).not.toHaveProperty("UNDECLARED_PARENT");
+      expect(mock.calls[0]!.options.env).not.toHaveProperty("MISSING_ALLOWED");
+
+      await processHandle.kill();
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      if (originalRuntimeAllowed === undefined) delete process.env.RUNTIME_ALLOWED;
+      else process.env.RUNTIME_ALLOWED = originalRuntimeAllowed;
+      if (originalSentinelSecret === undefined) delete process.env.SENTINEL_SECRET;
+      else process.env.SENTINEL_SECRET = originalSentinelSecret;
+      if (originalUndeclaredParent === undefined) delete process.env.UNDECLARED_PARENT;
+      else process.env.UNDECLARED_PARENT = originalUndeclaredParent;
+    }
+  });
+
+  it("omits undefined allowlisted parent environment values", async () => {
+    const originalPath = process.env.PATH;
+    const originalHome = process.env.HOME;
+    try {
+      delete process.env.PATH;
+      delete process.env.HOME;
+
+      const mock = createMockSpawn();
+      const processHandle = createAcpProcess(["agent-acp"], {
+        spawnProcess: mock.spawn,
+      });
+
+      expect(mock.calls[0]!.options.env).toEqual({});
+
+      await processHandle.kill();
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+    }
+  });
+
   it("spawns a runtime process and sends initialize", async () => {
     const mock = createMockSpawn();
     const writes = collectWrites(mock.stdin);
