@@ -7,6 +7,9 @@ describe("git publisher", () => {
     const publisher = createGitPublisher({
       exec: async (command, args, options) => {
         commands.push([command, ...args, `cwd=${options.cwd}`]);
+        if (args.join(" ") === "diff --cached --quiet") {
+          return { stdout: "", stderr: "", exitCode: 1 };
+        }
         return { stdout: "", stderr: "", exitCode: 0 };
       },
     });
@@ -20,14 +23,41 @@ describe("git publisher", () => {
 
     expect(commands).toEqual([
       ["git", "add", "-A", "cwd=/repo/.worktrees/LIN-123"],
+      ["git", "diff", "--cached", "--quiet", "cwd=/repo/.worktrees/LIN-123"],
       ["git", "commit", "-m", "feat: implement LIN-123", "cwd=/repo/.worktrees/LIN-123"],
       ["git", "push", "-u", "origin", "aigile/LIN-123", "cwd=/repo/.worktrees/LIN-123"],
     ]);
   });
 
+  it("pushes without committing when no staged changes exist", async () => {
+    const commands: string[][] = [];
+    const publisher = createGitPublisher({
+      exec: async (command, args, options) => {
+        commands.push([command, ...args, `cwd=${options.cwd}`]);
+        if (args.join(" ") === "diff --cached --quiet") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    });
+
+    await publisher.publish({
+      worktreePath: "/repo/.worktrees/LBE-8",
+      branchName: "aigile/LBE-8",
+      remote: "origin",
+      commitMessage: "feat: implement LBE-8",
+    });
+
+    expect(commands).toEqual([
+      ["git", "add", "-A", "cwd=/repo/.worktrees/LBE-8"],
+      ["git", "diff", "--cached", "--quiet", "cwd=/repo/.worktrees/LBE-8"],
+      ["git", "push", "-u", "origin", "aigile/LBE-8", "cwd=/repo/.worktrees/LBE-8"],
+    ]);
+  });
+
   it("fails when a git publish step fails", async () => {
     const publisher = createGitPublisher({
-      exec: async () => ({ stdout: "", stderr: "nothing to commit", exitCode: 1 }),
+      exec: async () => ({ stdout: "", stderr: "git exploded", exitCode: 2 }),
     });
 
     await expect(
