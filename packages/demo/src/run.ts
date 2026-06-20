@@ -99,9 +99,16 @@ export interface DemoResult {
   issueKey: string;
   finalState: WorkflowState;
   pullRequest?: PullRequestRecord;
+  publicationFailure?: DemoPublicationFailure;
   artifacts: WorkflowArtifact[];
   timeline: DemoTimelineEntry[];
   durationMs: number;
+}
+
+export interface DemoPublicationFailure {
+  operation: "merge_conflict_check";
+  message: string;
+  pullRequestUrl?: string;
 }
 
 export interface DemoTimelineEntry {
@@ -395,6 +402,7 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
   const mergeability = await codeHost.getPullRequestMergeability(pullRequest.id);
   if (mergeability.mergeable === "conflicting") {
     const blockedMessage = `Blocked: pull request has merge conflicts and requires human attention before this issue can be marked complete: ${pullRequest.url}`;
+    const failureMessage = `Pull request has merge conflicts: ${pullRequest.url}`;
     await codeHost.appendPullRequestComment(pullRequest.id, blockedMessage);
     await issueTracker.appendIssueComment(issue.key, blockedMessage);
     const pullRequestArtifact = pullRequestToArtifact(await codeHost.getPullRequest(pullRequest.id));
@@ -403,7 +411,7 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
       type: "publish_failed",
       issueId: issue.key,
       artifactId: pullRequestArtifact.id,
-      reason: `Pull request has merge conflicts: ${pullRequest.url}`,
+      reason: failureMessage,
     }, timeline, elapsedSinceLast);
     await issueTracker.updateIssueStatus(issue.key, snapshot.state);
 
@@ -411,6 +419,11 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
       issueKey: issue.key,
       finalState: snapshot.state,
       pullRequest: pullRequestArtifact.payload,
+      publicationFailure: {
+        operation: "merge_conflict_check",
+        message: failureMessage,
+        pullRequestUrl: pullRequest.url,
+      },
       artifacts,
       timeline,
       durationMs: timeline.reduce((total, entry) => total + entry.elapsedMs, 0),

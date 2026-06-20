@@ -200,6 +200,11 @@ describe("demo orchestration", () => {
     expect(result.pullRequest?.comments).toContain(
       "Blocked: pull request has merge conflicts and requires human attention before this issue can be marked complete: https://github.local/aigile/aigile/pull/1",
     );
+    expect(result.publicationFailure).toEqual({
+      operation: "merge_conflict_check",
+      message: "Pull request has merge conflicts: https://github.local/aigile/aigile/pull/1",
+      pullRequestUrl: "https://github.local/aigile/aigile/pull/1",
+    });
     expect(result.timeline.map((entry) => entry.label)).toContain("publish_failed -> escalated");
     expect(result.timeline.map((entry) => entry.label)).not.toContain("merge_completed -> merged");
   });
