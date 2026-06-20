@@ -1250,6 +1250,7 @@ describe("cli formatting", () => {
         throw new Error("getPullRequest should not be called");
       },
       getPullRequestMergeability: async () => ({ status: "mergeable" }),
+      getPullRequestMergeState: async () => ({ status: "unmerged" }),
       appendPullRequestComment: async () => {},
       submitPullRequestReview: async () => {},
       recordCheckResult: async () => {},
@@ -1403,6 +1404,7 @@ describe("cli formatting", () => {
         throw new Error("getPullRequest should not be called");
       },
       getPullRequestMergeability: async () => ({ status: "mergeable" }),
+      getPullRequestMergeState: async () => ({ status: "merged" }),
       appendPullRequestComment: async () => {},
       submitPullRequestReview: async () => {},
       recordCheckResult: async () => {},
@@ -1512,6 +1514,7 @@ describe("cli formatting", () => {
         throw new Error("getPullRequest should not be called");
       },
       getPullRequestMergeability: async () => ({ status: "conflicting" }),
+      getPullRequestMergeState: async () => ({ status: "unmerged" }),
       appendPullRequestComment: async () => {},
       submitPullRequestReview: async () => {},
       recordCheckResult: async () => {},
@@ -1577,7 +1580,7 @@ describe("cli formatting", () => {
       {
         key: "issue-id",
         body: [
-          "Aigile published this issue to GitHub, but the pull request is blocked and was not marked Done.",
+          "Aigile published this issue to GitHub, but the pull request is blocked and was not marked done.",
           "",
           "Outcome: blocked/escalated",
           "Reason: pull request has merge conflicts",
@@ -1599,6 +1602,7 @@ describe("cli formatting", () => {
         throw new Error("getPullRequest should not be called");
       },
       getPullRequestMergeability: async () => ({ status: "unknown" }),
+      getPullRequestMergeState: async () => ({ status: "unmerged" }),
       appendPullRequestComment: async () => {},
       submitPullRequestReview: async () => {},
       recordCheckResult: async () => {},

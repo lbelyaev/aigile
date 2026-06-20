@@ -17,7 +17,7 @@ describe("ACP agent demo orchestration", () => {
       connector: createMockAcpConnector(),
     });
 
-    expect(result.finalState).toBe("merged");
+    expect(result.finalState).toBe("merge_ready");
     expect(result.artifacts.map((artifact) => artifact.kind)).toEqual([
       "linear.issue",
       "architect.plan",

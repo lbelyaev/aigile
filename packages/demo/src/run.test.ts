@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { CodeHostAdapter, PullRequestRecord } from "@aigile/adapters";
+import { createFakeCodeHostAdapter } from "@aigile/adapters";
+import type { CodeHostAdapter, IssueTrackerAdapter, PullRequestRecord } from "@aigile/adapters";
 import {
   createRoleRuntimeRegistry,
   createScriptedRoleRunner,
@@ -61,6 +62,28 @@ const runnerWithCheckerVerdict = (verdict: "pass" | "changes_requested" | "escal
     },
   });
 
+const createRecordingIssueTracker = (): {
+  issueTracker: IssueTrackerAdapter;
+  statusUpdates: string[];
+  comments: string[];
+} => {
+  const statusUpdates: string[] = [];
+  const comments: string[] = [];
+  return {
+    statusUpdates,
+    comments,
+    issueTracker: {
+      getIssue: async () => structuredClone(issue),
+      updateIssueStatus: async (_key, status) => {
+        statusUpdates.push(status);
+      },
+      appendIssueComment: async (_key, comment) => {
+        comments.push(comment);
+      },
+    },
+  };
+};
+
 describe("demo orchestration", () => {
   it("runs a fixture issue through the local happy path", async () => {
     const times = [1_000, 1_000, 43_100, 43_100, 61_100, 64_100, 75_100, 75_100];
@@ -69,7 +92,7 @@ describe("demo orchestration", () => {
       now: () => times.shift() ?? 75_100,
     });
 
-    expect(result.finalState).toBe("merged");
+    expect(result.finalState).toBe("merge_ready");
     expect(result.pullRequest?.url).toBe("https://github.local/aigile/aigile/pull/1");
     expect(result.artifacts.map((artifact) => artifact.kind)).toEqual([
       "linear.issue",
@@ -92,7 +115,6 @@ describe("demo orchestration", () => {
       { label: "developer_finished -> verifying", elapsedMs: 18_000 },
       { label: "verification_passed -> checking", elapsedMs: 3_000 },
       { label: "checker_passed -> merge_ready", elapsedMs: 11_000 },
-      { label: "merge_completed -> merged", elapsedMs: 0 },
     ]);
     expect(result.durationMs).toBe(74_100);
   });
@@ -127,6 +149,82 @@ describe("demo orchestration", () => {
     ]);
   });
 
+  it("moves a published passing pull request to the configured review status without marking it done", async () => {
+    const { issueTracker, statusUpdates, comments } = createRecordingIssueTracker();
+
+    const result = await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner: runnerWithCheckerVerdict("pass"),
+      issueTracker,
+      issueStatusLabels: {
+        inReview: "Needs Review",
+        done: "Completed",
+      },
+    });
+
+    expect(result.finalState).toBe("merge_ready");
+    expect(statusUpdates).toContain("Needs Review");
+    expect(statusUpdates).not.toContain("Completed");
+    expect(comments).toEqual([]);
+    expect(result.timeline.map((entry) => entry.label)).not.toContain("merge_completed -> merged");
+  });
+
+  it("moves a published pull request to the configured done status only after it is merged", async () => {
+    const { issueTracker, statusUpdates } = createRecordingIssueTracker();
+
+    const result = await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner: runnerWithCheckerVerdict("pass"),
+      issueTracker,
+      codeHost: createFakeCodeHostAdapter({ merged: true }),
+      issueStatusLabels: {
+        inReview: "Ready for QA",
+        done: "Released",
+      },
+    });
+
+    expect(result.finalState).toBe("merged");
+    expect(statusUpdates).toContain("Ready for QA");
+    expect(statusUpdates).toContain("Released");
+    expect(result.timeline.map((entry) => entry.label)).toContain("merge_completed -> merged");
+  });
+
+  it("keeps conflicting pull requests in review and appends an escalation comment", async () => {
+    const { issueTracker, statusUpdates, comments } = createRecordingIssueTracker();
+
+    const result = await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner: runnerWithCheckerVerdict("pass"),
+      issueTracker,
+      codeHost: createFakeCodeHostAdapter({ mergeability: "conflicting" }),
+    });
+
+    expect(result.finalState).toBe("merge_ready");
+    expect(statusUpdates.at(-1)).toBe("In Review");
+    expect(statusUpdates).not.toContain("Done");
+    expect(comments).toEqual([expect.stringContaining("conflicting")]);
+  });
+
+  it("keeps unknown-mergeability pull requests in review and appends an escalation comment", async () => {
+    const { issueTracker, statusUpdates, comments } = createRecordingIssueTracker();
+
+    const result = await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner: runnerWithCheckerVerdict("pass"),
+      issueTracker,
+      codeHost: createFakeCodeHostAdapter({ mergeability: "unknown" }),
+    });
+
+    expect(result.finalState).toBe("merge_ready");
+    expect(statusUpdates.at(-1)).toBe("In Review");
+    expect(statusUpdates).not.toContain("Done");
+    expect(comments).toEqual([expect.stringContaining("unknown")]);
+  });
+
   it("returns an escalated result when PR evidence publication fails after PR creation", async () => {
     let pullRequest: PullRequestRecord | undefined;
     const codeHost: CodeHostAdapter = {
@@ -147,6 +245,7 @@ describe("demo orchestration", () => {
         return structuredClone(pullRequest);
       },
       getPullRequestMergeability: async () => ({ status: "mergeable" }),
+      getPullRequestMergeState: async () => ({ status: "unmerged" }),
       appendPullRequestComment: async (_id, comment) => {
         if (pullRequest === undefined) throw new Error("pull request missing");
         pullRequest.comments.push(comment);
@@ -246,6 +345,7 @@ describe("demo orchestration", () => {
         },
         recordCheckResult: async () => undefined,
         getPullRequestMergeability: async () => ({ status: "mergeable" }),
+        getPullRequestMergeState: async () => ({ status: "unmerged" }),
       },
     });
 

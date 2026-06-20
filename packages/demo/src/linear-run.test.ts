@@ -20,7 +20,7 @@ describe("Linear demo orchestration", () => {
     });
 
     expect(result.issueKey).toBe("LIN-123");
-    expect(result.finalState).toBe("merged");
+    expect(result.finalState).toBe("merge_ready");
     expect(result.artifacts[0]).toMatchObject({
       id: "linear:LIN-123",
       kind: "linear.issue",

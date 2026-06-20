@@ -12,12 +12,14 @@ import {
   listLinearWorkflowStateNames,
 } from "@aigile/adapters";
 import {
+  DEFAULT_ISSUE_STATUS_LABELS,
   findProductConfig,
   loadProductConfigFromFile,
   loadRuntimeConfigFromJson,
   resolveProductPaths,
   runtimeConfigToRegistry,
   splitGithubRepo,
+  type IssueStatusLabels,
   type RuntimeProductConfig,
 } from "@aigile/config";
 import {
@@ -695,7 +697,7 @@ const blockedPublishedComment = (
   status: Exclude<PullRequestMergeabilityStatus, "mergeable">,
 ): string =>
   [
-    "Aigile published this issue to GitHub, but the pull request is blocked and was not marked Done.",
+    "Aigile published this issue to GitHub, but the pull request is blocked and was not marked done.",
     "",
     "Outcome: blocked/escalated",
     `Reason: ${status === "conflicting" ? "pull request has merge conflicts" : "pull request mergeability is unknown"}`,
@@ -725,6 +727,7 @@ const syncLinearIssueWorkflowResult = async (
   input: LinearIssueWorkflowCliInput,
   result: DemoResult,
   codeHost?: CodeHostAdapter,
+  issueStatusLabels: IssueStatusLabels = DEFAULT_ISSUE_STATUS_LABELS,
 ): Promise<DemoResult> => {
   if (input.dryRun === true) return result;
   const shouldSyncSatisfied = result.finalState === "satisfied";
@@ -750,7 +753,7 @@ const syncLinearIssueWorkflowResult = async (
         },
   );
   if (input.teamKey !== undefined && mergeabilityStatus === "mergeable") {
-    await tracker.updateIssueStatus(input.issueKey, "Done");
+    await tracker.updateIssueStatus(input.issueKey, issueStatusLabels.done);
   }
   await tracker.appendIssueComment(
     input.issueKey,
@@ -780,13 +783,13 @@ export const runLinearIssueWorkflowCli = async (
       ? { apiKey: input.apiKey, issueKey: input.issueKey }
       : { apiKey: input.apiKey, issueKey: input.issueKey, fetchGraphql: input.fetchGraphql },
   );
+  const runtimeConfig = loadRuntimeConfigFromJson(readFileSync(input.runtimeConfigPath, "utf8"));
   const runInput: DemoWorkspaceInput = {
     issue,
     repoPath: input.repoPath,
     worktreesPath: input.worktreesPath,
-    registry: runtimeConfigToRegistry(
-      loadRuntimeConfigFromJson(readFileSync(input.runtimeConfigPath, "utf8")),
-    ),
+    registry: runtimeConfigToRegistry(runtimeConfig),
+    issueStatusLabels: runtimeConfig.issueStatusLabels,
   };
   if (input.baseBranch !== undefined) runInput.baseBranch = input.baseBranch;
   if (input.dryRun === true) {
@@ -833,7 +836,12 @@ export const runLinearIssueWorkflowCli = async (
     },
   });
   const result = await (input.runWorkspace ?? runDemoIssueWithWorkspace)(runInput);
-  const syncedResult = await syncLinearIssueWorkflowResult(input, result, runInput.codeHost);
+  const syncedResult = await syncLinearIssueWorkflowResult(
+    input,
+    result,
+    runInput.codeHost,
+    runtimeConfig.issueStatusLabels,
+  );
   const formattedResult = formatDemoResult(syncedResult);
   return dryRunPlanOutputs.length === 0
     ? formattedResult
@@ -1351,9 +1359,9 @@ const main = async (): Promise<void> => {
     });
   }
   if (args.mode === "run" && args.runtimeConfigPath) {
-    runInput.registry = runtimeConfigToRegistry(
-      loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8")),
-    );
+    const runtimeConfig = loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8"));
+    runInput.registry = runtimeConfigToRegistry(runtimeConfig);
+    runInput.issueStatusLabels = runtimeConfig.issueStatusLabels;
     const progressFormatter = createAcpRoleProgressFormatter();
     runInput.runner = createAcpRoleRunner({
       onProgress: (event) => {
@@ -1368,13 +1376,17 @@ const main = async (): Promise<void> => {
       ? await runDemoIssueWithWorkspace(runInput)
       : args.mode === "agents"
         ? args.runtimeConfigPath
-          ? await runDemoIssueWithRoles({
-              issue: defaultIssue,
-              registry: runtimeConfigToRegistry(
-                loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8")),
-              ),
-              runner: createAcpRoleRunner(),
-            })
+          ? await (() => {
+              const runtimeConfig = loadRuntimeConfigFromJson(
+                readFileSync(args.runtimeConfigPath!, "utf8"),
+              );
+              return runDemoIssueWithRoles({
+                issue: defaultIssue,
+                registry: runtimeConfigToRegistry(runtimeConfig),
+                runner: createAcpRoleRunner(),
+                issueStatusLabels: runtimeConfig.issueStatusLabels,
+              });
+            })()
           : await runDemoIssueWithAcpRoles({ issue: defaultIssue })
         : args.mode === "workspace"
           ? await runDemoIssueWithWorkspace({

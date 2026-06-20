@@ -44,7 +44,7 @@ describe("workspace-aware demo orchestration", () => {
       },
     });
 
-    expect(result.finalState).toBe("merged");
+    expect(result.finalState).toBe("merge_ready");
     expect(result.artifacts.map((artifact) => artifact.kind)).toEqual([
       "linear.issue",
       "workspace.issue_worktree",
@@ -495,6 +495,7 @@ describe("workspace-aware demo orchestration", () => {
           reviews: [],
         }),
         getPullRequestMergeability: async () => ({ status: "mergeable" }),
+        getPullRequestMergeState: async () => ({ status: "unmerged" }),
         appendPullRequestComment: async () => undefined,
         submitPullRequestReview: async () => undefined,
         recordCheckResult: async () => undefined,
@@ -612,6 +613,7 @@ describe("workspace-aware demo orchestration", () => {
           reviews: [],
         }),
         getPullRequestMergeability: async () => ({ status: "mergeable" }),
+        getPullRequestMergeState: async () => ({ status: "unmerged" }),
         appendPullRequestComment: async () => undefined,
         submitPullRequestReview: async () => undefined,
         recordCheckResult: async () => undefined,

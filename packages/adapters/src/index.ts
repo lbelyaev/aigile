@@ -27,6 +27,8 @@ export type {
   PullRequestInput,
   PullRequestMergeability,
   PullRequestMergeabilityStatus,
+  PullRequestMergeState,
+  PullRequestMergeStateStatus,
   PullRequestRecord,
   PullRequestReviewInput,
   ReadyIssueSource,

@@ -50,6 +50,15 @@ export interface PullRequestMergeability {
   mergeStateStatus?: string;
 }
 
+export type PullRequestMergeStateStatus = "merged" | "unmerged" | "unknown";
+
+export interface PullRequestMergeState {
+  status: PullRequestMergeStateStatus;
+  state?: string;
+  merged?: boolean;
+  mergedAt?: string;
+}
+
 export interface PullRequestRecord extends PullRequestInput {
   id: string;
   number: number;
@@ -63,6 +72,7 @@ export interface CodeHostAdapter {
   createPullRequest: (input: PullRequestInput) => Promise<PullRequestRecord>;
   getPullRequest: (id: string) => Promise<PullRequestRecord>;
   getPullRequestMergeability: (id: string) => Promise<PullRequestMergeability>;
+  getPullRequestMergeState: (id: string) => Promise<PullRequestMergeState>;
   appendPullRequestComment: (id: string, comment: string) => Promise<void>;
   submitPullRequestReview: (id: string, review: PullRequestReviewInput) => Promise<void>;
   recordCheckResult: (id: string, result: CheckResult) => Promise<void>;

@@ -5,6 +5,7 @@ import type {
   IssueTrackerAdapter,
   PullRequestInput,
   PullRequestMergeabilityStatus,
+  PullRequestMergeStateStatus,
   PullRequestRecord,
   PullRequestReviewInput,
   ReadyIssueSource,
@@ -63,6 +64,7 @@ export const createFakeReadyIssueSource = (
 
 export interface FakeCodeHostAdapterOptions {
   mergeability?: PullRequestMergeabilityStatus | Record<string, PullRequestMergeabilityStatus>;
+  merged?: boolean | Record<string, boolean>;
 }
 
 export const createFakeCodeHostAdapter = (
@@ -75,6 +77,12 @@ export const createFakeCodeHostAdapter = (
     if (options.mergeability === undefined) return "mergeable";
     if (typeof options.mergeability === "string") return options.mergeability;
     return options.mergeability[id] ?? "mergeable";
+  };
+
+  const mergeStateFor = (id: string): PullRequestMergeStateStatus => {
+    if (options.merged === undefined) return "unmerged";
+    if (typeof options.merged === "boolean") return options.merged ? "merged" : "unmerged";
+    return options.merged[id] === true ? "merged" : "unmerged";
   };
 
   return {
@@ -99,6 +107,10 @@ export const createFakeCodeHostAdapter = (
     getPullRequestMergeability: async (id) => {
       requirePullRequest(pullRequests, id);
       return { status: mergeabilityFor(id) };
+    },
+    getPullRequestMergeState: async (id) => {
+      requirePullRequest(pullRequests, id);
+      return { status: mergeStateFor(id) };
     },
     appendPullRequestComment: async (id, comment) => {
       const pullRequest = requirePullRequest(pullRequests, id);

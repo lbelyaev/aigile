@@ -8,10 +8,12 @@ import {
   type CodeHostAdapter,
   type GitHubCliExec,
   type IssueRecord,
+  type IssueTrackerAdapter,
   type LinearFetchGraphql,
   type PullRequestRecord,
   type PullRequestReviewInput,
 } from "@aigile/adapters";
+import { DEFAULT_ISSUE_STATUS_LABELS, type IssueStatusLabels } from "@aigile/config";
 import {
   createAcpRoleRunner,
   createRoleRuntimeRegistry,
@@ -50,6 +52,8 @@ export interface DemoIssueInput {
 export interface DemoWithRolesInput extends DemoIssueInput {
   registry: RoleRuntimeRegistry;
   runner: RoleRunner;
+  issueTracker?: IssueTrackerAdapter;
+  issueStatusLabels?: Partial<IssueStatusLabels>;
   codeHost?: CodeHostAdapter;
   pullRequestTarget?: PullRequestTarget;
   createPullRequest?: boolean;
@@ -77,6 +81,7 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   publisher?: GitPublisher;
   remote?: string;
   codeHost?: CodeHostAdapter;
+  issueStatusLabels?: Partial<IssueStatusLabels>;
   pullRequestTarget?: PullRequestTarget;
   createPullRequest?: boolean;
   publishPlan?: (plan: WorkflowArtifact) => Promise<void>;
@@ -342,6 +347,28 @@ const checkerReviewForVerdict = (artifact: WorkflowArtifact): PullRequestReviewI
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+const issueStatusLabelForState = (state: WorkflowState, labels: IssueStatusLabels): string => {
+  if (state === "planning") return labels.planning;
+  if (state === "developing") return labels.developing;
+  if (state === "merge_ready") return labels.inReview;
+  if (state === "merged") return labels.done;
+  if (state === "escalated") return labels.blocked;
+  return state;
+};
+
+const formatPullRequestBlockedComment = (
+  pullRequest: PullRequestRecord,
+  mergeabilityStatus: string,
+): string =>
+  [
+    "Aigile could not mark this issue done because the published pull request is not confirmed merged.",
+    "",
+    `Pull request: ${pullRequest.url}`,
+    `Mergeability: ${mergeabilityStatus}`,
+    "",
+    "Human attention is required before the issue can move to the done status.",
+  ].join("\n");
+
 const createDemoRegistry = (): RoleRuntimeRegistry =>
   createRoleRuntimeRegistry({
     runtimes: [
@@ -357,7 +384,11 @@ const createDemoRegistry = (): RoleRuntimeRegistry =>
   });
 
 export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<DemoResult> => {
-  const issueTracker = createFakeIssueTrackerAdapter([input.issue]);
+  const issueTracker = input.issueTracker ?? createFakeIssueTrackerAdapter([input.issue]);
+  const issueStatusLabels: IssueStatusLabels = {
+    ...DEFAULT_ISSUE_STATUS_LABELS,
+    ...(input.issueStatusLabels ?? {}),
+  };
   const codeHost = input.codeHost ?? createFakeCodeHostAdapter();
   const issue = await issueTracker.getIssue(input.issue.key);
   const artifacts: WorkflowArtifact[] = [issueToArtifact(issue), ...(input.initialArtifacts ?? [])];
@@ -384,7 +415,10 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     elapsedSinceLast,
   );
 
-  await issueTracker.updateIssueStatus(issue.key, "planning");
+  await issueTracker.updateIssueStatus(
+    issue.key,
+    issueStatusLabelForState("planning", issueStatusLabels),
+  );
   const plan = await runAssignedRole({
     roleId: "architect",
     issueId: issue.key,
@@ -415,7 +449,10 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
   );
 
   await input.publishPlan?.(plan);
-  await issueTracker.updateIssueStatus(issue.key, "developing");
+  await issueTracker.updateIssueStatus(
+    issue.key,
+    issueStatusLabelForState("developing", issueStatusLabels),
+  );
   const attempt = await runAssignedRole({
     roleId: "developer",
     issueId: issue.key,
@@ -466,7 +503,10 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     elapsedSinceLast,
   );
   if (verificationEvent === "verification_failed") {
-    await issueTracker.updateIssueStatus(issue.key, snapshot.state);
+    await issueTracker.updateIssueStatus(
+      issue.key,
+      issueStatusLabelForState(snapshot.state, issueStatusLabels),
+    );
     return {
       issueKey: issue.key,
       finalState: snapshot.state,
@@ -496,7 +536,10 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     checkerWorkflowEvent.reason = verdict.payload.summary;
   snapshot = pushTransition(snapshot, checkerWorkflowEvent, timeline, elapsedSinceLast);
   if (checkerWorkflowEvent.type === "work_satisfied") {
-    await issueTracker.updateIssueStatus(issue.key, snapshot.state);
+    await issueTracker.updateIssueStatus(
+      issue.key,
+      issueStatusLabelForState(snapshot.state, issueStatusLabels),
+    );
     return {
       issueKey: issue.key,
       finalState: snapshot.state,
@@ -508,7 +551,10 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
 
   artifactByKind(artifacts, "developer.attempt");
   if (input.createPullRequest === false) {
-    await issueTracker.updateIssueStatus(issue.key, snapshot.state);
+    await issueTracker.updateIssueStatus(
+      issue.key,
+      issueStatusLabelForState(snapshot.state, issueStatusLabels),
+    );
     return {
       issueKey: issue.key,
       finalState: snapshot.state,
@@ -559,7 +605,10 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
       timeline,
       elapsedSinceLast,
     );
-    await issueTracker.updateIssueStatus(issue.key, snapshot.state);
+    await issueTracker.updateIssueStatus(
+      issue.key,
+      issueStatusLabelForState(snapshot.state, issueStatusLabels),
+    );
     return {
       issueKey: issue.key,
       finalState: snapshot.state,
@@ -576,7 +625,32 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
   }
   artifacts.push(pullRequestArtifact);
   if (checkerEvent !== "checker_passed") {
-    await issueTracker.updateIssueStatus(issue.key, snapshot.state);
+    await issueTracker.updateIssueStatus(
+      issue.key,
+      issueStatusLabelForState(snapshot.state, issueStatusLabels),
+    );
+    return {
+      issueKey: issue.key,
+      finalState: snapshot.state,
+      pullRequest: pullRequestArtifact.payload,
+      artifacts,
+      timeline,
+      durationMs: timeline.reduce((total, entry) => total + entry.elapsedMs, 0),
+    };
+  }
+  await issueTracker.updateIssueStatus(
+    issue.key,
+    issueStatusLabelForState(snapshot.state, issueStatusLabels),
+  );
+  const mergeState = await codeHost.getPullRequestMergeState(pullRequest.id);
+  const mergeability = await codeHost.getPullRequestMergeability(pullRequest.id);
+  if (mergeState.status !== "merged") {
+    if (mergeability.status === "conflicting" || mergeability.status === "unknown") {
+      await issueTracker.appendIssueComment(
+        issue.key,
+        formatPullRequestBlockedComment(pullRequestArtifact.payload, mergeability.status),
+      );
+    }
     return {
       issueKey: issue.key,
       finalState: snapshot.state,
@@ -596,7 +670,10 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     timeline,
     elapsedSinceLast,
   );
-  await issueTracker.updateIssueStatus(issue.key, "merged");
+  await issueTracker.updateIssueStatus(
+    issue.key,
+    issueStatusLabelForState(snapshot.state, issueStatusLabels),
+  );
 
   return {
     issueKey: issue.key,
@@ -764,6 +841,7 @@ export const runDemoIssueWithWorkspace = async (input: DemoWorkspaceInput): Prom
   };
   if (input.now !== undefined) roleInput.now = input.now;
   if (input.codeHost !== undefined) roleInput.codeHost = input.codeHost;
+  if (input.issueStatusLabels !== undefined) roleInput.issueStatusLabels = input.issueStatusLabels;
   if (input.pullRequestTarget !== undefined) roleInput.pullRequestTarget = input.pullRequestTarget;
   if (input.createPullRequest !== undefined) roleInput.createPullRequest = input.createPullRequest;
   if (input.publishPlan !== undefined) roleInput.publishPlan = input.publishPlan;
