@@ -1,0 +1,116 @@
+import { describe, expect, it } from "bun:test";
+import type { WorkflowArtifact, WorkflowEvent } from "@aigile/types";
+import {
+  runWorkflowEngine,
+  type WorkflowCommandHandler,
+  type WorkflowCommandHandlers,
+} from "./engine.js";
+import { createInMemoryRunStore } from "./run-store.js";
+
+const ev = (type: WorkflowEvent["type"], artifactId?: string): WorkflowEvent =>
+  artifactId === undefined ? { type, issueId: "LIN-1" } : { type, issueId: "LIN-1", artifactId };
+
+const art = (id: string, kind: string): WorkflowArtifact => ({
+  id,
+  kind,
+  source: "agent",
+  payload: {},
+});
+
+// A happy-path handler set; individual tests override the verification handler.
+const baseHandlers = (verify: WorkflowCommandHandler): WorkflowCommandHandlers => ({
+  start_architect_plan: async () => ({
+    event: ev("plan_drafted", "plan"),
+    artifact: art("plan", "architect.plan"),
+  }),
+  request_plan_approval: async () => ({ event: ev("plan_approved") }),
+  start_developer_attempt: async ({ snapshot }) => ({
+    event: ev("developer_finished", `dev-${snapshot.developerAttempts}`),
+    artifact: art(`dev-${snapshot.developerAttempts}`, "developer.attempt"),
+  }),
+  run_verification: verify,
+  start_checker_review: async () => ({ event: ev("checker_passed") }),
+  merge_pull_request: async () => ({ event: ev("merge_completed") }),
+});
+
+describe("workflow engine", () => {
+  it("drives a clean run from new to merged", async () => {
+    const store = createInMemoryRunStore();
+    const result = await runWorkflowEngine({
+      issueId: "LIN-1",
+      store,
+      handlers: baseHandlers(async () => ({ event: ev("verification_passed") })),
+    });
+
+    expect(result.outcome).toBe("merged");
+    expect(result.snapshot.state).toBe("merged");
+    const persisted = await store.load("LIN-1");
+    expect(persisted?.events[0]?.type).toBe("issue_received");
+    expect(persisted?.events.at(-1)?.type).toBe("merge_completed");
+  });
+
+  it("retries development until verification passes, then merges", async () => {
+    const store = createInMemoryRunStore();
+    let verifyCalls = 0;
+    const devAttempts: number[] = [];
+    const handlers = baseHandlers(async () => {
+      verifyCalls += 1;
+      return { event: ev(verifyCalls < 3 ? "verification_failed" : "verification_passed") };
+    });
+    handlers.start_developer_attempt = async ({ snapshot }) => {
+      devAttempts.push(snapshot.developerAttempts);
+      return {
+        event: ev("developer_finished", `dev-${snapshot.developerAttempts}`),
+        artifact: art(`dev-${snapshot.developerAttempts}`, "developer.attempt"),
+      };
+    };
+
+    const result = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+
+    expect(result.outcome).toBe("merged");
+    expect(verifyCalls).toBe(3); // fail, fail, pass
+    expect(devAttempts).toEqual([1, 2, 3]); // initial + two retries
+  });
+
+  it("escalates after the developer-attempt budget is exhausted", async () => {
+    const store = createInMemoryRunStore();
+    let verifyCalls = 0;
+    const handlers = baseHandlers(async () => {
+      verifyCalls += 1;
+      return { event: ev("verification_failed") };
+    });
+
+    const result = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+
+    expect(result.outcome).toBe("escalated");
+    expect(result.snapshot.state).toBe("escalated");
+    expect(verifyCalls).toBe(3); // three attempts then escalate (default maxDeveloperAttempts)
+  });
+
+  it("respects a custom developer-attempt budget", async () => {
+    const store = createInMemoryRunStore();
+    let verifyCalls = 0;
+    const handlers = baseHandlers(async () => {
+      verifyCalls += 1;
+      return { event: ev("verification_failed") };
+    });
+
+    const result = await runWorkflowEngine({
+      issueId: "LIN-1",
+      store,
+      handlers,
+      policy: { maxDeveloperAttempts: 1 },
+    });
+
+    expect(result.outcome).toBe("escalated");
+    expect(verifyCalls).toBe(1);
+  });
+
+  it("stalls (without throwing) when a required command has no handler", async () => {
+    const store = createInMemoryRunStore();
+    const result = await runWorkflowEngine({ issueId: "LIN-1", store, handlers: {} });
+
+    expect(result.outcome).toBe("stalled");
+    expect(result.snapshot.state).toBe("planning"); // bootstrapped, then no architect handler
+  });
+});
