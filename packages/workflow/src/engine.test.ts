@@ -183,6 +183,23 @@ describe("workflow engine", () => {
     expect(result.outcome).toBe("escalated");
     expect(result.reason).toBe("type errors in worktree");
   });
+
+  it("pauses when a handler returns no event, and resumes on re-run", async () => {
+    const store = createInMemoryRunStore();
+    let prMerged = false;
+    const handlers = baseHandlers(async () => ({ event: ev("verification_passed") }));
+    // merge handler pauses (PR published, not merged yet) until the PR is merged.
+    handlers.merge_pull_request = async () => (prMerged ? { event: ev("merge_completed") } : {});
+
+    const first = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+    expect(first.outcome).toBe("paused");
+    expect(first.snapshot.state).toBe("merge_ready");
+
+    prMerged = true; // external merge happens
+    const second = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+    expect(second.outcome).toBe("merged");
+    expect(second.snapshot.state).toBe("merged");
+  });
 });
 
 describe("workflow engine durable resume", () => {

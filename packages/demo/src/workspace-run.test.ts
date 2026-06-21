@@ -4,7 +4,10 @@ import {
   createScriptedRoleRunner,
   type RoleRunner,
 } from "@aigile/roles";
-import { runDemoIssueWithWorkspace } from "./index.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runDemoIssueWithWorkspace, runWorkspaceIssueWithEngine } from "./index.js";
 
 const availableWorkspaceTarget = (command: string, args: readonly string[]) => {
   if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
@@ -499,6 +502,7 @@ describe("workspace-aware demo orchestration", () => {
         appendPullRequestComment: async () => undefined,
         submitPullRequestReview: async () => undefined,
         recordCheckResult: async () => undefined,
+        mergePullRequest: async () => undefined,
       },
       exec: async (command, args, options) => {
         const preflight = availableWorkspaceTarget(command, args);
@@ -617,6 +621,7 @@ describe("workspace-aware demo orchestration", () => {
         appendPullRequestComment: async () => undefined,
         submitPullRequestReview: async () => undefined,
         recordCheckResult: async () => undefined,
+        mergePullRequest: async () => undefined,
       },
       exec: async (command, args, options) => {
         const preflight = availableWorkspaceTarget(command, args);
@@ -636,5 +641,65 @@ describe("workspace-aware demo orchestration", () => {
     });
 
     expect(prInputs).toEqual([{ owner: "acme", repo: "project", baseBranch: "develop" }]);
+  });
+});
+
+describe("durable engine-backed workspace run", () => {
+  const scriptedRunner = (): RoleRunner =>
+    createScriptedRoleRunner({
+      architect: {
+        artifactKind: "architect.plan",
+        payload: {
+          summary: "plan",
+          scope: ["x"],
+          acceptanceCriteria: ["a"],
+          verificationCommands: ["bun run check"],
+          risks: [],
+        },
+      },
+      developer: {
+        artifactKind: "developer.attempt",
+        payload: { summary: "done", changedFiles: ["packages/x.ts"], verificationNotes: "ok" },
+      },
+      checker: {
+        artifactKind: "checker.verdict",
+        payload: { verdict: "pass", summary: "lgtm", reasons: [] },
+      },
+    });
+
+  it("drives a run to merged through the engine and persists the event log", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "aigile-engine-run-"));
+    try {
+      const result = await runWorkspaceIssueWithEngine({
+        issue: {
+          id: "i",
+          key: "LIN-9",
+          title: "Engine run",
+          description: "",
+          acceptanceCriteria: [],
+          status: "todo",
+          comments: [],
+        },
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        runStatePath: directory,
+        runner: scriptedRunner(),
+        exec: async (command, args) => {
+          if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+          if (command === "git" && args[0] === "show-ref")
+            return { stdout: "", stderr: "", exitCode: 1 };
+          // staged changes present so the publisher commits before pushing
+          if (command === "git" && args[0] === "diff" && args.includes("--cached"))
+            return { stdout: "", stderr: "", exitCode: 1 };
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+      });
+
+      expect(result.finalState).toBe("merged");
+      expect(result.pullRequest).toBeDefined();
+      expect(result.artifacts.map((artifact) => artifact.kind)).toContain("github.pull_request");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

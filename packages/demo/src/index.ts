@@ -6,6 +6,7 @@ export {
   runDemoIssueWithGitHub,
   runDemoIssueWithRoles,
   runDemoIssueWithWorkspace,
+  runWorkspaceIssueWithEngine,
 } from "./run.js";
 
 export type {
@@ -18,3 +19,11 @@ export type {
   DemoWorkspaceInput,
   PullRequestTarget,
 } from "./run.js";
+
+export { createEngineCommandHandlers } from "./engine-handlers.js";
+
+export type { EngineHandlerDeps } from "./engine-handlers.js";
+
+export { resolveMergePolicy } from "./merge-policy.js";
+
+export type { MergePolicy } from "./merge-policy.js";

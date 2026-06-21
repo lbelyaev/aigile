@@ -44,10 +44,14 @@ import {
   type GitPublisher,
 } from "@aigile/workspace";
 import {
+  createFileRunStore,
   initialWorkflowSnapshot,
+  runWorkflowEngine,
   transitionWorkflow,
   type WorkflowSnapshot,
 } from "@aigile/workflow";
+import { join } from "node:path";
+import { createEngineCommandHandlers, type EngineHandlerDeps } from "./engine-handlers.js";
 
 export interface DemoIssueInput {
   issue: IssueRecord;
@@ -91,7 +95,9 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   createPullRequest?: boolean;
   publishPlan?: (plan: WorkflowArtifact) => Promise<void>;
   verificationCommands?: ProductVerificationCommand[];
+  autofixCommands?: ProductVerificationCommand[];
   changedFileGuards?: ProductChangedFileGuard[];
+  runStatePath?: string;
 }
 
 export interface DemoGitHubInput extends DemoIssueInput {
@@ -868,6 +874,101 @@ export const runDemoIssueWithWorkspace = async (input: DemoWorkspaceInput): Prom
     };
   }
   return runDemoIssueWithRoles(roleInput);
+};
+
+const DEFAULT_AUTOFIX_COMMANDS: ProductVerificationCommand[] = [["bun", "run", "format"]];
+
+/**
+ * Durable, engine-backed equivalent of runDemoIssueWithWorkspace: drives the
+ * issue through runWorkflowEngine (event-sourced, retryable, resumable) using
+ * the real workspace/role/verifier/publisher/code-host adapters. Verification
+ * applies autofix commands (e.g. `bun run format`) before the checks so a
+ * merely-unformatted change does not fail the gate.
+ */
+export const runWorkspaceIssueWithEngine = async (
+  input: DemoWorkspaceInput,
+): Promise<DemoResult> => {
+  const workspaceOptions = {
+    repoPath: input.repoPath,
+    worktreesPath: input.worktreesPath,
+    remote: input.remote ?? "origin",
+  };
+  const workspaceAdapter = createGitWorkspaceAdapter(
+    input.exec === undefined ? workspaceOptions : { ...workspaceOptions, exec: input.exec },
+  );
+  const workspace = await workspaceAdapter.createIssueWorkspace({
+    issueKey: input.issue.key,
+    baseBranch: input.baseBranch ?? "main",
+  });
+  const verifier = createLocalVerifier(input.exec === undefined ? {} : { exec: input.exec });
+  const registry = input.registry ?? createDemoRegistry();
+  const runner = input.runner ?? createScriptedRoleRunner({});
+  const codeHost = input.codeHost ?? createFakeCodeHostAdapter();
+  const publisher =
+    input.publisher ?? createGitPublisher(input.exec === undefined ? {} : { exec: input.exec });
+  const remote = input.remote ?? "origin";
+  const target = input.pullRequestTarget ?? { owner: "aigile", repo: "aigile" };
+  const checks = input.verificationCommands ?? [["bun", "run", "check"]];
+  const autofix = input.autofixCommands ?? DEFAULT_AUTOFIX_COMMANDS;
+
+  const deps: EngineHandlerDeps = {
+    issue: input.issue,
+    branchName: workspace.branchName,
+    pullRequestTarget: {
+      owner: target.owner,
+      repo: target.repo,
+      baseBranch: target.baseBranch ?? input.baseBranch ?? "main",
+    },
+    codeHost,
+    runRole: (roleId, inputArtifacts) =>
+      runAssignedRole({ roleId, issueId: input.issue.key, inputArtifacts, registry, runner }),
+    verify: async () =>
+      verifier.verify({
+        issueKey: input.issue.key,
+        workspacePath: workspace.worktreePath,
+        commands: [...autofix, ...checks],
+        ...(input.changedFileGuards === undefined
+          ? {}
+          : { changedFileGuards: input.changedFileGuards }),
+      }),
+    publish: async () => {
+      await publisher.publish({
+        worktreePath: workspace.worktreePath,
+        branchName: workspace.branchName,
+        remote,
+        commitMessage: `${input.issue.key} ${input.issue.title}`,
+      });
+    },
+  };
+
+  const store = createFileRunStore({
+    directory: input.runStatePath ?? join(input.worktreesPath, "..", "runs"),
+  });
+  const result = await runWorkflowEngine({
+    issueId: input.issue.key,
+    store,
+    handlers: createEngineCommandHandlers(deps),
+    initialArtifacts: [
+      issueToArtifact(input.issue),
+      workspaceToArtifact(workspaceRolePayload(workspace, input), input.issue.key),
+      executionPolicyToArtifact(input.issue.key, input.dryRun === true),
+    ],
+  });
+
+  const pullRequestArtifact = result.artifacts.find(
+    (artifact) => artifact.kind === "github.pull_request",
+  );
+  const demoResult: DemoResult = {
+    issueKey: input.issue.key,
+    finalState: result.snapshot.state,
+    artifacts: result.artifacts,
+    timeline: [],
+    durationMs: 0,
+  };
+  if (pullRequestArtifact !== undefined) {
+    demoResult.pullRequest = pullRequestArtifact.payload as PullRequestRecord;
+  }
+  return demoResult;
 };
 
 export const runDemoIssueWithGitHub = async (input: DemoGitHubInput): Promise<DemoResult> => {

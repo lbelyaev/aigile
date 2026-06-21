@@ -74,6 +74,8 @@ export interface PullRequestRecord extends PullRequestInput {
   reviews: PullRequestReviewInput[];
 }
 
+export type PullRequestMergeMethod = "merge" | "squash" | "rebase";
+
 export interface CodeHostAdapter {
   createPullRequest: (input: PullRequestInput) => Promise<PullRequestRecord>;
   getPullRequest: (id: string) => Promise<PullRequestRecord>;
@@ -82,6 +84,7 @@ export interface CodeHostAdapter {
   appendPullRequestComment: (id: string, comment: string) => Promise<void>;
   submitPullRequestReview: (id: string, review: PullRequestReviewInput) => Promise<void>;
   recordCheckResult: (id: string, result: CheckResult) => Promise<void>;
+  mergePullRequest: (id: string, method?: PullRequestMergeMethod) => Promise<void>;
 }
 
 export type IssueArtifact = WorkflowArtifact<IssueRecord>;

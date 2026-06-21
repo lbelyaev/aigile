@@ -22,7 +22,10 @@ export interface WorkflowCommandContext {
  * artifact it produced.
  */
 export interface WorkflowCommandOutput {
-  event: WorkflowEvent;
+  // The event that drives the next transition. Omit to pause the run at the
+  // current state (e.g. PR published, awaiting an external merge); re-running
+  // resumes and re-invokes this command's handler idempotently.
+  event?: WorkflowEvent;
   artifact?: WorkflowArtifact;
 }
 
@@ -38,6 +41,7 @@ export type WorkflowOutcome =
   | "escalated"
   | "cancelled"
   | "failed"
+  | "paused"
   | "stalled";
 
 export interface WorkflowEngineInput {
@@ -151,6 +155,12 @@ export const runWorkflowEngine = async (
 
     const output = await handler({ command, snapshot, artifacts: [...artifacts] });
     if (output.artifact !== undefined) artifacts = mergeArtifact(artifacts, output.artifact);
+    if (output.event === undefined) {
+      // Handler performed its side effect but produced no transition: pause here.
+      // Nothing is persisted, so re-running re-invokes this command idempotently
+      // (e.g. re-check whether the published PR has merged yet).
+      return buildResult(snapshot, artifacts, "paused", command.reason);
+    }
     await store.appendEvent(
       issueId,
       output.event,

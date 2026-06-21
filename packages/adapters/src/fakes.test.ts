@@ -347,4 +347,20 @@ describe("fake source-of-truth adapters", () => {
       payload: pr,
     });
   });
+
+  it("marks a pull request merged after mergePullRequest", async () => {
+    const codeHost = createFakeCodeHostAdapter();
+    const pr = await codeHost.createPullRequest({
+      owner: "example",
+      repo: "aigile",
+      branch: "aigile/LIN-123",
+      baseBranch: "main",
+      title: "LIN-123 Build workflow",
+      body: "Implements the workflow.",
+    });
+
+    expect((await codeHost.getPullRequestMergeState(pr.id)).status).toBe("unmerged");
+    await codeHost.mergePullRequest(pr.id);
+    expect((await codeHost.getPullRequestMergeState(pr.id)).status).toBe("merged");
+  });
 });

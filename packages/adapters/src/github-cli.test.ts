@@ -357,6 +357,52 @@ describe("GitHub CLI code host adapter", () => {
     ]);
   });
 
+  it("merges a pull request with gh pr merge --squash", async () => {
+    const calls: string[][] = [];
+    const adapter = createGitHubCliCodeHostAdapter({
+      exec: async (_command, args) => {
+        calls.push([...args]);
+        if (args[0] === "pr" && args[1] === "create") {
+          return { stdout: "https://github.com/aigile/aigile/pull/14", stderr: "", exitCode: 0 };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    });
+    const pr = await adapter.createPullRequest({
+      owner: "aigile",
+      repo: "aigile",
+      branch: "aigile/LIN-123",
+      baseBranch: "main",
+      title: "LIN-123 Build workflow",
+      body: "PR body",
+    });
+
+    await adapter.mergePullRequest(pr.id);
+
+    expect(calls).toContainEqual(["pr", "merge", "14", "--repo", "aigile/aigile", "--squash"]);
+  });
+
+  it("surfaces a gh pr merge failure", async () => {
+    const adapter = createGitHubCliCodeHostAdapter({
+      exec: async (_command, args) => {
+        if (args[0] === "pr" && args[1] === "create") {
+          return { stdout: "https://github.com/aigile/aigile/pull/14", stderr: "", exitCode: 0 };
+        }
+        return { stdout: "", stderr: "not mergeable", exitCode: 1 };
+      },
+    });
+    const pr = await adapter.createPullRequest({
+      owner: "aigile",
+      repo: "aigile",
+      branch: "aigile/LIN-123",
+      baseBranch: "main",
+      title: "t",
+      body: "b",
+    });
+
+    await expect(adapter.mergePullRequest(pr.id)).rejects.toThrow(/gh pr merge failed/);
+  });
+
   it("treats absent merged pull request fields as unknown", async () => {
     const adapter = createGitHubCliCodeHostAdapter({
       exec: async (_command, args) => {
