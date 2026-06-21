@@ -1384,6 +1384,7 @@ describe("cli formatting", () => {
       appendPullRequestComment: async () => {},
       submitPullRequestReview: async () => {},
       recordCheckResult: async () => {},
+      mergePullRequest: async () => {},
     };
 
     const output = await runLinearIssueWorkflowCli({
@@ -1558,6 +1559,7 @@ describe("cli formatting", () => {
       appendPullRequestComment: async () => {},
       submitPullRequestReview: async () => {},
       recordCheckResult: async () => {},
+      mergePullRequest: async () => {},
     };
 
     const output = await runLinearIssueWorkflowCli({
@@ -1668,6 +1670,7 @@ describe("cli formatting", () => {
       appendPullRequestComment: async () => {},
       submitPullRequestReview: async () => {},
       recordCheckResult: async () => {},
+      mergePullRequest: async () => {},
     };
 
     const output = await runLinearIssueWorkflowCli({
@@ -1756,6 +1759,7 @@ describe("cli formatting", () => {
       appendPullRequestComment: async () => {},
       submitPullRequestReview: async () => {},
       recordCheckResult: async () => {},
+      mergePullRequest: async () => {},
     };
 
     await runLinearIssueWorkflowCli({

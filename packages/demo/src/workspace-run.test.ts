@@ -499,6 +499,7 @@ describe("workspace-aware demo orchestration", () => {
         appendPullRequestComment: async () => undefined,
         submitPullRequestReview: async () => undefined,
         recordCheckResult: async () => undefined,
+        mergePullRequest: async () => undefined,
       },
       exec: async (command, args, options) => {
         const preflight = availableWorkspaceTarget(command, args);
@@ -617,6 +618,7 @@ describe("workspace-aware demo orchestration", () => {
         appendPullRequestComment: async () => undefined,
         submitPullRequestReview: async () => undefined,
         recordCheckResult: async () => undefined,
+        mergePullRequest: async () => undefined,
       },
       exec: async (command, args, options) => {
         const preflight = availableWorkspaceTarget(command, args);

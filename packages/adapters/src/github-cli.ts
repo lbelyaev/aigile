@@ -302,5 +302,15 @@ export const createGitHubCliCodeHostAdapter = (
       assertSuccess(result, "gh pr comment");
       record.checks.push(structuredClone(check));
     },
+    mergePullRequest: async (id, method = "squash") => {
+      const record = pullRequests.get(id);
+      if (!record) throw new Error(`Pull request not found: ${id}`);
+      const result = await options.exec(
+        "gh",
+        ["pr", "merge", prNumberFromId(id), "--repo", repoFromRecord(record), `--${method}`],
+        execOptions(options.cwd),
+      );
+      assertSuccess(result, "gh pr merge");
+    },
   };
 };

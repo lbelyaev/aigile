@@ -71,6 +71,7 @@ export const createFakeCodeHostAdapter = (
   options: FakeCodeHostAdapterOptions = {},
 ): CodeHostAdapter => {
   const pullRequests = new Map<string, PullRequestRecord>();
+  const mergedIds = new Set<string>();
   let nextNumber = 1;
 
   const mergeabilityFor = (id: string): PullRequestMergeabilityStatus => {
@@ -80,6 +81,7 @@ export const createFakeCodeHostAdapter = (
   };
 
   const mergeStateFor = (id: string): PullRequestMergeStateStatus => {
+    if (mergedIds.has(id)) return "merged";
     if (options.merged === undefined) return "unmerged";
     if (typeof options.merged === "boolean") return options.merged ? "merged" : "unmerged";
     return options.merged[id] === true ? "merged" : "unmerged";
@@ -124,6 +126,10 @@ export const createFakeCodeHostAdapter = (
       const pullRequest = requirePullRequest(pullRequests, id);
       pullRequest.reviews ??= [];
       pullRequest.reviews.push(structuredClone(review));
+    },
+    mergePullRequest: async (id) => {
+      requirePullRequest(pullRequests, id);
+      mergedIds.add(id);
     },
   };
 };
