@@ -403,6 +403,60 @@ describe("GitHub CLI code host adapter", () => {
     await expect(adapter.mergePullRequest(pr.id)).rejects.toThrow(/gh pr merge failed/);
   });
 
+  it("finds an open pull request for a branch via gh pr view", async () => {
+    const adapter = createGitHubCliCodeHostAdapter({
+      exec: async (_command, args) => {
+        if (args[0] === "pr" && args[1] === "view") {
+          return {
+            stdout: JSON.stringify({
+              number: 7,
+              url: "https://github.com/o/r/pull/7",
+              state: "OPEN",
+              merged: false,
+            }),
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    });
+
+    await expect(
+      adapter.findPullRequestForBranch("aigile/LIN-1", { owner: "o", repo: "r" }),
+    ).resolves.toEqual({
+      id: "o/r#7",
+      number: 7,
+      url: "https://github.com/o/r/pull/7",
+      mergeState: "unmerged",
+      open: true,
+    });
+  });
+
+  it("reports a merged branch pull request", async () => {
+    const adapter = createGitHubCliCodeHostAdapter({
+      exec: async () => ({
+        stdout: JSON.stringify({ number: 7, url: "u", state: "MERGED", merged: true }),
+        stderr: "",
+        exitCode: 0,
+      }),
+    });
+
+    await expect(
+      adapter.findPullRequestForBranch("b", { owner: "o", repo: "r" }),
+    ).resolves.toMatchObject({ mergeState: "merged", open: false });
+  });
+
+  it("returns undefined when no pull request exists for the branch", async () => {
+    const adapter = createGitHubCliCodeHostAdapter({
+      exec: async () => ({ stdout: "", stderr: "no pull requests found", exitCode: 1 }),
+    });
+
+    await expect(
+      adapter.findPullRequestForBranch("aigile/LIN-1", { owner: "o", repo: "r" }),
+    ).resolves.toBeUndefined();
+  });
+
   it("treats absent merged pull request fields as unknown", async () => {
     const adapter = createGitHubCliCodeHostAdapter({
       exec: async (_command, args) => {

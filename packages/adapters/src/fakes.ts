@@ -131,5 +131,19 @@ export const createFakeCodeHostAdapter = (
       requirePullRequest(pullRequests, id);
       mergedIds.add(id);
     },
+    findPullRequestForBranch: async (branch, target) => {
+      const record = [...pullRequests.values()].find(
+        (pr) => pr.branch === branch && pr.owner === target.owner && pr.repo === target.repo,
+      );
+      if (record === undefined) return undefined;
+      const merged = mergeStateFor(record.id) === "merged";
+      return {
+        id: record.id,
+        number: record.number,
+        url: record.url,
+        mergeState: merged ? "merged" : "unmerged",
+        open: !merged,
+      };
+    },
   };
 };

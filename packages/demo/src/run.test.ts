@@ -257,6 +257,7 @@ describe("demo orchestration", () => {
         throw new Error("review should not run after check publication fails");
       },
       mergePullRequest: async () => {},
+      findPullRequestForBranch: async () => undefined,
     };
 
     const result = await runDemoIssueWithRoles({
@@ -348,6 +349,7 @@ describe("demo orchestration", () => {
         getPullRequestMergeability: async () => ({ status: "mergeable" }),
         getPullRequestMergeState: async () => ({ status: "unmerged" }),
         mergePullRequest: async () => undefined,
+        findPullRequestForBranch: async () => undefined,
       },
     });
 

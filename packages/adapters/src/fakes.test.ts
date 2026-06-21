@@ -363,4 +363,32 @@ describe("fake source-of-truth adapters", () => {
     await codeHost.mergePullRequest(pr.id);
     expect((await codeHost.getPullRequestMergeState(pr.id)).status).toBe("merged");
   });
+
+  it("finds a pull request by branch and reflects its merge state", async () => {
+    const codeHost = createFakeCodeHostAdapter();
+    await codeHost.createPullRequest({
+      owner: "o",
+      repo: "r",
+      branch: "aigile/LIN-1",
+      baseBranch: "main",
+      title: "t",
+      body: "b",
+    });
+
+    const found = await codeHost.findPullRequestForBranch("aigile/LIN-1", {
+      owner: "o",
+      repo: "r",
+    });
+    expect(found).toMatchObject({ id: "o/r#1", open: true, mergeState: "unmerged" });
+
+    await codeHost.mergePullRequest("o/r#1");
+    expect(
+      (await codeHost.findPullRequestForBranch("aigile/LIN-1", { owner: "o", repo: "r" }))
+        ?.mergeState,
+    ).toBe("merged");
+
+    expect(
+      await codeHost.findPullRequestForBranch("missing", { owner: "o", repo: "r" }),
+    ).toBeUndefined();
+  });
 });
