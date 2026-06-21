@@ -1,3 +1,5 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { WorkflowArtifact, WorkflowEvent } from "@aigile/types";
 
 /**
@@ -45,6 +47,42 @@ export const createInMemoryRunStore = (): RunStore => {
         events: [...existing.events, structuredClone(event)],
         artifacts: mergeArtifacts(existing.artifacts, artifacts),
       });
+    },
+  };
+};
+
+const runFileSlug = (issueId: string): string =>
+  issueId.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "run";
+
+/**
+ * A durable RunStore backed by one JSON file per run under `directory`. The file
+ * is the persisted event log, so a fresh process (or store instance) over the
+ * same directory reconstructs the run by loading and replaying it.
+ */
+export const createFileRunStore = (options: { directory: string }): RunStore => {
+  const fileFor = (issueId: string): string =>
+    join(options.directory, `${runFileSlug(issueId)}.json`);
+
+  const readRun = async (issueId: string): Promise<PersistedRun | undefined> => {
+    try {
+      return JSON.parse(await readFile(fileFor(issueId), "utf8")) as PersistedRun;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  };
+
+  return {
+    load: readRun,
+    appendEvent: async (issueId, event, artifacts = []) => {
+      const existing = (await readRun(issueId)) ?? { issueId, events: [], artifacts: [] };
+      const next: PersistedRun = {
+        issueId,
+        events: [...existing.events, event],
+        artifacts: mergeArtifacts(existing.artifacts, artifacts),
+      };
+      await mkdir(options.directory, { recursive: true });
+      await writeFile(fileFor(issueId), `${JSON.stringify(next, null, 2)}\n`);
     },
   };
 };

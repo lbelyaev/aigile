@@ -14,7 +14,7 @@ export type {
   WorkflowSnapshot,
 } from "./reducer.js";
 
-export { createInMemoryRunStore } from "./run-store.js";
+export { createFileRunStore, createInMemoryRunStore } from "./run-store.js";
 
 export type { PersistedRun, RunStore } from "./run-store.js";
 

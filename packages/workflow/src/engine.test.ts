@@ -1,11 +1,14 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import type { WorkflowArtifact, WorkflowEvent } from "@aigile/types";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   runWorkflowEngine,
   type WorkflowCommandHandler,
   type WorkflowCommandHandlers,
 } from "./engine.js";
-import { createInMemoryRunStore } from "./run-store.js";
+import { createFileRunStore, createInMemoryRunStore } from "./run-store.js";
 
 const ev = (type: WorkflowEvent["type"], artifactId?: string): WorkflowEvent =>
   artifactId === undefined ? { type, issueId: "LIN-1" } : { type, issueId: "LIN-1", artifactId };
@@ -112,5 +115,57 @@ describe("workflow engine", () => {
 
     expect(result.outcome).toBe("stalled");
     expect(result.snapshot.state).toBe("planning"); // bootstrapped, then no architect handler
+  });
+});
+
+describe("workflow engine durable resume", () => {
+  const tempDirs: string[] = [];
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  it("resumes from the persisted log after a crash without redoing completed phases", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "aigile-engine-"));
+    tempDirs.push(directory);
+
+    let architectCalls = 0;
+    const countingArchitect: WorkflowCommandHandler = async () => {
+      architectCalls += 1;
+      return { event: ev("plan_drafted", "plan"), artifact: art("plan", "architect.plan") };
+    };
+
+    // Run 1: the verification handler throws, simulating a crash mid-run.
+    const crashing = baseHandlers(async () => {
+      throw new Error("boom: process crashed during verification");
+    });
+    crashing.start_architect_plan = countingArchitect;
+    await expect(
+      runWorkflowEngine({
+        issueId: "LIN-1",
+        store: createFileRunStore({ directory }),
+        handlers: crashing,
+      }),
+    ).rejects.toThrow("boom");
+
+    // The log persisted up to the last completed step; no verification event.
+    const afterCrash = await createFileRunStore({ directory }).load("LIN-1");
+    expect(afterCrash?.events.map((entry) => entry.type)).toEqual([
+      "issue_received",
+      "plan_drafted",
+      "plan_approved",
+      "developer_finished",
+    ]);
+
+    // Run 2: a fresh store over the same directory resumes and completes.
+    const healthy = baseHandlers(async () => ({ event: ev("verification_passed") }));
+    healthy.start_architect_plan = countingArchitect;
+    const result = await runWorkflowEngine({
+      issueId: "LIN-1",
+      store: createFileRunStore({ directory }),
+      handlers: healthy,
+    });
+
+    expect(result.outcome).toBe("merged");
+    expect(architectCalls).toBe(1); // architect ran once total — not re-run on resume
   });
 });
