@@ -30,6 +30,7 @@ import {
   runDemoIssueWithGitHub,
   runDemoIssueWithRoles,
   runDemoIssueWithWorkspace,
+  runWorkspaceIssueWithEngine,
   type DemoWorkspaceInput,
   type DemoResult,
   type PullRequestTarget,
@@ -908,7 +909,7 @@ export const runLinearIssueWorkflowCli = async (
       }
     },
   });
-  const result = await (input.runWorkspace ?? runDemoIssueWithWorkspace)(runInput);
+  const result = await (input.runWorkspace ?? runWorkspaceIssueWithEngine)(runInput);
   const syncedResult = await syncLinearIssueWorkflowResult(
     input,
     result,
@@ -1466,7 +1467,7 @@ const main = async (): Promise<void> => {
   }
   const result =
     args.mode === "run"
-      ? await runDemoIssueWithWorkspace(runInput)
+      ? await runWorkspaceIssueWithEngine(runInput)
       : args.mode === "agents"
         ? args.runtimeConfigPath
           ? await (() => {

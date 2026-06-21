@@ -6,6 +6,7 @@ export {
   runDemoIssueWithGitHub,
   runDemoIssueWithRoles,
   runDemoIssueWithWorkspace,
+  runWorkspaceIssueWithEngine,
 } from "./run.js";
 
 export type {
