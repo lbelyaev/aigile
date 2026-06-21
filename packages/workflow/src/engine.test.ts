@@ -116,6 +116,73 @@ describe("workflow engine", () => {
     expect(result.outcome).toBe("stalled");
     expect(result.snapshot.state).toBe("planning"); // bootstrapped, then no architect handler
   });
+
+  it("reaches the satisfied terminal when the checker reports work already satisfied", async () => {
+    const store = createInMemoryRunStore();
+    const handlers = baseHandlers(async () => ({ event: ev("verification_passed") }));
+    handlers.start_checker_review = async () => ({ event: ev("work_satisfied") });
+
+    const result = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+    expect(result.outcome).toBe("satisfied");
+    expect(result.snapshot.state).toBe("satisfied");
+  });
+
+  it("retries development when the checker requests changes, then merges", async () => {
+    const store = createInMemoryRunStore();
+    let checkerCalls = 0;
+    const devAttempts: number[] = [];
+    const handlers = baseHandlers(async () => ({ event: ev("verification_passed") }));
+    handlers.start_developer_attempt = async ({ snapshot }) => {
+      devAttempts.push(snapshot.developerAttempts);
+      return {
+        event: ev("developer_finished", `dev-${snapshot.developerAttempts}`),
+        artifact: art(`dev-${snapshot.developerAttempts}`, "developer.attempt"),
+      };
+    };
+    handlers.start_checker_review = async () => {
+      checkerCalls += 1;
+      return { event: ev(checkerCalls < 2 ? "checker_requested_changes" : "checker_passed") };
+    };
+
+    const result = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+    expect(result.outcome).toBe("merged");
+    expect(checkerCalls).toBe(2);
+    expect(devAttempts).toEqual([1, 2]);
+  });
+
+  it("escalates when the checker escalates", async () => {
+    const store = createInMemoryRunStore();
+    const handlers = baseHandlers(async () => ({ event: ev("verification_passed") }));
+    handlers.start_checker_review = async () => ({ event: ev("checker_escalated") });
+
+    const result = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+    expect(result.outcome).toBe("escalated");
+  });
+
+  it("escalates when publishing the pull request fails", async () => {
+    const store = createInMemoryRunStore();
+    const handlers = baseHandlers(async () => ({ event: ev("verification_passed") }));
+    handlers.merge_pull_request = async () => ({ event: ev("publish_failed") });
+
+    const result = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+    expect(result.outcome).toBe("escalated");
+  });
+
+  it("surfaces the escalation reason in the result", async () => {
+    const store = createInMemoryRunStore();
+    const handlers = baseHandlers(async () => ({
+      event: { type: "verification_failed", issueId: "LIN-1", reason: "type errors in worktree" },
+    }));
+
+    const result = await runWorkflowEngine({
+      issueId: "LIN-1",
+      store,
+      handlers,
+      policy: { maxDeveloperAttempts: 1 },
+    });
+    expect(result.outcome).toBe("escalated");
+    expect(result.reason).toBe("type errors in worktree");
+  });
 });
 
 describe("workflow engine durable resume", () => {

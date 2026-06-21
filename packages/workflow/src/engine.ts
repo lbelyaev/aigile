@@ -52,7 +52,20 @@ export interface WorkflowEngineResult {
   snapshot: WorkflowSnapshot;
   artifacts: WorkflowArtifact[];
   outcome: WorkflowOutcome;
+  // Why the run ended where it did (e.g. the escalation reason), when available.
+  reason?: string;
 }
+
+const buildResult = (
+  snapshot: WorkflowSnapshot,
+  artifacts: WorkflowArtifact[],
+  outcome: WorkflowOutcome,
+  reason: string | undefined,
+): WorkflowEngineResult => {
+  const result: WorkflowEngineResult = { snapshot, artifacts, outcome };
+  if (reason !== undefined) result.reason = reason;
+  return result;
+};
 
 // States the engine cannot or should not advance past: terminal states plus
 // "escalated" (handed off to a human; the reducer has no transitions out of it).
@@ -133,7 +146,7 @@ export const runWorkflowEngine = async (
 
     const handler = handlers[command.type];
     if (handler === undefined) {
-      return { snapshot, artifacts, outcome: "stalled" };
+      return buildResult(snapshot, artifacts, "stalled", command.reason);
     }
 
     const output = await handler({ command, snapshot, artifacts: [...artifacts] });
@@ -149,5 +162,5 @@ export const runWorkflowEngine = async (
     pending = result.commands;
   }
 
-  return { snapshot, artifacts, outcome: outcomeForState(snapshot.state) };
+  return buildResult(snapshot, artifacts, outcomeForState(snapshot.state), pending[0]?.reason);
 };
