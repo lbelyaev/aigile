@@ -97,6 +97,27 @@ describe("engine command handlers", () => {
     expect(published).toBe(1);
   });
 
+  it("auto-merges when GitHub rejects an approving review from the PR author", async () => {
+    const baseCodeHost = createFakeCodeHostAdapter();
+    const codeHost: CodeHostAdapter = {
+      ...baseCodeHost,
+      submitPullRequestReview: async () => {
+        throw new Error(
+          "gh pr review failed (1): failed to create review: GraphQL: Review Can not approve your own pull request (addPullRequestReview)",
+        );
+      },
+    };
+
+    const result = await run(buildDeps({ codeHost }));
+
+    expect(result.outcome).toBe("merged");
+    expect(result.snapshot.state).toBe("merged");
+    expect((await codeHost.getPullRequestMergeState("o/r#1")).status).toBe("merged");
+    expect((await codeHost.getPullRequest("o/r#1")).comments).toContainEqual(
+      expect.stringContaining("## Aigile checker review"),
+    );
+  });
+
   it("reuses an existing PR on re-run instead of publishing/creating again", async () => {
     const codeHost = createFakeCodeHostAdapter({ mergeability: "conflicting" });
     let publishes = 0;

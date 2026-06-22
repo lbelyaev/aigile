@@ -728,6 +728,16 @@ const publishedComment = (result: DemoResult): string =>
     `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
   ].join("\n");
 
+const publishedInReviewComment = (result: DemoResult): string =>
+  [
+    "Aigile published this issue to GitHub and moved it to review.",
+    "",
+    `Final state: ${result.finalState}`,
+    `Pull request: ${result.pullRequest?.url ?? "unavailable"}`,
+    `Verification: ${artifactIdByKind(result, "verification.result")}`,
+    `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
+  ].join("\n");
+
 const formatListSection = (items: readonly string[]): string[] =>
   items.length === 0 ? ["- None."] : items.map((item) => `- ${item}`);
 
@@ -816,14 +826,21 @@ const syncLinearIssueWorkflowResult = async (
 ): Promise<DemoResult> => {
   if (input.dryRun === true) return result;
   const shouldSyncSatisfied = result.finalState === "satisfied";
-  const shouldSyncPublished = input.publish === true && result.finalState === "merged";
+  const shouldSyncPublished = input.publish === true && result.pullRequest !== undefined;
   if (!shouldSyncSatisfied && !shouldSyncPublished) return result;
 
-  const mergeabilityStatus = shouldSyncPublished
-    ? await getPublishedMergeabilityStatus(codeHost ?? input.codeHost, result)
-    : "mergeable";
-  const syncResult =
-    mergeabilityStatus === "mergeable" ? result : publishedResultBlockedByMergeability(result);
+  const publishedMerged = shouldSyncPublished && result.finalState === "merged";
+  // Mergeability only matters for a published-but-unmerged PR. A merged PR reports
+  // mergeable "unknown" (GitHub stops computing it post-merge), so querying it would
+  // falsely look blocked — skip the query and treat a merged run as mergeable.
+  const mergeabilityStatus =
+    shouldSyncPublished && !publishedMerged
+      ? await getPublishedMergeabilityStatus(codeHost ?? input.codeHost, result)
+      : "mergeable";
+  const publishedBlocked =
+    shouldSyncPublished && !publishedMerged && mergeabilityStatus !== "mergeable";
+  const markDone = shouldSyncSatisfied || publishedMerged;
+  const syncResult = publishedBlocked ? publishedResultBlockedByMergeability(result) : result;
 
   const tracker = createLinearGraphqlIssueTrackerAdapter(
     input.fetchGraphql === undefined
@@ -837,16 +854,21 @@ const syncLinearIssueWorkflowResult = async (
           ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
         },
   );
-  if (input.teamKey !== undefined && mergeabilityStatus === "mergeable") {
-    await tracker.updateIssueStatus(input.issueKey, issueStatusLabels.done);
+  if (input.teamKey !== undefined) {
+    await tracker.updateIssueStatus(
+      input.issueKey,
+      markDone ? issueStatusLabels.done : issueStatusLabels.inReview,
+    );
   }
   await tracker.appendIssueComment(
     input.issueKey,
     shouldSyncSatisfied
       ? alreadySatisfiedComment(result)
-      : mergeabilityStatus === "mergeable"
+      : publishedMerged
         ? publishedComment(result)
-        : blockedPublishedComment(result, mergeabilityStatus),
+        : publishedBlocked
+          ? blockedPublishedComment(result, mergeabilityStatus)
+          : publishedInReviewComment(result),
   );
   return syncResult;
 };
@@ -1298,14 +1320,20 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
 const main = async (): Promise<void> => {
   const args = parseCliArgs(process.argv.slice(2));
   const runContext = args.mode === "run" ? resolveProductCliContext(args) : undefined;
+  const linearApiKey = (command: "run" | "watch"): string => {
+    const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
+    const apiKey = process.env[apiKeyEnv];
+    if (!apiKey) throw new Error(`${command} --linear requires ${apiKeyEnv} to be set`);
+    return apiKey;
+  };
   const linearIssue =
-    args.mode === "run" && args.linear
+    args.mode === "run" &&
+    args.linear &&
+    args.preflightOnly !== true &&
+    args.runtimeConfigPath === undefined
       ? await (async (): Promise<IssueRecord> => {
           const issueKey = args.issueKey ?? defaultIssue.key;
-          const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
-          const apiKey = process.env[apiKeyEnv];
-          if (!apiKey) throw new Error(`run --linear requires ${apiKeyEnv} to be set`);
-          return fetchLinearIssueForRun({ apiKey, issueKey });
+          return fetchLinearIssueForRun({ apiKey: linearApiKey("run"), issueKey });
         })()
       : undefined;
   const runInput: DemoWorkspaceInput = {
@@ -1503,6 +1531,73 @@ const main = async (): Promise<void> => {
     else if (args.githubRepo !== undefined) preflightInput.githubRepo = args.githubRepo;
     if (args.remote !== undefined) preflightInput.remote = args.remote;
     const output = await runRunModePreflight(preflightInput);
+    process.stdout.write(`${output}\n`);
+    return;
+  }
+  if (args.mode === "run" && args.linear && args.runtimeConfigPath !== undefined) {
+    if (runContext?.dryRun !== true && runContext?.agentWrite !== true) {
+      throw new Error("run with --runtime-config requires --dry-run or --agent-write");
+    }
+    const publishRunInput: Pick<
+      LinearIssueWorkflowCliInput,
+      "publish" | "remote" | "pullRequestTarget" | "codeHost"
+    > = {};
+    if (runContext?.publish === true && runContext.dryRun !== true) {
+      const remote = args.remote ?? "origin";
+      const publishPreflightInput: PublishPreflightInput = {
+        repoPath: runContext.repoPath,
+        remote,
+        baseBranch: runContext.baseBranch,
+      };
+      if (runContext.githubRepo !== undefined)
+        publishPreflightInput.githubRepo = runContext.githubRepo;
+      const publishPreflight = await runPublishPreflight(publishPreflightInput);
+      const [owner, repo] = publishPreflight.githubRepo.split("/");
+      if (!owner || !repo) throw new Error("--github-repo must be in owner/repo format");
+      publishRunInput.publish = true;
+      publishRunInput.remote = remote;
+      publishRunInput.pullRequestTarget = {
+        owner,
+        repo,
+        baseBranch: runContext.baseBranch,
+      };
+      publishRunInput.codeHost = createGitHubCliCodeHostAdapter({
+        cwd: runContext.repoPath,
+        exec: async (command, commandArgs, options) =>
+          defaultExecCommand(command, commandArgs, { cwd: options.cwd ?? process.cwd() }),
+      });
+    } else if (runContext?.publish === true) {
+      publishRunInput.publish = true;
+      publishRunInput.remote = args.remote ?? "origin";
+      if (runContext.githubOwner !== undefined && runContext.githubRepository !== undefined) {
+        publishRunInput.pullRequestTarget = {
+          owner: runContext.githubOwner,
+          repo: runContext.githubRepository,
+          baseBranch: runContext.baseBranch,
+        };
+      }
+    }
+    const output = await runLinearIssueWorkflowCli({
+      apiKey: linearApiKey("run"),
+      issueKey: args.issueKey ?? defaultIssue.key,
+      ...(runContext?.linearTeam === undefined ? {} : { teamKey: runContext.linearTeam }),
+      repoPath: runContext?.repoPath ?? args.repoPath ?? process.cwd(),
+      worktreesPath:
+        runContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`,
+      runtimeConfigPath: args.runtimeConfigPath,
+      ...(runContext?.baseBranch === undefined ? {} : { baseBranch: runContext.baseBranch }),
+      ...(runContext?.dryRun === true ? { dryRun: true } : {}),
+      ...(runContext?.agentWrite === true ? { agentWrite: true } : {}),
+      ...(runContext?.verification === undefined ? {} : { verification: runContext.verification }),
+      ...(args.retryEscalated === true ? { retryEscalated: true } : {}),
+      runStatePath: join(
+        runContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`,
+        "..",
+        "runs",
+      ),
+      ...publishRunInput,
+      onProgressLine: (line) => process.stderr.write(`${line}\n`),
+    });
     process.stdout.write(`${output}\n`);
     return;
   }

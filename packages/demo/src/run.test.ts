@@ -149,6 +149,33 @@ describe("demo orchestration", () => {
     ]);
   });
 
+  it("publishes checker feedback as a comment when GitHub rejects self-review", async () => {
+    const baseCodeHost = createFakeCodeHostAdapter();
+    const codeHost: CodeHostAdapter = {
+      ...baseCodeHost,
+      submitPullRequestReview: async () => {
+        throw new Error(
+          "gh pr review failed (1): failed to create review: GraphQL: Review Can not approve your own pull request (addPullRequestReview)",
+        );
+      },
+    };
+
+    const result = await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner: runnerWithCheckerVerdict("pass"),
+      codeHost,
+    });
+
+    expect(result.finalState).toBe("merge_ready");
+    expect(result.pullRequest?.reviews).toEqual([]);
+    expect(result.pullRequest?.comments).toEqual([
+      expect.stringContaining("## Aigile developer update"),
+      expect.stringContaining("## Aigile checker review"),
+      expect.stringContaining("## Aigile final summary"),
+    ]);
+  });
+
   it("moves a published passing pull request to the configured review status without marking it done", async () => {
     const { issueTracker, statusUpdates, comments } = createRecordingIssueTracker();
 
