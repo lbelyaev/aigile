@@ -444,6 +444,29 @@ describe("cli formatting", () => {
     });
   });
 
+  it("parses product-backed run arguments", () => {
+    expect(
+      parseCliArgs([
+        "run",
+        "LBE-27",
+        "--linear",
+        "--product",
+        "aigile",
+        "--products-config",
+        "config/aigile.products.example.json",
+        "--runtime-config",
+        "config/aigile.runtimes.example.json",
+      ]),
+    ).toEqual({
+      mode: "run",
+      issueKey: "LBE-27",
+      linear: true,
+      product: "aigile",
+      productsConfigPath: "config/aigile.products.example.json",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+    });
+  });
+
   it("parses explicit agent-write run arguments", () => {
     expect(
       parseCliArgs([
@@ -778,6 +801,61 @@ describe("cli formatting", () => {
       agentWrite: true,
       publish: true,
       startRun: true,
+    });
+  });
+
+  it("resolves product defaults and verification policy for direct runs", () => {
+    const config = loadProductConfigFromJson(
+      JSON.stringify({
+        products: [
+          {
+            id: "aigile",
+            linear: { team: "LBE", project: "Aigile" },
+            github: { repo: "lbelyaev/aigile", baseBranch: "main" },
+            repoPath: "/repo/aigile",
+            worktreesPath: "/worktrees/aigile",
+            defaultRun: { startRun: true, mode: "agent_write", publish: true },
+            verification: {
+              install: [["bun", "install", "--frozen-lockfile"]],
+              checks: [["bun", "run", "check"]],
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(
+      resolveProductCliContext(
+        parseCliArgs([
+          "run",
+          "LBE-27",
+          "--linear",
+          "--product",
+          "aigile",
+          "--runtime-config",
+          "config/aigile.runtimes.example.json",
+        ]),
+        config,
+        { cwd: "/fallback", homeDir: "/home/test" },
+      ),
+    ).toEqual({
+      productId: "aigile",
+      linearTeam: "LBE",
+      linearProject: "Aigile",
+      githubRepo: "lbelyaev/aigile",
+      githubOwner: "lbelyaev",
+      githubRepository: "aigile",
+      baseBranch: "main",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/worktrees/aigile",
+      dryRun: false,
+      agentWrite: true,
+      publish: true,
+      startRun: true,
+      verification: {
+        install: [["bun", "install", "--frozen-lockfile"]],
+        checks: [["bun", "run", "check"]],
+      },
     });
   });
 
