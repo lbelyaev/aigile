@@ -62,6 +62,8 @@ import {
   type ExecResult,
   type IssueWorkspaceStatus,
 } from "@aigile/workspace";
+import { createFileRunStore, listResumableRuns } from "@aigile/workflow";
+import { join } from "node:path";
 
 const defaultIssue: IssueRecord = {
   id: "issue-demo-1",
@@ -663,6 +665,10 @@ export interface LinearWatchLoopCliInput extends LinearWatchOnceCliInput {
   pullRequestTarget?: { owner: string; repo: string };
   reviewStatus?: string;
   reconcileLabels?: ReconcileStatusLabels;
+  resume?: {
+    listResumable: () => Promise<string[]>;
+    resumeRun: (issueId: string) => Promise<{ outcome: string }>;
+  };
 }
 
 export interface LinearWatchPreflightCliInput {
@@ -695,6 +701,7 @@ export interface LinearIssueWorkflowCliInput {
   onProgressLine?: (line: string) => void;
   runWorkspace?: (input: DemoWorkspaceInput) => Promise<DemoResult>;
   verification?: ProductVerificationPolicy;
+  runStatePath?: string;
 }
 
 const artifactIdByKind = (result: DemoResult, kind: string): string =>
@@ -875,6 +882,7 @@ export const runLinearIssueWorkflowCli = async (
   if (input.verification?.changedFileGuards !== undefined) {
     runInput.changedFileGuards = input.verification.changedFileGuards;
   }
+  if (input.runStatePath !== undefined) runInput.runStatePath = input.runStatePath;
   if (input.baseBranch !== undefined) runInput.baseBranch = input.baseBranch;
   if (input.dryRun === true) {
     runInput.dryRun = true;
@@ -987,6 +995,12 @@ const formatWatchLoopEvent = (event: WatchLoopEvent): string | undefined => {
   if (event.type === "issue_status_reconciled") {
     return `Poll ${event.poll}: reconciled ${event.issueKey} (${event.from} -> ${event.to})`;
   }
+  if (event.type === "run_resumed") {
+    return `Poll ${event.poll}: resumed ${event.issueId} (${event.outcome})`;
+  }
+  if (event.type === "run_resume_failed") {
+    return `Poll ${event.poll}: resume failed for ${event.issueId}: ${event.error}`;
+  }
   return `Stopped: ${event.reason} after ${event.polls} polls`;
 };
 
@@ -1043,6 +1057,7 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
     pollIntervalMs: input.pollIntervalMs,
     ...(input.claimStatus === undefined ? {} : { claimStatus: input.claimStatus }),
     ...(reconcile === undefined ? {} : { reconcile }),
+    ...(input.resume === undefined ? {} : { resume: input.resume }),
     ...(productRoutes === undefined ? {} : { productRoutes }),
     ...(input.maxPolls === undefined ? {} : { maxPolls: input.maxPolls }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
@@ -1392,10 +1407,11 @@ const main = async (): Promise<void> => {
               };
             }
           }
-          loopInput.startRun = async (issue) =>
+          const runStatePath = join(watchContext.worktreesPath, "..", "runs");
+          const runIssueByKey = (issueKey: string): Promise<string> =>
             runLinearIssueWorkflowCli({
               apiKey,
-              issueKey: issue.key,
+              issueKey,
               ...(watchContext.linearTeam === undefined
                 ? {}
                 : { teamKey: watchContext.linearTeam }),
@@ -1403,6 +1419,7 @@ const main = async (): Promise<void> => {
               worktreesPath: watchContext.worktreesPath,
               runtimeConfigPath: args.runtimeConfigPath!,
               baseBranch: watchContext.baseBranch,
+              runStatePath,
               ...(watchContext.dryRun === true ? { dryRun: true } : {}),
               ...(watchContext.agentWrite === true ? { agentWrite: true } : {}),
               ...(watchContext.verification === undefined
@@ -1411,6 +1428,16 @@ const main = async (): Promise<void> => {
               ...publishRunInput,
               onProgressLine: (line) => process.stderr.write(`${line}\n`),
             });
+          loopInput.startRun = async (issue) => runIssueByKey(issue.key);
+          // Resume interrupted/paused runs from the persisted run log each poll.
+          const runStore = createFileRunStore({ directory: runStatePath });
+          loopInput.resume = {
+            listResumable: () => listResumableRuns(runStore),
+            resumeRun: async (issueId) => {
+              const output = await runIssueByKey(issueId);
+              return { outcome: runResultStateLine(output) ?? "resumed" };
+            },
+          };
           // Reconcile in-flight issue status from PR state when publishing is configured.
           if (
             publishRunInput.codeHost !== undefined &&
