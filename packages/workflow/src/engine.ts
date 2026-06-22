@@ -126,7 +126,7 @@ const mergeArtifact = (
 ): WorkflowArtifact[] =>
   artifacts.some((existing) => existing.id === artifact.id)
     ? [...artifacts]
-    : [...artifacts, artifact];
+    : [...artifacts, structuredClone(artifact)];
 
 /**
  * Drive a workflow run to a terminal outcome by repeatedly: taking the FSM's

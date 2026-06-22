@@ -76,6 +76,39 @@ describe("workflow engine", () => {
     expect(devAttempts).toEqual([1, 2, 3]); // initial + two retries
   });
 
+  it("keeps distinct artifact payloads across retries", async () => {
+    const store = createInMemoryRunStore();
+    let verifyCalls = 0;
+    const handlers = baseHandlers(async () => {
+      verifyCalls += 1;
+      const passed = verifyCalls > 1;
+      const artifactId = `verification-${verifyCalls}`;
+      return {
+        event: ev(passed ? "verification_passed" : "verification_failed", artifactId),
+        artifact: {
+          id: artifactId,
+          kind: "verification.result",
+          source: "verifier",
+          payload: { status: passed ? "passed" : "failed" },
+        },
+      };
+    });
+
+    const result = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+
+    expect(result.outcome).toBe("merged");
+    expect(
+      result.artifacts
+        .filter((artifact) => artifact.kind === "verification.result")
+        .map((artifact) => artifact.payload),
+    ).toEqual([{ status: "failed" }, { status: "passed" }]);
+    expect(
+      (await store.load("LIN-1"))?.artifacts
+        .filter((artifact) => artifact.kind === "verification.result")
+        .map((artifact) => artifact.payload),
+    ).toEqual([{ status: "failed" }, { status: "passed" }]);
+  });
+
   it("escalates after the developer-attempt budget is exhausted", async () => {
     const store = createInMemoryRunStore();
     let verifyCalls = 0;

@@ -181,7 +181,7 @@ describe("engine command handlers", () => {
         runRole: async (roleId) => {
           if (roleId === "developer") {
             devCalls += 1;
-            return attemptArtifact(`developer:LIN-1:${devCalls}`);
+            return attemptArtifact("developer:LIN-1");
           }
           return defaultRunRole(roleId);
         },
@@ -191,6 +191,16 @@ describe("engine command handlers", () => {
     expect(result.outcome).toBe("merged");
     expect(verifyCalls).toBe(2);
     expect(devCalls).toBe(2);
+    expect(
+      result.artifacts
+        .filter((artifact) => artifact.kind === "developer.attempt")
+        .map((artifact) => artifact.id),
+    ).toEqual(["developer:LIN-1:attempt-1", "developer:LIN-1:attempt-2"]);
+    expect(
+      result.artifacts
+        .filter((artifact) => artifact.kind === "verification.result")
+        .map((artifact) => artifact.id),
+    ).toEqual(["verifier:LIN-1:failed:attempt-1", "verifier:LIN-1:passed:attempt-2"]);
   });
 
   it("escalates when the checker escalates", async () => {

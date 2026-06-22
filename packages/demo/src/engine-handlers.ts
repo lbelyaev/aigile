@@ -31,16 +31,30 @@ export interface EngineHandlerDeps {
   mergePolicy?: MergePolicy;
 }
 
-const findByKind = (
+const findLatestByKind = (
   artifacts: readonly WorkflowArtifact[],
   kind: string,
-): WorkflowArtifact | undefined => artifacts.find((artifact) => artifact.kind === kind);
+): WorkflowArtifact | undefined => {
+  for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+    const artifact = artifacts[index];
+    if (artifact?.kind === kind) return artifact;
+  }
+  return undefined;
+};
 
 const requireByKind = (artifacts: readonly WorkflowArtifact[], kind: string): WorkflowArtifact => {
-  const artifact = findByKind(artifacts, kind);
+  const artifact = findLatestByKind(artifacts, kind);
   if (artifact === undefined) throw new Error(`Missing ${kind} artifact`);
   return artifact;
 };
+
+const artifactWithRunSuffix = (artifact: WorkflowArtifact, suffix: string): WorkflowArtifact => {
+  const cloned = structuredClone(artifact);
+  return { ...cloned, id: `${cloned.id}:${suffix}` };
+};
+
+const nextArtifactSequence = (artifacts: readonly WorkflowArtifact[], kind: string): number =>
+  artifacts.filter((artifact) => artifact.kind === kind).length + 1;
 
 const checkerBaseEvent = (
   verdict: WorkflowArtifact,
@@ -157,24 +171,36 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
 
   return {
     start_architect_plan: async (ctx) => {
-      const artifact = await deps.runRole("architect", ctx.artifacts);
+      const artifact = artifactWithRunSuffix(
+        await deps.runRole("architect", ctx.artifacts),
+        `plan-${nextArtifactSequence(ctx.artifacts, "architect.plan")}`,
+      );
       return { event: eventFor("plan_drafted", issue.key, { artifactId: artifact.id }), artifact };
     },
     request_plan_approval: async () => ({ event: eventFor("plan_approved", issue.key) }),
     start_developer_attempt: async (ctx) => {
-      const artifact = await deps.runRole("developer", ctx.artifacts);
+      const artifact = artifactWithRunSuffix(
+        await deps.runRole("developer", ctx.artifacts),
+        `attempt-${ctx.snapshot.developerAttempts}`,
+      );
       return {
         event: eventFor("developer_finished", issue.key, { artifactId: artifact.id }),
         artifact,
       };
     },
     run_verification: async (ctx) => {
-      const artifact = await deps.verify(ctx.artifacts);
+      const artifact = artifactWithRunSuffix(
+        await deps.verify(ctx.artifacts),
+        `attempt-${ctx.snapshot.developerAttempts}`,
+      );
       const type = verificationPassed(artifact) ? "verification_passed" : "verification_failed";
       return { event: eventFor(type, issue.key, { artifactId: artifact.id }), artifact };
     },
     start_checker_review: async (ctx) => {
-      const verdict = await deps.runRole("checker", ctx.artifacts);
+      const verdict = artifactWithRunSuffix(
+        await deps.runRole("checker", ctx.artifacts),
+        `attempt-${ctx.snapshot.developerAttempts}`,
+      );
       const base = checkerBaseEvent(verdict);
       const attempt = requireByKind(ctx.artifacts, "developer.attempt");
       const type =
@@ -203,9 +229,9 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
           prArtifact = branchPullRequestArtifact(existing, issue, branchName, pullRequestTarget);
         } else {
           await deps.publish();
-          const plan = findByKind(ctx.artifacts, "architect.plan");
-          const attempt = findByKind(ctx.artifacts, "developer.attempt");
-          const verdict = findByKind(ctx.artifacts, "checker.verdict");
+          const plan = findLatestByKind(ctx.artifacts, "architect.plan");
+          const attempt = findLatestByKind(ctx.artifacts, "developer.attempt");
+          const verdict = findLatestByKind(ctx.artifacts, "checker.verdict");
 
           const pr = await codeHost.createPullRequest({
             owner: pullRequestTarget.owner,
