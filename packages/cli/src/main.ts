@@ -47,14 +47,17 @@ import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
 import { isArchitectPlanPayload, type WorkflowArtifact } from "@aigile/types";
 import {
   defaultClaimComment,
+  reconcileIssueStatus,
   watchLoop,
   watchOnce,
+  type ReconcileStatusLabels,
   type WatchLoopEvent,
   type WatchProductRoute,
 } from "@aigile/watch";
 import {
   createGitWorkspaceAdapter,
   defaultExecCommand,
+  issueBranchName,
   type ExecCommand,
   type ExecResult,
   type IssueWorkspaceStatus,
@@ -653,6 +656,13 @@ export interface LinearWatchLoopCliInput extends LinearWatchOnceCliInput {
   sleep?: (durationMs: number, signal?: AbortSignal) => Promise<void>;
   onLine?: (line: string) => void;
   startRun?: (issue: IssueRecord) => Promise<string>;
+  // When a code host and repo target are supplied, the loop reconciles in-flight
+  // issue status from PR state each poll (PR open -> In Review, merged -> Done,
+  // closed -> back to the ready queue), independent of any run.
+  codeHost?: CodeHostAdapter;
+  pullRequestTarget?: { owner: string; repo: string };
+  reviewStatus?: string;
+  reconcileLabels?: ReconcileStatusLabels;
 }
 
 export interface LinearWatchPreflightCliInput {
@@ -989,6 +999,31 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
   const { source, tracker } = createLinearWatchAdapters(input);
   const lines: string[] = [];
   const productRoutes = productRouteFromInput(input);
+
+  const labels: ReconcileStatusLabels = input.reconcileLabels ?? {
+    inReview: DEFAULT_ISSUE_STATUS_LABELS.inReview,
+    done: DEFAULT_ISSUE_STATUS_LABELS.done,
+    ready: input.readyStatus ?? "Todo",
+  };
+  const reconcile =
+    input.codeHost === undefined || input.pullRequestTarget === undefined
+      ? undefined
+      : {
+          listIssues: createLinearWatchAdapters({
+            ...input,
+            readyStatus: input.reviewStatus ?? labels.inReview,
+          }).source.listReadyIssues,
+          reconcileIssue: (issue: IssueRecord) =>
+            reconcileIssueStatus({
+              issueKey: issue.key,
+              currentStatus: issue.status,
+              branchName: issueBranchName(issue.key),
+              target: input.pullRequestTarget!,
+              findPullRequest: input.codeHost!.findPullRequestForBranch,
+              tracker,
+              labels,
+            }),
+        };
   const emit = (line: string): void => {
     lines.push(line);
     input.onLine?.(line);
@@ -1007,6 +1042,7 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
     tracker,
     pollIntervalMs: input.pollIntervalMs,
     ...(input.claimStatus === undefined ? {} : { claimStatus: input.claimStatus }),
+    ...(reconcile === undefined ? {} : { reconcile }),
     ...(productRoutes === undefined ? {} : { productRoutes }),
     ...(input.maxPolls === undefined ? {} : { maxPolls: input.maxPolls }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
@@ -1375,6 +1411,17 @@ const main = async (): Promise<void> => {
               ...publishRunInput,
               onProgressLine: (line) => process.stderr.write(`${line}\n`),
             });
+          // Reconcile in-flight issue status from PR state when publishing is configured.
+          if (
+            publishRunInput.codeHost !== undefined &&
+            publishRunInput.pullRequestTarget !== undefined
+          ) {
+            loopInput.codeHost = publishRunInput.codeHost;
+            loopInput.pullRequestTarget = {
+              owner: publishRunInput.pullRequestTarget.owner,
+              repo: publishRunInput.pullRequestTarget.repo,
+            };
+          }
         }
         await runLinearWatchLoopCli(loopInput);
         return;

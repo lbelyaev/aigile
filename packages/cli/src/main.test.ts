@@ -1123,6 +1123,66 @@ describe("cli formatting", () => {
     expect(calls.filter((call) => call.query.includes("commentCreate"))).toHaveLength(1);
   });
 
+  it("reconciles an in-flight issue to Done when its PR has merged", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const reconcileCodeHost = {
+      findPullRequestForBranch: async (branch: string) => ({
+        id: "lbelyaev/aigile#1",
+        number: 1,
+        url: "https://github.com/lbelyaev/aigile/pull/1",
+        mergeState: "merged" as const,
+        open: false,
+        branch,
+      }),
+    } as unknown as CodeHostAdapter;
+
+    const output = await runLinearWatchLoopCli({
+      apiKey: "test-key",
+      teamKey: "LBE",
+      readyStatus: "Todo",
+      reviewStatus: "In Review",
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 1,
+      sleep: async () => {},
+      codeHost: reconcileCodeHost,
+      pullRequestTarget: { owner: "lbelyaev", repo: "aigile" },
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("ReadyIssues")) {
+          // The reconcile source lists "In Review" issues; the claim source lists "Todo" (none).
+          const status = variables.readyStatus;
+          if (status === "In Review") {
+            return {
+              issues: {
+                nodes: [
+                  {
+                    id: "issue-id",
+                    identifier: "LBE-8",
+                    title: "In review issue",
+                    description: "",
+                    state: { name: "In Review" },
+                    comments: { nodes: [] },
+                  },
+                ],
+              },
+            };
+          }
+          return { issues: { nodes: [] } };
+        }
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-done", name: "Done" }] } };
+        }
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("issueUpdate")) return {};
+        return {};
+      },
+    });
+
+    expect(output).toContain("Poll 1: reconciled LBE-8 (In Review -> Done)");
+    expect(calls.filter((call) => call.query.includes("issueUpdate"))).toHaveLength(1);
+  });
+
   it("starts a run after claiming an issue when requested", async () => {
     const startedIssueKeys: string[] = [];
 

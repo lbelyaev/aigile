@@ -83,6 +83,10 @@ const safeIssueSlug = (issueKey: string): string => {
   return slug;
 };
 
+// The branch an issue's workspace is created on; the single source of truth for
+// the `aigile/<slug>` convention shared by workspace creation and status reconciliation.
+export const issueBranchName = (issueKey: string): string => `aigile/${safeIssueSlug(issueKey)}`;
+
 const assertSuccess = (result: ExecResult, operation: string): void => {
   if (result.exitCode !== 0) {
     throw new Error(`${operation} failed (${result.exitCode}): ${result.stderr || result.stdout}`);
