@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  listResumableRuns,
   runWorkflowEngine,
   type WorkflowCommandHandler,
   type WorkflowCommandHandlers,
@@ -251,5 +252,38 @@ describe("workflow engine durable resume", () => {
 
     expect(result.outcome).toBe("merged");
     expect(architectCalls).toBe(1); // architect ran once total — not re-run on resume
+  });
+});
+
+describe("listResumableRuns", () => {
+  it("returns only runs that have not reached a stop state", async () => {
+    const store = createInMemoryRunStore();
+    const seed = async (issueId: string, types: WorkflowEvent["type"][]) => {
+      for (const type of types) await store.appendEvent(issueId, { type, issueId });
+    };
+    // Completed (merged) -> stop state -> excluded.
+    await seed("DONE-1", [
+      "issue_received",
+      "plan_drafted",
+      "plan_approved",
+      "developer_finished",
+      "verification_passed",
+      "checker_passed",
+      "merge_completed",
+    ]);
+    // Paused at merge_ready (no merge_completed yet) -> included.
+    await seed("PAUSED-1", [
+      "issue_received",
+      "plan_drafted",
+      "plan_approved",
+      "developer_finished",
+      "verification_passed",
+      "checker_passed",
+    ]);
+    // Interrupted right after planning -> included.
+    await seed("STALLED-1", ["issue_received"]);
+
+    const resumable = (await listResumableRuns(store)).sort();
+    expect(resumable).toEqual(["PAUSED-1", "STALLED-1"]);
   });
 });

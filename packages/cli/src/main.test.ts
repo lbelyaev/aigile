@@ -1123,6 +1123,32 @@ describe("cli formatting", () => {
     expect(calls.filter((call) => call.query.includes("commentCreate"))).toHaveLength(1);
   });
 
+  it("resumes an interrupted run during the watch loop", async () => {
+    const resumed: string[] = [];
+    const output = await runLinearWatchLoopCli({
+      apiKey: "test-key",
+      teamKey: "LBE",
+      readyStatus: "Todo",
+      pollIntervalMs: 1,
+      maxPolls: 1,
+      sleep: async () => {},
+      resume: {
+        listResumable: async () => ["LBE-30"],
+        resumeRun: async (issueId) => {
+          resumed.push(issueId);
+          return { outcome: "merged" };
+        },
+      },
+      fetchGraphql: async (query) => {
+        if (query.includes("ReadyIssues")) return { issues: { nodes: [] } };
+        return {};
+      },
+    });
+
+    expect(resumed).toEqual(["LBE-30"]);
+    expect(output).toContain("Poll 1: resumed LBE-30 (merged)");
+  });
+
   it("reconciles an in-flight issue to Done when its PR has merged", async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
     const reconcileCodeHost = {

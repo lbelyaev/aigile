@@ -83,6 +83,26 @@ const STOP_STATES: ReadonlySet<WorkflowState> = new Set<WorkflowState>([
 
 const isStopState = (state: WorkflowState): boolean => STOP_STATES.has(state);
 
+/**
+ * Issue ids of persisted runs that have not reached a stop state — i.e. runs
+ * that were interrupted (crash/restart) or paused (awaiting an external merge)
+ * and can be re-driven by runWorkflowEngine to continue from where they left off.
+ */
+export const listResumableRuns = async (
+  store: RunStore,
+  policy?: WorkflowPolicy,
+): Promise<string[]> => {
+  const issueIds = await store.list();
+  const resumable: string[] = [];
+  for (const issueId of issueIds) {
+    const run = await store.load(issueId);
+    if (run === undefined || run.events.length === 0) continue;
+    const { snapshot } = replayWorkflow(initialWorkflowSnapshot(issueId), run.events, policy);
+    if (!isStopState(snapshot.state)) resumable.push(issueId);
+  }
+  return resumable;
+};
+
 const outcomeForState = (state: WorkflowState): WorkflowOutcome => {
   switch (state) {
     case "merged":

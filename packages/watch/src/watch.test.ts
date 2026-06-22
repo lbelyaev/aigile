@@ -417,6 +417,56 @@ describe("watchOnce", () => {
     });
   });
 
+  it("resumes interrupted runs each poll before claiming new work", async () => {
+    const resumed: string[] = [];
+    const events: WatchLoopEvent[] = [];
+
+    await watchLoop({
+      source: createFakeReadyIssueSource([]),
+      tracker: createFakeIssueTrackerAdapter([]),
+      pollIntervalMs: 1,
+      maxPolls: 1,
+      sleep: async () => {},
+      resume: {
+        listResumable: async () => ["LIN-7"],
+        resumeRun: async (issueId) => {
+          resumed.push(issueId);
+          return { outcome: "merged" };
+        },
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(resumed).toEqual(["LIN-7"]);
+    expect(events).toContainEqual({
+      type: "run_resumed",
+      poll: 1,
+      issueId: "LIN-7",
+      outcome: "merged",
+    });
+  });
+
+  it("keeps polling when a resume fails", async () => {
+    const events: WatchLoopEvent[] = [];
+    await watchLoop({
+      source: createFakeReadyIssueSource([]),
+      tracker: createFakeIssueTrackerAdapter([]),
+      pollIntervalMs: 1,
+      maxPolls: 1,
+      sleep: async () => {},
+      resume: {
+        listResumable: async () => ["LIN-7"],
+        resumeRun: async () => {
+          throw new Error("worktree gone");
+        },
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(events.some((e) => e.type === "run_resume_failed")).toBe(true);
+    expect(events.some((e) => e.type === "watch_stopped")).toBe(true);
+  });
+
   it("keeps polling when reconciliation throws", async () => {
     const events: string[] = [];
     await watchLoop({

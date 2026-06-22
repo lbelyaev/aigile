@@ -7,8 +7,10 @@ import {
 } from "@aigile/types";
 import {
   pullRequestToArtifact,
+  type BranchPullRequest,
   type CodeHostAdapter,
   type IssueRecord,
+  type PullRequestRecord,
   type PullRequestReviewInput,
 } from "@aigile/adapters";
 import type { WorkflowCommandHandlers } from "@aigile/workflow";
@@ -105,6 +107,32 @@ const pullRequestBody = (
   return lines.join("\n");
 };
 
+// Build a pull-request artifact from a branch lookup, for the resume path where
+// the full record isn't in memory (a fresh process). comments/checks/reviews are
+// already posted on the PR itself; the artifact only needs to carry PR identity.
+const branchPullRequestArtifact = (
+  pr: BranchPullRequest,
+  issue: IssueRecord,
+  branchName: string,
+  target: { owner: string; repo: string; baseBranch: string },
+): WorkflowArtifact => {
+  const record: PullRequestRecord = {
+    owner: target.owner,
+    repo: target.repo,
+    branch: branchName,
+    baseBranch: target.baseBranch,
+    title: `${issue.key} ${issue.title}`,
+    body: "",
+    id: pr.id,
+    number: pr.number,
+    url: pr.url,
+    comments: [],
+    checks: [],
+    reviews: [],
+  };
+  return pullRequestToArtifact(record);
+};
+
 const eventFor = (
   type: WorkflowEvent["type"],
   issueId: string,
@@ -159,45 +187,62 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
     },
     merge_pull_request: async (ctx) => {
       try {
-        await deps.publish();
-        const plan = findByKind(ctx.artifacts, "architect.plan");
-        const attempt = findByKind(ctx.artifacts, "developer.attempt");
-        const verdict = findByKind(ctx.artifacts, "checker.verdict");
+        // Idempotent on resume: if the PR already exists for this branch, reuse it
+        // and skip publish/create/evidence so a re-run never double-creates.
+        const existing = await codeHost.findPullRequestForBranch(branchName, pullRequestTarget);
+        let prId: string;
+        let prArtifact: WorkflowArtifact;
+        if (existing !== undefined) {
+          if (existing.mergeState === "merged") {
+            return {
+              event: eventFor("merge_completed", issue.key),
+              artifact: branchPullRequestArtifact(existing, issue, branchName, pullRequestTarget),
+            };
+          }
+          prId = existing.id;
+          prArtifact = branchPullRequestArtifact(existing, issue, branchName, pullRequestTarget);
+        } else {
+          await deps.publish();
+          const plan = findByKind(ctx.artifacts, "architect.plan");
+          const attempt = findByKind(ctx.artifacts, "developer.attempt");
+          const verdict = findByKind(ctx.artifacts, "checker.verdict");
 
-        const pr = await codeHost.createPullRequest({
-          owner: pullRequestTarget.owner,
-          repo: pullRequestTarget.repo,
-          branch: branchName,
-          baseBranch: pullRequestTarget.baseBranch,
-          title: `${issue.key} ${issue.title}`,
-          body: pullRequestBody(issue, plan, attempt, verdict),
-        });
-        if (attempt !== undefined && isDeveloperAttemptPayload(attempt.payload)) {
-          await codeHost.appendPullRequestComment(
-            pr.id,
-            `Developer attempt:\n${attempt.payload.summary}`,
-          );
+          const pr = await codeHost.createPullRequest({
+            owner: pullRequestTarget.owner,
+            repo: pullRequestTarget.repo,
+            branch: branchName,
+            baseBranch: pullRequestTarget.baseBranch,
+            title: `${issue.key} ${issue.title}`,
+            body: pullRequestBody(issue, plan, attempt, verdict),
+          });
+          if (attempt !== undefined && isDeveloperAttemptPayload(attempt.payload)) {
+            await codeHost.appendPullRequestComment(
+              pr.id,
+              `Developer attempt:\n${attempt.payload.summary}`,
+            );
+          }
+          await codeHost.recordCheckResult(pr.id, {
+            name: "aigile/verifier",
+            status: "passed",
+            summary: "Verification passed.",
+          });
+          if (verdict !== undefined) {
+            await codeHost.submitPullRequestReview(pr.id, checkerReview(verdict));
+          }
+          prId = pr.id;
+          prArtifact = pullRequestToArtifact(await codeHost.getPullRequest(pr.id));
         }
-        await codeHost.recordCheckResult(pr.id, {
-          name: "aigile/verifier",
-          status: "passed",
-          summary: "Verification passed.",
-        });
-        if (verdict !== undefined) {
-          await codeHost.submitPullRequestReview(pr.id, checkerReview(verdict));
-        }
-        const prArtifact = pullRequestToArtifact(await codeHost.getPullRequest(pr.id));
 
         // Manual override: publish the PR and pause for a human/CI to merge.
         if (mergePolicy === "manual") return { artifact: prArtifact };
 
-        const state = await codeHost.getPullRequestMergeState(pr.id);
+        const state = await codeHost.getPullRequestMergeState(prId);
         if (state.status === "merged") {
           return { event: eventFor("merge_completed", issue.key), artifact: prArtifact };
         }
-        const mergeability = await codeHost.getPullRequestMergeability(pr.id);
+        const mergeability = await codeHost.getPullRequestMergeability(prId);
         if (mergeability.status === "mergeable") {
-          await codeHost.mergePullRequest(pr.id);
+          await codeHost.mergePullRequest(prId);
           return { event: eventFor("merge_completed", issue.key), artifact: prArtifact };
         }
         // Not mergeable yet (checks pending / conflict): pause; reconcile later.

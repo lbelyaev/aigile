@@ -5,6 +5,11 @@ import { createInMemoryRunStore } from "./run-store.js";
 const event = (type: WorkflowEvent["type"], artifactId?: string): WorkflowEvent =>
   artifactId === undefined ? { type, issueId: "LIN-1" } : { type, issueId: "LIN-1", artifactId };
 
+const eventFor = (issueId: string, type: WorkflowEvent["type"]): WorkflowEvent => ({
+  type,
+  issueId,
+});
+
 const artifact = (id: string): WorkflowArtifact => ({
   id,
   kind: "architect.plan",
@@ -51,5 +56,13 @@ describe("in-memory run store", () => {
     const reread = await store.load("LIN-1");
     expect((reread?.artifacts[0]?.payload as { summary: string }).summary).toBe("a1");
     expect(reread?.events).toHaveLength(1);
+  });
+
+  it("lists the issue ids of all persisted runs", async () => {
+    const store = createInMemoryRunStore();
+    expect(await store.list()).toEqual([]);
+    await store.appendEvent("LIN-1", eventFor("LIN-1", "issue_received"));
+    await store.appendEvent("LIN-2", eventFor("LIN-2", "issue_received"));
+    expect((await store.list()).sort()).toEqual(["LIN-1", "LIN-2"]);
   });
 });

@@ -38,6 +38,8 @@ export type WatchLoopEvent =
       error: string;
     }
   | { type: "issue_status_reconciled"; poll: number; issueKey: string; from: string; to: string }
+  | { type: "run_resumed"; poll: number; issueId: string; outcome: string }
+  | { type: "run_resume_failed"; poll: number; issueId: string; error: string }
   | { type: "watch_stopped"; polls: number; reason: WatchLoopStopReason };
 
 export interface WatchLoopInput extends WatchOnceInput {
@@ -50,6 +52,11 @@ export interface WatchLoopInput extends WatchOnceInput {
   reconcile?: {
     listIssues: () => Promise<IssueRecord[]>;
     reconcileIssue: (issue: IssueRecord) => Promise<ReconcileOutcome>;
+  };
+  // Resume interrupted/paused runs each poll before claiming new work.
+  resume?: {
+    listResumable: () => Promise<string[]>;
+    resumeRun: (issueId: string) => Promise<{ outcome: string }>;
   };
 }
 
@@ -194,6 +201,23 @@ export const watchLoop = async (input: WatchLoopInput): Promise<void> => {
   while (input.signal?.aborted !== true) {
     polls += 1;
     input.onEvent?.({ type: "poll_started", poll: polls });
+
+    if (input.resume !== undefined) {
+      const resumable = await input.resume.listResumable().catch(() => [] as string[]);
+      for (const issueId of resumable) {
+        try {
+          const { outcome } = await input.resume.resumeRun(issueId);
+          input.onEvent?.({ type: "run_resumed", poll: polls, issueId, outcome });
+        } catch (error) {
+          input.onEvent?.({
+            type: "run_resume_failed",
+            poll: polls,
+            issueId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
 
     if (input.reconcile !== undefined) {
       const reconcilable = await input.reconcile.listIssues().catch(() => [] as IssueRecord[]);

@@ -160,7 +160,14 @@ const prNumberFromId = (id: string): string => {
   return number;
 };
 
-const repoFromRecord = (record: PullRequestRecord): string => `${record.owner}/${record.repo}`;
+// The repo "owner/name" encoded in a pull request id ("owner/name#number"), so
+// by-id operations work without an in-memory record (e.g. on a fresh process
+// resuming an interrupted run).
+const repoFromId = (id: string): string => {
+  const repo = id.split("#")[0];
+  if (!repo || !repo.includes("/")) throw new Error(`Invalid pull request id: ${id}`);
+  return repo;
+};
 
 const execOptions = (cwd: string | undefined): { cwd?: string } =>
   cwd === undefined ? {} : { cwd };
@@ -222,8 +229,6 @@ export const createGitHubCliCodeHostAdapter = (
       return structuredClone(record);
     },
     getPullRequestMergeability: async (id) => {
-      const record = pullRequests.get(id);
-      if (!record) throw new Error(`Pull request not found: ${id}`);
       const result = await options.exec(
         "gh",
         [
@@ -231,7 +236,7 @@ export const createGitHubCliCodeHostAdapter = (
           "view",
           prNumberFromId(id),
           "--repo",
-          repoFromRecord(record),
+          repoFromId(id),
           "--json",
           "mergeable,mergeStateStatus",
         ],
@@ -241,8 +246,6 @@ export const createGitHubCliCodeHostAdapter = (
       return parseMergeabilityPayload(result.stdout);
     },
     getPullRequestMergeState: async (id) => {
-      const record = pullRequests.get(id);
-      if (!record) throw new Error(`Pull request not found: ${id}`);
       const result = await options.exec(
         "gh",
         [
@@ -250,7 +253,7 @@ export const createGitHubCliCodeHostAdapter = (
           "view",
           prNumberFromId(id),
           "--repo",
-          repoFromRecord(record),
+          repoFromId(id),
           "--json",
           "state,merged,mergedAt",
         ],
@@ -260,19 +263,15 @@ export const createGitHubCliCodeHostAdapter = (
       return parseMergeStatePayload(result.stdout);
     },
     appendPullRequestComment: async (id, comment) => {
-      const record = pullRequests.get(id);
-      if (!record) throw new Error(`Pull request not found: ${id}`);
       const result = await options.exec(
         "gh",
-        ["pr", "comment", prNumberFromId(id), "--repo", repoFromRecord(record), "--body", comment],
+        ["pr", "comment", prNumberFromId(id), "--repo", repoFromId(id), "--body", comment],
         execOptions(options.cwd),
       );
       assertSuccess(result, "gh pr comment");
-      record.comments.push(comment);
+      pullRequests.get(id)?.comments.push(comment);
     },
     submitPullRequestReview: async (id, review) => {
-      const record = pullRequests.get(id);
-      if (!record) throw new Error(`Pull request not found: ${id}`);
       const result = await options.exec(
         "gh",
         [
@@ -280,7 +279,7 @@ export const createGitHubCliCodeHostAdapter = (
           "review",
           prNumberFromId(id),
           "--repo",
-          repoFromRecord(record),
+          repoFromId(id),
           reviewEventFlag(review.event),
           "--body",
           review.body,
@@ -288,26 +287,22 @@ export const createGitHubCliCodeHostAdapter = (
         execOptions(options.cwd),
       );
       assertSuccess(result, "gh pr review");
-      record.reviews.push(structuredClone(review));
+      pullRequests.get(id)?.reviews.push(structuredClone(review));
     },
     recordCheckResult: async (id, check: CheckResult) => {
-      const record = pullRequests.get(id);
-      if (!record) throw new Error(`Pull request not found: ${id}`);
       const body = `### ${check.name}: ${check.status}\n\n${check.summary}`;
       const result = await options.exec(
         "gh",
-        ["pr", "comment", prNumberFromId(id), "--repo", repoFromRecord(record), "--body", body],
+        ["pr", "comment", prNumberFromId(id), "--repo", repoFromId(id), "--body", body],
         execOptions(options.cwd),
       );
       assertSuccess(result, "gh pr comment");
-      record.checks.push(structuredClone(check));
+      pullRequests.get(id)?.checks.push(structuredClone(check));
     },
     mergePullRequest: async (id, method = "squash") => {
-      const record = pullRequests.get(id);
-      if (!record) throw new Error(`Pull request not found: ${id}`);
       const result = await options.exec(
         "gh",
-        ["pr", "merge", prNumberFromId(id), "--repo", repoFromRecord(record), `--${method}`],
+        ["pr", "merge", prNumberFromId(id), "--repo", repoFromId(id), `--${method}`],
         execOptions(options.cwd),
       );
       assertSuccess(result, "gh pr merge");

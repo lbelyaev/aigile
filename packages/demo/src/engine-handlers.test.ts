@@ -97,6 +97,58 @@ describe("engine command handlers", () => {
     expect(published).toBe(1);
   });
 
+  it("reuses an existing PR on re-run instead of publishing/creating again", async () => {
+    const codeHost = createFakeCodeHostAdapter({ mergeability: "conflicting" });
+    let publishes = 0;
+    const deps = buildDeps({ codeHost, publish: async () => void (publishes += 1) });
+    const handlers = createEngineCommandHandlers(deps);
+
+    // First merge attempt: PR is created but not mergeable -> pause.
+    const ctx = {
+      command: { type: "merge_pull_request" as const, issueId: "LIN-1" },
+      snapshot: {
+        issueId: "LIN-1",
+        state: "merge_ready" as const,
+        developerAttempts: 1,
+        artifactIds: [],
+      },
+      artifacts: [],
+    };
+    const first = await handlers.merge_pull_request!(ctx);
+    expect(first.event).toBeUndefined(); // paused
+    expect(publishes).toBe(1);
+    expect((await codeHost.getPullRequest("o/r#1")).number).toBe(1);
+
+    // Re-run (resume): must NOT publish again or create a second PR.
+    const second = await handlers.merge_pull_request!(ctx);
+    expect(second.event).toBeUndefined();
+    expect(publishes).toBe(1);
+    await expect(codeHost.getPullRequest("o/r#2")).rejects.toThrow(); // no second PR
+  });
+
+  it("completes the merge on resume once the existing PR is mergeable", async () => {
+    const codeHost = createFakeCodeHostAdapter({ mergeability: "conflicting" });
+    const deps = buildDeps({ codeHost });
+    const handlers = createEngineCommandHandlers(deps);
+    const ctx = {
+      command: { type: "merge_pull_request" as const, issueId: "LIN-1" },
+      snapshot: {
+        issueId: "LIN-1",
+        state: "merge_ready" as const,
+        developerAttempts: 1,
+        artifactIds: [],
+      },
+      artifacts: [],
+    };
+    const paused = await handlers.merge_pull_request!(ctx);
+    expect(paused.event).toBeUndefined();
+
+    // The PR becomes merged externally; resume should report merge_completed.
+    await codeHost.mergePullRequest("o/r#1");
+    const resumed = await handlers.merge_pull_request!(ctx);
+    expect(resumed.event?.type).toBe("merge_completed");
+  });
+
   it("pauses for a manual merge-policy ticket (publish, await human merge)", async () => {
     const codeHost = createFakeCodeHostAdapter();
     const result = await run(
