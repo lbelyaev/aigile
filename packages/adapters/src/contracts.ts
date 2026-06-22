@@ -76,6 +76,16 @@ export interface PullRequestRecord extends PullRequestInput {
 
 export type PullRequestMergeMethod = "merge" | "squash" | "rebase";
 
+// A pull request located by its head branch, with just the fields needed to
+// reconcile issue status from PR state (no in-memory record required).
+export interface BranchPullRequest {
+  id: string;
+  number: number;
+  url: string;
+  mergeState: PullRequestMergeStateStatus;
+  open: boolean;
+}
+
 export interface CodeHostAdapter {
   createPullRequest: (input: PullRequestInput) => Promise<PullRequestRecord>;
   getPullRequest: (id: string) => Promise<PullRequestRecord>;
@@ -85,6 +95,10 @@ export interface CodeHostAdapter {
   submitPullRequestReview: (id: string, review: PullRequestReviewInput) => Promise<void>;
   recordCheckResult: (id: string, result: CheckResult) => Promise<void>;
   mergePullRequest: (id: string, method?: PullRequestMergeMethod) => Promise<void>;
+  findPullRequestForBranch: (
+    branch: string,
+    target: { owner: string; repo: string },
+  ) => Promise<BranchPullRequest | undefined>;
 }
 
 export type IssueArtifact = WorkflowArtifact<IssueRecord>;

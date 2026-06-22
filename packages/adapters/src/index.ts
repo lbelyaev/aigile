@@ -18,6 +18,7 @@ export {
 } from "./linear-graphql.js";
 
 export type {
+  BranchPullRequest,
   CheckResult,
   CodeHostAdapter,
   IssueArtifact,

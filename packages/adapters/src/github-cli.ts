@@ -312,5 +312,34 @@ export const createGitHubCliCodeHostAdapter = (
       );
       assertSuccess(result, "gh pr merge");
     },
+    findPullRequestForBranch: async (branch, target) => {
+      const repo = `${target.owner}/${target.repo}`;
+      const result = await options.exec(
+        "gh",
+        ["pr", "view", branch, "--repo", repo, "--json", "number,url,state,merged"],
+        execOptions(options.cwd),
+      );
+      // gh exits non-zero when no PR exists for the branch.
+      if (result.exitCode !== 0) return undefined;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(result.stdout);
+      } catch {
+        return undefined;
+      }
+      if (typeof parsed !== "object" || parsed === null) return undefined;
+      const view = parsed as { number?: unknown; url?: unknown; state?: unknown; merged?: unknown };
+      if (typeof view.number !== "number" || typeof view.url !== "string") return undefined;
+      const id = `${target.owner}/${target.repo}#${view.number}`;
+      const merged = view.merged === true || view.state === "MERGED";
+      const open = view.state === "OPEN";
+      return {
+        id,
+        number: view.number,
+        url: view.url,
+        mergeState: merged ? "merged" : "unmerged",
+        open,
+      };
+    },
   };
 };

@@ -503,6 +503,7 @@ describe("workspace-aware demo orchestration", () => {
         submitPullRequestReview: async () => undefined,
         recordCheckResult: async () => undefined,
         mergePullRequest: async () => undefined,
+        findPullRequestForBranch: async () => undefined,
       },
       exec: async (command, args, options) => {
         const preflight = availableWorkspaceTarget(command, args);
@@ -622,6 +623,7 @@ describe("workspace-aware demo orchestration", () => {
         submitPullRequestReview: async () => undefined,
         recordCheckResult: async () => undefined,
         mergePullRequest: async () => undefined,
+        findPullRequestForBranch: async () => undefined,
       },
       exec: async (command, args, options) => {
         const preflight = availableWorkspaceTarget(command, args);
