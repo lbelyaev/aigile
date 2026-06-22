@@ -98,6 +98,7 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   autofixCommands?: ProductVerificationCommand[];
   changedFileGuards?: ProductChangedFileGuard[];
   runStatePath?: string;
+  retryEscalated?: boolean;
 }
 
 export interface DemoGitHubInput extends DemoIssueInput {
@@ -944,6 +945,7 @@ export const runWorkspaceIssueWithEngine = async (
   const store = createFileRunStore({
     directory: input.runStatePath ?? join(input.worktreesPath, "..", "runs"),
   });
+  if (input.retryEscalated === true) await store.deleteRun(input.issue.key);
   const result = await runWorkflowEngine({
     issueId: input.issue.key,
     store,

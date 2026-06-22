@@ -302,6 +302,7 @@ export interface CliArgs {
   pollIntervalMs?: number;
   maxPolls?: number;
   startRun?: boolean;
+  retryEscalated?: boolean;
 }
 
 export interface ProductCliResolutionOptions {
@@ -702,6 +703,7 @@ export interface LinearIssueWorkflowCliInput {
   runWorkspace?: (input: DemoWorkspaceInput) => Promise<DemoResult>;
   verification?: ProductVerificationPolicy;
   runStatePath?: string;
+  retryEscalated?: boolean;
 }
 
 const artifactIdByKind = (result: DemoResult, kind: string): string =>
@@ -883,6 +885,7 @@ export const runLinearIssueWorkflowCli = async (
     runInput.changedFileGuards = input.verification.changedFileGuards;
   }
   if (input.runStatePath !== undefined) runInput.runStatePath = input.runStatePath;
+  if (input.retryEscalated === true) runInput.retryEscalated = true;
   if (input.baseBranch !== undefined) runInput.baseBranch = input.baseBranch;
   if (input.dryRun === true) {
     runInput.dryRun = true;
@@ -1218,6 +1221,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (args.includes("--publish")) parsed.publish = true;
     if (args.includes("--dry-run")) parsed.dryRun = true;
     if (args.includes("--agent-write")) parsed.agentWrite = true;
+    if (args.includes("--retry-escalated")) parsed.retryEscalated = true;
     if (parsed.dryRun && parsed.agentWrite) {
       throw new Error("choose only one of --dry-run or --agent-write");
     }
@@ -1278,6 +1282,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (args.includes("--publish")) parsed.publish = true;
     if (args.includes("--dry-run")) parsed.dryRun = true;
     if (args.includes("--agent-write")) parsed.agentWrite = true;
+    if (args.includes("--retry-escalated")) parsed.retryEscalated = true;
     if (parsed.dryRun && parsed.agentWrite) {
       throw new Error("choose only one of --dry-run or --agent-write");
     }
@@ -1414,7 +1419,10 @@ const main = async (): Promise<void> => {
             }
           }
           const runStatePath = join(watchContext.worktreesPath, "..", "runs");
-          const runIssueByKey = (issueKey: string): Promise<string> =>
+          const runIssueByKey = (
+            issueKey: string,
+            options: { retryEscalated?: boolean } = {},
+          ): Promise<string> =>
             runLinearIssueWorkflowCli({
               apiKey,
               issueKey,
@@ -1431,10 +1439,11 @@ const main = async (): Promise<void> => {
               ...(watchContext.verification === undefined
                 ? {}
                 : { verification: watchContext.verification }),
+              ...(options.retryEscalated === true ? { retryEscalated: true } : {}),
               ...publishRunInput,
               onProgressLine: (line) => process.stderr.write(`${line}\n`),
             });
-          loopInput.startRun = async (issue) => runIssueByKey(issue.key);
+          loopInput.startRun = async (issue) => runIssueByKey(issue.key, { retryEscalated: true });
           // Resume interrupted/paused runs from the persisted run log each poll.
           const runStore = createFileRunStore({ directory: runStatePath });
           loopInput.resume = {
@@ -1561,6 +1570,7 @@ const main = async (): Promise<void> => {
       },
     });
   }
+  if (args.mode === "run" && args.retryEscalated === true) runInput.retryEscalated = true;
   const result =
     args.mode === "run"
       ? await runWorkspaceIssueWithEngine(runInput)
