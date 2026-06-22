@@ -85,6 +85,29 @@ const checkerReview = (verdict: WorkflowArtifact): PullRequestReviewInput => {
   return { event: "comment", body };
 };
 
+const isSelfReviewFailure = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error);
+  return /can not approve your own pull request|cannot approve your own pull request/i.test(
+    message,
+  );
+};
+
+const publishCheckerFeedback = async (
+  codeHost: CodeHostAdapter,
+  pullRequestId: string,
+  review: PullRequestReviewInput,
+): Promise<void> => {
+  try {
+    await codeHost.submitPullRequestReview(pullRequestId, review);
+  } catch (error) {
+    if (!isSelfReviewFailure(error)) throw error;
+    await codeHost.appendPullRequestComment(
+      pullRequestId,
+      ["## Aigile checker review", "", review.body].join("\n"),
+    );
+  }
+};
+
 // Honest verification gate: only an explicit "passed" status passes (AIG-5).
 const verificationPassed = (artifact: WorkflowArtifact): boolean => {
   const payload = artifact.payload;
@@ -253,7 +276,7 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
             summary: "Verification passed.",
           });
           if (verdict !== undefined) {
-            await codeHost.submitPullRequestReview(pr.id, checkerReview(verdict));
+            await publishCheckerFeedback(codeHost, pr.id, checkerReview(verdict));
           }
           prId = pr.id;
           prArtifact = pullRequestToArtifact(await codeHost.getPullRequest(pr.id));

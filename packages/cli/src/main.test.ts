@@ -1733,7 +1733,11 @@ describe("cli formatting", () => {
       getPullRequest: async () => {
         throw new Error("getPullRequest should not be called");
       },
-      getPullRequestMergeability: async () => ({ status: "mergeable" }),
+      // A merged PR reports mergeable "unknown"; the sync must NOT query mergeability
+      // for a merged run (doing so would falsely look blocked). Throw to lock that in.
+      getPullRequestMergeability: async () => {
+        throw new Error("getPullRequestMergeability should not be called for a merged PR");
+      },
       getPullRequestMergeState: async () => ({ status: "merged" }),
       appendPullRequestComment: async () => {},
       submitPullRequestReview: async () => {},
@@ -1878,13 +1882,17 @@ describe("cli formatting", () => {
             },
           };
         }
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-review", name: "In Review" }] } };
+        }
         if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("issueUpdate")) return {};
         if (query.includes("commentCreate")) return {};
         throw new Error(`unexpected query: ${query}`);
       },
       runWorkspace: async (input) => ({
         issueKey: input.issue.key,
-        finalState: "merged",
+        finalState: "merge_ready",
         pullRequest: {
           id: "lbelyaev/aigile#8",
           number: 8,
@@ -1907,9 +1915,11 @@ describe("cli formatting", () => {
 
     expect(output).toContain("Final state: escalated");
     expect(output).toContain("Pull request: https://github.com/lbelyaev/aigile/pull/8");
-    expect(calls.some((call) => call.query.includes("issueUpdate"))).toBe(false);
     expect(calls.map((call) => call.variables)).toEqual([
       { key: "LBE-8" },
+      { teamKey: "LBE", name: "In Review" },
+      { key: "LBE-8" },
+      { key: "issue-id", status: "state-review" },
       { key: "LBE-8" },
       {
         key: "issue-id",
@@ -1968,13 +1978,17 @@ describe("cli formatting", () => {
             },
           };
         }
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-review", name: "In Review" }] } };
+        }
         if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("issueUpdate")) return {};
         if (query.includes("commentCreate")) return {};
         throw new Error(`unexpected query: ${query}`);
       },
       runWorkspace: async (input) => ({
         issueKey: input.issue.key,
-        finalState: "merged",
+        finalState: "merge_ready",
         pullRequest: {
           id: "lbelyaev/aigile#9",
           number: 9,
@@ -1995,9 +2009,114 @@ describe("cli formatting", () => {
       }),
     });
 
-    expect(calls.some((call) => call.query.includes("issueUpdate"))).toBe(false);
+    expect(calls.some((call) => call.query.includes("issueUpdate"))).toBe(true);
+    expect(calls.map((call) => call.variables)).toContainEqual({
+      key: "issue-id",
+      status: "state-review",
+    });
     expect(calls.at(-1)?.variables).toMatchObject({
       body: expect.stringContaining("Reason: pull request mergeability is unknown"),
+    });
+  });
+
+  it("syncs open published Linear runs to In Review without marking done", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const codeHost: CodeHostAdapter = {
+      createPullRequest: async () => {
+        throw new Error("createPullRequest should not be called");
+      },
+      getPullRequest: async () => {
+        throw new Error("getPullRequest should not be called");
+      },
+      getPullRequestMergeability: async () => ({ status: "mergeable" }),
+      getPullRequestMergeState: async () => ({ status: "unmerged" }),
+      appendPullRequestComment: async () => {},
+      submitPullRequestReview: async () => {},
+      recordCheckResult: async () => {},
+      mergePullRequest: async () => {},
+      findPullRequestForBranch: async () => undefined,
+    };
+
+    const output = await runLinearIssueWorkflowCli({
+      apiKey: "test-key",
+      issueKey: "LBE-14",
+      teamKey: "LBE",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      agentWrite: true,
+      publish: true,
+      codeHost,
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("IssueByKey")) {
+          return {
+            issue: {
+              id: "issue-id",
+              identifier: "LBE-14",
+              title: "Sync Linear status to In Review",
+              description: "Acceptance:\n- Open PR means In Review",
+              state: { name: "In Progress" },
+              comments: { nodes: [] },
+            },
+          };
+        }
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-review", name: "In Review" }] } };
+        }
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("issueUpdate")) return {};
+        if (query.includes("commentCreate")) return {};
+        throw new Error(`unexpected query: ${query}`);
+      },
+      runWorkspace: async (input) => ({
+        issueKey: input.issue.key,
+        finalState: "merge_ready",
+        pullRequest: {
+          id: "lbelyaev/aigile#14",
+          number: 14,
+          url: "https://github.com/lbelyaev/aigile/pull/14",
+          owner: "lbelyaev",
+          repo: "aigile",
+          branch: "aigile/LBE-14",
+          baseBranch: "main",
+          title: "LBE-14 Sync Linear status to In Review",
+          body: "Demo PR",
+          comments: [],
+          checks: [],
+          reviews: [],
+        },
+        artifacts: [
+          {
+            id: "verifier:LBE-14:local",
+            kind: "verification.result",
+            source: "verifier",
+            payload: { status: "passed", commands: [] },
+          },
+        ],
+        timeline: [{ label: "checker_passed -> merge_ready", elapsedMs: 1 }],
+        durationMs: 1,
+      }),
+    });
+
+    expect(output).toContain("Final state: merge_ready");
+    expect(calls.map((call) => call.variables)).toContainEqual({
+      key: "issue-id",
+      status: "state-review",
+    });
+    expect(calls.map((call) => call.variables)).not.toContainEqual({
+      teamKey: "LBE",
+      name: "Done",
+    });
+    expect(calls.at(-1)?.variables).toMatchObject({
+      body: [
+        "Aigile published this issue to GitHub and moved it to review.",
+        "",
+        "Final state: merge_ready",
+        "Pull request: https://github.com/lbelyaev/aigile/pull/14",
+        "Verification: verifier:LBE-14:local",
+        "Checker: unavailable",
+      ].join("\n"),
     });
   });
 

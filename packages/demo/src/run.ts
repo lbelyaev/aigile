@@ -358,6 +358,29 @@ const checkerReviewForVerdict = (artifact: WorkflowArtifact): PullRequestReviewI
   return { event: "comment", body };
 };
 
+const isSelfReviewFailure = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error);
+  return /can not approve your own pull request|cannot approve your own pull request/i.test(
+    message,
+  );
+};
+
+const publishCheckerFeedback = async (
+  codeHost: CodeHostAdapter,
+  pullRequestId: string,
+  review: PullRequestReviewInput,
+): Promise<void> => {
+  try {
+    await codeHost.submitPullRequestReview(pullRequestId, review);
+  } catch (error) {
+    if (!isSelfReviewFailure(error)) throw error;
+    await codeHost.appendPullRequestComment(
+      pullRequestId,
+      ["## Aigile checker review", "", review.body].join("\n"),
+    );
+  }
+};
+
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -599,7 +622,7 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
       status: "passed",
       summary: "Local scripted verifier passed.",
     });
-    await codeHost.submitPullRequestReview(pullRequest.id, checkerReviewForVerdict(verdict));
+    await publishCheckerFeedback(codeHost, pullRequest.id, checkerReviewForVerdict(verdict));
     await codeHost.appendPullRequestComment(
       pullRequest.id,
       formatFinalPullRequestSummary(verification, verdict),
