@@ -1,4 +1,5 @@
 import type { IssueRecord, IssueTrackerAdapter, ReadyIssueSource } from "@aigile/adapters";
+import type { ReconcileOutcome } from "./reconcile.js";
 
 export interface WatchOnceInput {
   source: ReadyIssueSource;
@@ -36,6 +37,7 @@ export type WatchLoopEvent =
       restoredStatus: string;
       error: string;
     }
+  | { type: "issue_status_reconciled"; poll: number; issueKey: string; from: string; to: string }
   | { type: "watch_stopped"; polls: number; reason: WatchLoopStopReason };
 
 export interface WatchLoopInput extends WatchOnceInput {
@@ -45,6 +47,10 @@ export interface WatchLoopInput extends WatchOnceInput {
   sleep?: (durationMs: number, signal?: AbortSignal) => Promise<void>;
   onEvent?: (event: WatchLoopEvent) => void;
   onClaimedIssue?: (issue: IssueRecord) => Promise<void>;
+  reconcile?: {
+    listIssues: () => Promise<IssueRecord[]>;
+    reconcileIssue: (issue: IssueRecord) => Promise<ReconcileOutcome>;
+  };
 }
 
 export interface WatchProductRoute {
@@ -188,6 +194,27 @@ export const watchLoop = async (input: WatchLoopInput): Promise<void> => {
   while (input.signal?.aborted !== true) {
     polls += 1;
     input.onEvent?.({ type: "poll_started", poll: polls });
+
+    if (input.reconcile !== undefined) {
+      const reconcilable = await input.reconcile.listIssues().catch(() => [] as IssueRecord[]);
+      for (const issue of reconcilable) {
+        try {
+          const outcome = await input.reconcile.reconcileIssue(issue);
+          if (outcome.kind === "updated") {
+            input.onEvent?.({
+              type: "issue_status_reconciled",
+              poll: polls,
+              issueKey: issue.key,
+              from: outcome.from,
+              to: outcome.to,
+            });
+          }
+        } catch {
+          // Reconciliation is best-effort; a single failure must not stop the loop.
+        }
+      }
+    }
+
     const result = await watchOnce({
       source: {
         listReadyIssues: async () =>

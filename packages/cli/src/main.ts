@@ -974,6 +974,9 @@ const formatWatchLoopEvent = (event: WatchLoopEvent): string | undefined => {
   if (event.type === "claimed_issue_run_failed") {
     return `Poll ${event.poll}: run failed for ${event.issueKey}; restored status to ${event.restoredStatus}: ${event.error}`;
   }
+  if (event.type === "issue_status_reconciled") {
+    return `Poll ${event.poll}: reconciled ${event.issueKey} (${event.from} -> ${event.to})`;
+  }
   return `Stopped: ${event.reason} after ${event.polls} polls`;
 };
 

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { createFakeIssueTrackerAdapter, createFakeReadyIssueSource } from "@aigile/adapters";
-import { defaultClaimComment, routeReadyIssuesForProducts, watchLoop, watchOnce } from "./index.js";
+import {
+  defaultClaimComment,
+  routeReadyIssuesForProducts,
+  watchLoop,
+  watchOnce,
+  type WatchLoopEvent,
+} from "./index.js";
 
 describe("watchOnce", () => {
   it("claims the first ready issue and posts an operator comment", async () => {
@@ -375,5 +381,59 @@ describe("watchOnce", () => {
       },
     ]);
     expect(routed.skippedIssues).toEqual([]);
+  });
+
+  it("reconciles in-flight issue status each poll and emits an event", async () => {
+    const inFlight = {
+      id: "i",
+      key: "LIN-7",
+      title: "In review",
+      description: "",
+      acceptanceCriteria: [],
+      status: "In Review",
+      comments: [],
+    };
+    const events: WatchLoopEvent[] = [];
+
+    await watchLoop({
+      source: createFakeReadyIssueSource([]),
+      tracker: createFakeIssueTrackerAdapter([inFlight]),
+      pollIntervalMs: 1,
+      maxPolls: 1,
+      sleep: async () => {},
+      reconcile: {
+        listIssues: async () => [inFlight],
+        reconcileIssue: async () => ({ kind: "updated", from: "In Review", to: "Done" }),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(events).toContainEqual({
+      type: "issue_status_reconciled",
+      poll: 1,
+      issueKey: "LIN-7",
+      from: "In Review",
+      to: "Done",
+    });
+  });
+
+  it("keeps polling when reconciliation throws", async () => {
+    const events: string[] = [];
+    await watchLoop({
+      source: createFakeReadyIssueSource([]),
+      tracker: createFakeIssueTrackerAdapter([]),
+      pollIntervalMs: 1,
+      maxPolls: 1,
+      sleep: async () => {},
+      reconcile: {
+        listIssues: async () => {
+          throw new Error("linear unavailable");
+        },
+        reconcileIssue: async () => ({ kind: "no_pull_request" }),
+      },
+      onEvent: (event) => events.push(event.type),
+    });
+
+    expect(events).toContain("watch_stopped");
   });
 });
