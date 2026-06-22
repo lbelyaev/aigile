@@ -102,6 +102,7 @@ describe("ACP role runner", () => {
         transport: "stdio",
         command: ["agent-acp"],
         cwd: "/repo/aigile",
+        envPassthrough: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"],
       },
       assignment: {
         roleId: "architect",
@@ -113,6 +114,7 @@ describe("ACP role runner", () => {
     expect(connectInput).toMatchObject({
       command: ["agent-acp"],
       cwd: "/repo/aigile",
+      envPassthrough: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"],
       sessionId: "LIN-123:architect",
       initializeParams: {
         protocolVersion: 1,

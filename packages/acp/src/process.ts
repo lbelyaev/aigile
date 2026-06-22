@@ -57,7 +57,16 @@ export interface ConnectAcpRuntimeInput extends CreateAcpProcessOptions {
 const defaultSpawnProcess: SpawnAcpProcess = (command, args, options) =>
   spawn(command, args, options) as AcpChildProcess;
 
-const BASE_ENV_ALLOWLIST = ["PATH", "HOME"] as const;
+const BASE_ENV_ALLOWLIST = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+] as const;
 
 const buildAcpProcessEnv = (options: CreateAcpProcessOptions): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = {};

@@ -4,6 +4,16 @@
       "id": "claude-acp",
       "transport": "stdio",
       "command": ["npx", "-y", "@agentclientprotocol/claude-agent-acp"],
+      "envPassthrough": [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CLAUDE_CONFIG_DIR",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_CACHE_HOME",
+        "SSH_AUTH_SOCK"
+      ],
       "capabilities": {
         "skills": ["code_review"]
       }
@@ -11,7 +21,18 @@
     {
       "id": "codex-acp",
       "transport": "stdio",
-      "command": ["npx", "-y", "@zed-industries/codex-acp"]
+      "command": ["npx", "-y", "@zed-industries/codex-acp"],
+      "envPassthrough": [
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_ORG_ID",
+        "OPENAI_PROJECT_ID",
+        "CODEX_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_CACHE_HOME",
+        "SSH_AUTH_SOCK"
+      ]
     }
   ],
   "assignments": [

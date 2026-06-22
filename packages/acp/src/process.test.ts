@@ -81,12 +81,24 @@ describe("ACP process connector", () => {
   it("allowlists the spawned agent environment", async () => {
     const originalPath = process.env.PATH;
     const originalHome = process.env.HOME;
+    const originalUser = process.env.USER;
+    const originalLogname = process.env.LOGNAME;
+    const originalShell = process.env.SHELL;
+    const originalTmpdir = process.env.TMPDIR;
+    const originalTmp = process.env.TMP;
+    const originalTemp = process.env.TEMP;
     const originalRuntimeAllowed = process.env.RUNTIME_ALLOWED;
     const originalSentinelSecret = process.env.SENTINEL_SECRET;
     const originalUndeclaredParent = process.env.UNDECLARED_PARENT;
     try {
       process.env.PATH = "/parent-path";
       process.env.HOME = "/parent-home";
+      process.env.USER = "parent-user";
+      process.env.LOGNAME = "parent-logname";
+      process.env.SHELL = "/bin/zsh";
+      process.env.TMPDIR = "/tmp/parent";
+      process.env.TMP = "/tmp/parent-tmp";
+      process.env.TEMP = "/tmp/parent-temp";
       process.env.RUNTIME_ALLOWED = "runtime";
       process.env.SENTINEL_SECRET = "secret";
       process.env.UNDECLARED_PARENT = "inherited";
@@ -102,6 +114,12 @@ describe("ACP process connector", () => {
       expect(mock.calls[0]!.options.env).toEqual({
         PATH: "/explicit-path",
         HOME: "/parent-home",
+        USER: "parent-user",
+        LOGNAME: "parent-logname",
+        SHELL: "/bin/zsh",
+        TMPDIR: "/tmp/parent",
+        TMP: "/tmp/parent-tmp",
+        TEMP: "/tmp/parent-temp",
         RUNTIME_ALLOWED: "runtime",
         AIGILE: "1",
       });
@@ -115,6 +133,18 @@ describe("ACP process connector", () => {
       else process.env.PATH = originalPath;
       if (originalHome === undefined) delete process.env.HOME;
       else process.env.HOME = originalHome;
+      if (originalUser === undefined) delete process.env.USER;
+      else process.env.USER = originalUser;
+      if (originalLogname === undefined) delete process.env.LOGNAME;
+      else process.env.LOGNAME = originalLogname;
+      if (originalShell === undefined) delete process.env.SHELL;
+      else process.env.SHELL = originalShell;
+      if (originalTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = originalTmpdir;
+      if (originalTmp === undefined) delete process.env.TMP;
+      else process.env.TMP = originalTmp;
+      if (originalTemp === undefined) delete process.env.TEMP;
+      else process.env.TEMP = originalTemp;
       if (originalRuntimeAllowed === undefined) delete process.env.RUNTIME_ALLOWED;
       else process.env.RUNTIME_ALLOWED = originalRuntimeAllowed;
       if (originalSentinelSecret === undefined) delete process.env.SENTINEL_SECRET;
@@ -127,9 +157,21 @@ describe("ACP process connector", () => {
   it("omits undefined allowlisted parent environment values", async () => {
     const originalPath = process.env.PATH;
     const originalHome = process.env.HOME;
+    const originalUser = process.env.USER;
+    const originalLogname = process.env.LOGNAME;
+    const originalShell = process.env.SHELL;
+    const originalTmpdir = process.env.TMPDIR;
+    const originalTmp = process.env.TMP;
+    const originalTemp = process.env.TEMP;
     try {
       delete process.env.PATH;
       delete process.env.HOME;
+      delete process.env.USER;
+      delete process.env.LOGNAME;
+      delete process.env.SHELL;
+      delete process.env.TMPDIR;
+      delete process.env.TMP;
+      delete process.env.TEMP;
 
       const mock = createMockSpawn();
       const processHandle = createAcpProcess(["agent-acp"], {
@@ -144,6 +186,55 @@ describe("ACP process connector", () => {
       else process.env.PATH = originalPath;
       if (originalHome === undefined) delete process.env.HOME;
       else process.env.HOME = originalHome;
+      if (originalUser === undefined) delete process.env.USER;
+      else process.env.USER = originalUser;
+      if (originalLogname === undefined) delete process.env.LOGNAME;
+      else process.env.LOGNAME = originalLogname;
+      if (originalShell === undefined) delete process.env.SHELL;
+      else process.env.SHELL = originalShell;
+      if (originalTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = originalTmpdir;
+      if (originalTmp === undefined) delete process.env.TMP;
+      else process.env.TMP = originalTmp;
+      if (originalTemp === undefined) delete process.env.TEMP;
+      else process.env.TEMP = originalTemp;
+    }
+  });
+
+  it("passes configured agent auth environment through to spawned runtimes", async () => {
+    const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
+    const originalCodexHome = process.env.CODEX_HOME;
+    const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+    try {
+      process.env.OPENAI_API_KEY = "openai-key";
+      process.env.CODEX_HOME = "/tmp/codex-home";
+      process.env.CLAUDE_CONFIG_DIR = "/tmp/claude";
+      process.env.XDG_CONFIG_HOME = "/tmp/xdg-config";
+
+      const mock = createMockSpawn();
+      const processHandle = createAcpProcess(["agent-acp"], {
+        spawnProcess: mock.spawn,
+        envPassthrough: ["OPENAI_API_KEY", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME"],
+      });
+
+      expect(mock.calls[0]!.options.env).toMatchObject({
+        OPENAI_API_KEY: "openai-key",
+        CODEX_HOME: "/tmp/codex-home",
+        CLAUDE_CONFIG_DIR: "/tmp/claude",
+        XDG_CONFIG_HOME: "/tmp/xdg-config",
+      });
+
+      await processHandle.kill();
+    } finally {
+      if (originalOpenAiApiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = originalOpenAiApiKey;
+      if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = originalCodexHome;
+      if (originalClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+      if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
     }
   });
 
