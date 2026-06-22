@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkflowArtifact, WorkflowEvent } from "@aigile/types";
 
@@ -15,6 +15,7 @@ export interface PersistedRun {
 
 export interface RunStore {
   load(issueId: string): Promise<PersistedRun | undefined>;
+  deleteRun(issueId: string): Promise<void>;
   appendEvent(
     issueId: string,
     event: WorkflowEvent,
@@ -41,6 +42,9 @@ export const createInMemoryRunStore = (): RunStore => {
     load: async (issueId) => {
       const run = runs.get(issueId);
       return run === undefined ? undefined : structuredClone(run);
+    },
+    deleteRun: async (issueId) => {
+      runs.delete(issueId);
     },
     appendEvent: async (issueId, event, artifacts = []) => {
       const existing = runs.get(issueId) ?? { issueId, events: [], artifacts: [] };
@@ -77,6 +81,9 @@ export const createFileRunStore = (options: { directory: string }): RunStore => 
 
   return {
     load: readRun,
+    deleteRun: async (issueId) => {
+      await rm(fileFor(issueId), { force: true });
+    },
     appendEvent: async (issueId, event, artifacts = []) => {
       const existing = (await readRun(issueId)) ?? { issueId, events: [], artifacts: [] };
       const next: PersistedRun = {

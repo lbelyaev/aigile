@@ -65,4 +65,14 @@ describe("in-memory run store", () => {
     await store.appendEvent("LIN-2", eventFor("LIN-2", "issue_received"));
     expect((await store.list()).sort()).toEqual(["LIN-1", "LIN-2"]);
   });
+
+  it("deletes a persisted run", async () => {
+    const store = createInMemoryRunStore();
+    await store.appendEvent("LIN-1", eventFor("LIN-1", "issue_received"));
+
+    await store.deleteRun("LIN-1");
+
+    expect(await store.load("LIN-1")).toBeUndefined();
+    expect(await store.list()).toEqual([]);
+  });
 });

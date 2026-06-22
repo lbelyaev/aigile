@@ -63,4 +63,14 @@ describe("file run store", () => {
     await store.appendEvent("LIN-2", { type: "issue_received", issueId: "LIN-2" });
     expect((await store.list()).sort()).toEqual(["LIN-1", "LIN-2"]);
   });
+
+  it("deletes a persisted run file", async () => {
+    const store = createFileRunStore({ directory: await makeDir() });
+    await store.appendEvent("LIN-1", ev("issue_received"));
+
+    await store.deleteRun("LIN-1");
+
+    expect(await store.load("LIN-1")).toBeUndefined();
+    expect(await store.list()).toEqual([]);
+  });
 });

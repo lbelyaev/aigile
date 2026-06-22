@@ -467,6 +467,18 @@ describe("cli formatting", () => {
     });
   });
 
+  it("parses retry-escalated run arguments", () => {
+    expect(
+      parseCliArgs(["run", "LBE-27", "--linear", "--product", "aigile", "--retry-escalated"]),
+    ).toEqual({
+      mode: "run",
+      issueKey: "LBE-27",
+      linear: true,
+      product: "aigile",
+      retryEscalated: true,
+    });
+  });
+
   it("parses explicit agent-write run arguments", () => {
     expect(
       parseCliArgs([
@@ -1561,6 +1573,7 @@ describe("cli formatting", () => {
       runtimeConfigPath: "config/aigile.runtimes.example.json",
       agentWrite: true,
       publish: true,
+      retryEscalated: true,
       remote: "origin",
       pullRequestTarget: { owner: "lbelyaev", repo: "aigile", baseBranch: "main" },
       codeHost,
@@ -1613,6 +1626,7 @@ describe("cli formatting", () => {
 
     expect(capturedInput).toMatchObject({
       publish: true,
+      retryEscalated: true,
       remote: "origin",
       pullRequestTarget: { owner: "lbelyaev", repo: "aigile", baseBranch: "main" },
       verificationCommands: [

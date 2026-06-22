@@ -4,6 +4,7 @@ import {
   createScriptedRoleRunner,
   type RoleRunner,
 } from "@aigile/roles";
+import { createFileRunStore } from "@aigile/workflow";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -700,6 +701,92 @@ describe("durable engine-backed workspace run", () => {
       expect(result.finalState).toBe("merged");
       expect(result.pullRequest).toBeDefined();
       expect(result.artifacts.map((artifact) => artifact.kind)).toContain("github.pull_request");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("can retry after clearing a prior escalated run log", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "aigile-engine-retry-"));
+    try {
+      const store = createFileRunStore({ directory });
+      await store.appendEvent("LIN-9", { type: "issue_received", issueId: "LIN-9" });
+      await store.appendEvent("LIN-9", {
+        type: "plan_drafted",
+        issueId: "LIN-9",
+        artifactId: "plan",
+      });
+      await store.appendEvent("LIN-9", { type: "plan_approved", issueId: "LIN-9" });
+      await store.appendEvent("LIN-9", {
+        type: "developer_finished",
+        issueId: "LIN-9",
+        artifactId: "attempt",
+      });
+      await store.appendEvent("LIN-9", {
+        type: "verification_failed",
+        issueId: "LIN-9",
+        artifactId: "verification",
+      });
+      await store.appendEvent("LIN-9", {
+        type: "developer_finished",
+        issueId: "LIN-9",
+        artifactId: "attempt",
+      });
+      await store.appendEvent("LIN-9", {
+        type: "verification_failed",
+        issueId: "LIN-9",
+        artifactId: "verification",
+      });
+      await store.appendEvent("LIN-9", {
+        type: "developer_finished",
+        issueId: "LIN-9",
+        artifactId: "attempt",
+      });
+      await store.appendEvent("LIN-9", {
+        type: "verification_failed",
+        issueId: "LIN-9",
+        artifactId: "verification",
+      });
+
+      const result = await runWorkspaceIssueWithEngine({
+        issue: {
+          id: "i",
+          key: "LIN-9",
+          title: "Retry escalated run",
+          description: "",
+          acceptanceCriteria: [],
+          status: "todo",
+          comments: [],
+        },
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        runStatePath: directory,
+        retryEscalated: true,
+        runner: scriptedRunner(),
+        exec: async (command, args) => {
+          if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+          if (command === "git" && args[0] === "show-ref")
+            return { stdout: "", stderr: "", exitCode: 1 };
+          if (command === "git" && args[0] === "diff" && args.includes("--cached"))
+            return { stdout: "", stderr: "", exitCode: 1 };
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+      });
+
+      expect(result.finalState).toBe("merged");
+      const persisted = await store.load("LIN-9");
+      expect(persisted?.events.map((event) => event.type)).not.toEqual([
+        "issue_received",
+        "plan_drafted",
+        "plan_approved",
+        "developer_finished",
+        "verification_failed",
+        "developer_finished",
+        "verification_failed",
+        "developer_finished",
+        "verification_failed",
+      ]);
+      expect(persisted?.events.at(-1)?.type).toBe("merge_completed");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
