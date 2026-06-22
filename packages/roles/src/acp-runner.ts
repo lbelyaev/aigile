@@ -130,6 +130,8 @@ export const buildAcpRuntimeConnectInput = (
   }
   if (input.runtime.cwd !== undefined) connectInput.cwd = input.runtime.cwd;
   if (input.runtime.env !== undefined) connectInput.env = input.runtime.env;
+  if (input.runtime.envPassthrough !== undefined)
+    connectInput.envPassthrough = input.runtime.envPassthrough;
   const decidePermission = buildExecutionPolicyPermissionDecision(input);
   if (decidePermission !== undefined) connectInput.decidePermission = decidePermission;
 

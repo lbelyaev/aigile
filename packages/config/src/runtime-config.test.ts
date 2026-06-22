@@ -14,6 +14,7 @@ describe("runtime config", () => {
             id: "architect-runtime",
             transport: "stdio",
             command: ["agent-acp", "--architect"],
+            envPassthrough: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"],
             defaultModel: "configured-model",
             capabilities: {
               skills: ["code_review"],
@@ -34,6 +35,7 @@ describe("runtime config", () => {
       id: "architect-runtime",
       transport: "stdio",
       command: ["agent-acp", "--architect"],
+      envPassthrough: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"],
       defaultModel: "configured-model",
       capabilities: {
         skills: ["code_review"],

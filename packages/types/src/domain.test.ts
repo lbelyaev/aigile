@@ -18,6 +18,7 @@ describe("domain schemas", () => {
         displayName: "Local architect",
         transport: "stdio",
         command: ["custom-acp-agent", "--role", "architect"],
+        envPassthrough: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"],
         defaultModel: "model-from-config",
         capabilities: {
           streaming: true,
@@ -33,6 +34,15 @@ describe("domain schemas", () => {
         id: "bad-runtime",
         transport: "stdio",
         command: [],
+      }),
+    ).toBe(false);
+
+    expect(
+      isAcpRuntimeProfile({
+        id: "bad-runtime",
+        transport: "stdio",
+        command: ["agent-acp"],
+        envPassthrough: ["OPENAI_API_KEY", ""],
       }),
     ).toBe(false);
   });

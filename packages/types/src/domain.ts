@@ -64,6 +64,7 @@ export interface AcpRuntimeProfile {
   endpoint?: string;
   cwd?: string;
   env?: Record<string, string>;
+  envPassthrough?: readonly string[];
   defaultModel?: string;
   capabilities?: AcpRuntimeCapabilities;
 }
@@ -139,6 +140,12 @@ export const isAcpRuntimeProfile = (value: unknown): value is AcpRuntimeProfile 
   if (value.endpoint !== undefined && !isNonEmptyString(value.endpoint)) return false;
   if (value.defaultModel !== undefined && !isNonEmptyString(value.defaultModel)) return false;
   if (value.env !== undefined && !hasOnlyStringValues(value.env)) return false;
+  if (
+    value.envPassthrough !== undefined &&
+    (!Array.isArray(value.envPassthrough) || !value.envPassthrough.every(isNonEmptyString))
+  ) {
+    return false;
+  }
   if (value.capabilities !== undefined && !isCapabilities(value.capabilities)) return false;
 
   if (value.command !== undefined) {
