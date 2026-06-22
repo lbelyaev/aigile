@@ -1,15 +1,372 @@
 import { describe, expect, it } from "bun:test";
 import {
+  WORKFLOW_EVENT_TYPES,
+  WORKFLOW_STATES,
+  type WorkflowEvent,
+  type WorkflowEventType,
+  type WorkflowState,
+} from "@aigile/types";
+import {
   initialWorkflowSnapshot,
   replayWorkflow,
   transitionWorkflow,
   type WorkflowCommand,
+  type WorkflowCommandType,
+  type WorkflowSnapshot,
 } from "./index.js";
 
 const commandTypes = (commands: readonly WorkflowCommand[]): string[] =>
   commands.map((command) => command.type);
 
+type LegalTransitionExpectation = {
+  state: WorkflowState;
+  command: WorkflowCommandType;
+  developerAttempts?: number;
+};
+
+type TransitionExpectation = LegalTransitionExpectation | "illegal";
+
+const expectedTransitions: Record<
+  WorkflowState,
+  Record<WorkflowEventType, TransitionExpectation>
+> = {
+  new: {
+    issue_received: { state: "planning", command: "start_architect_plan" },
+    plan_drafted: "illegal",
+    plan_approved: "illegal",
+    plan_rejected: "illegal",
+    developer_finished: "illegal",
+    verification_passed: "illegal",
+    verification_failed: "illegal",
+    checker_passed: "illegal",
+    checker_requested_changes: "illegal",
+    checker_escalated: "illegal",
+    work_satisfied: "illegal",
+    publish_failed: "illegal",
+    human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
+    merge_completed: "illegal",
+    timeout_elapsed: { state: "escalated", command: "request_human_attention" },
+    budget_exceeded: { state: "escalated", command: "request_human_attention" },
+  },
+  planning: {
+    issue_received: "illegal",
+    plan_drafted: { state: "awaiting_plan_approval", command: "request_plan_approval" },
+    plan_approved: "illegal",
+    plan_rejected: "illegal",
+    developer_finished: "illegal",
+    verification_passed: "illegal",
+    verification_failed: "illegal",
+    checker_passed: "illegal",
+    checker_requested_changes: "illegal",
+    checker_escalated: "illegal",
+    work_satisfied: "illegal",
+    publish_failed: "illegal",
+    human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
+    merge_completed: "illegal",
+    timeout_elapsed: { state: "escalated", command: "request_human_attention" },
+    budget_exceeded: { state: "escalated", command: "request_human_attention" },
+  },
+  awaiting_plan_approval: {
+    issue_received: "illegal",
+    plan_drafted: "illegal",
+    plan_approved: {
+      state: "developing",
+      command: "start_developer_attempt",
+      developerAttempts: 1,
+    },
+    plan_rejected: { state: "planning", command: "start_architect_plan" },
+    developer_finished: "illegal",
+    verification_passed: "illegal",
+    verification_failed: "illegal",
+    checker_passed: "illegal",
+    checker_requested_changes: "illegal",
+    checker_escalated: "illegal",
+    work_satisfied: "illegal",
+    publish_failed: "illegal",
+    human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
+    merge_completed: "illegal",
+    timeout_elapsed: { state: "escalated", command: "request_human_attention" },
+    budget_exceeded: { state: "escalated", command: "request_human_attention" },
+  },
+  developing: {
+    issue_received: "illegal",
+    plan_drafted: "illegal",
+    plan_approved: "illegal",
+    plan_rejected: "illegal",
+    developer_finished: { state: "verifying", command: "run_verification" },
+    verification_passed: "illegal",
+    verification_failed: "illegal",
+    checker_passed: "illegal",
+    checker_requested_changes: "illegal",
+    checker_escalated: "illegal",
+    work_satisfied: "illegal",
+    publish_failed: "illegal",
+    human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
+    merge_completed: "illegal",
+    timeout_elapsed: { state: "escalated", command: "request_human_attention" },
+    budget_exceeded: { state: "escalated", command: "request_human_attention" },
+  },
+  verifying: {
+    issue_received: "illegal",
+    plan_drafted: "illegal",
+    plan_approved: "illegal",
+    plan_rejected: "illegal",
+    developer_finished: "illegal",
+    verification_passed: { state: "checking", command: "start_checker_review" },
+    verification_failed: {
+      state: "developing",
+      command: "start_developer_attempt",
+      developerAttempts: 2,
+    },
+    checker_passed: "illegal",
+    checker_requested_changes: "illegal",
+    checker_escalated: "illegal",
+    work_satisfied: "illegal",
+    publish_failed: "illegal",
+    human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
+    merge_completed: "illegal",
+    timeout_elapsed: { state: "escalated", command: "request_human_attention" },
+    budget_exceeded: { state: "escalated", command: "request_human_attention" },
+  },
+  checking: {
+    issue_received: "illegal",
+    plan_drafted: "illegal",
+    plan_approved: "illegal",
+    plan_rejected: "illegal",
+    developer_finished: "illegal",
+    verification_passed: "illegal",
+    verification_failed: "illegal",
+    checker_passed: { state: "merge_ready", command: "merge_pull_request" },
+    checker_requested_changes: {
+      state: "developing",
+      command: "start_developer_attempt",
+      developerAttempts: 2,
+    },
+    checker_escalated: { state: "escalated", command: "request_human_attention" },
+    work_satisfied: { state: "satisfied", command: "sync_sources_of_truth" },
+    publish_failed: "illegal",
+    human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
+    merge_completed: "illegal",
+    timeout_elapsed: { state: "escalated", command: "request_human_attention" },
+    budget_exceeded: { state: "escalated", command: "request_human_attention" },
+  },
+  changes_requested: {
+    issue_received: "illegal",
+    plan_drafted: "illegal",
+    plan_approved: "illegal",
+    plan_rejected: "illegal",
+    developer_finished: { state: "verifying", command: "run_verification" },
+    verification_passed: "illegal",
+    verification_failed: "illegal",
+    checker_passed: "illegal",
+    checker_requested_changes: "illegal",
+    checker_escalated: "illegal",
+    work_satisfied: "illegal",
+    publish_failed: "illegal",
+    human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
+    merge_completed: "illegal",
+    timeout_elapsed: { state: "escalated", command: "request_human_attention" },
+    budget_exceeded: { state: "escalated", command: "request_human_attention" },
+  },
+  escalated: {
+    issue_received: "illegal",
+    plan_drafted: "illegal",
+    plan_approved: "illegal",
+    plan_rejected: "illegal",
+    developer_finished: "illegal",
+    verification_passed: "illegal",
+    verification_failed: "illegal",
+    checker_passed: "illegal",
+    checker_requested_changes: "illegal",
+    checker_escalated: "illegal",
+    work_satisfied: "illegal",
+    publish_failed: "illegal",
+    human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
+    merge_completed: "illegal",
+    timeout_elapsed: { state: "escalated", command: "request_human_attention" },
+    budget_exceeded: { state: "escalated", command: "request_human_attention" },
+  },
+  merge_ready: {
+    issue_received: "illegal",
+    plan_drafted: "illegal",
+    plan_approved: "illegal",
+    plan_rejected: "illegal",
+    developer_finished: "illegal",
+    verification_passed: "illegal",
+    verification_failed: "illegal",
+    checker_passed: "illegal",
+    checker_requested_changes: "illegal",
+    checker_escalated: "illegal",
+    work_satisfied: "illegal",
+    publish_failed: { state: "escalated", command: "request_human_attention" },
+    human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
+    merge_completed: { state: "merged", command: "sync_sources_of_truth" },
+    timeout_elapsed: { state: "escalated", command: "request_human_attention" },
+    budget_exceeded: { state: "escalated", command: "request_human_attention" },
+  },
+  satisfied: {
+    issue_received: "illegal",
+    plan_drafted: "illegal",
+    plan_approved: "illegal",
+    plan_rejected: "illegal",
+    developer_finished: "illegal",
+    verification_passed: "illegal",
+    verification_failed: "illegal",
+    checker_passed: "illegal",
+    checker_requested_changes: "illegal",
+    checker_escalated: "illegal",
+    work_satisfied: "illegal",
+    publish_failed: "illegal",
+    human_cancelled: "illegal",
+    merge_completed: "illegal",
+    timeout_elapsed: "illegal",
+    budget_exceeded: "illegal",
+  },
+  merged: {
+    issue_received: "illegal",
+    plan_drafted: "illegal",
+    plan_approved: "illegal",
+    plan_rejected: "illegal",
+    developer_finished: "illegal",
+    verification_passed: "illegal",
+    verification_failed: "illegal",
+    checker_passed: "illegal",
+    checker_requested_changes: "illegal",
+    checker_escalated: "illegal",
+    work_satisfied: "illegal",
+    publish_failed: "illegal",
+    human_cancelled: "illegal",
+    merge_completed: "illegal",
+    timeout_elapsed: "illegal",
+    budget_exceeded: "illegal",
+  },
+  cancelled: {
+    issue_received: "illegal",
+    plan_drafted: "illegal",
+    plan_approved: "illegal",
+    plan_rejected: "illegal",
+    developer_finished: "illegal",
+    verification_passed: "illegal",
+    verification_failed: "illegal",
+    checker_passed: "illegal",
+    checker_requested_changes: "illegal",
+    checker_escalated: "illegal",
+    work_satisfied: "illegal",
+    publish_failed: "illegal",
+    human_cancelled: "illegal",
+    merge_completed: "illegal",
+    timeout_elapsed: "illegal",
+    budget_exceeded: "illegal",
+  },
+  failed: {
+    issue_received: "illegal",
+    plan_drafted: "illegal",
+    plan_approved: "illegal",
+    plan_rejected: "illegal",
+    developer_finished: "illegal",
+    verification_passed: "illegal",
+    verification_failed: "illegal",
+    checker_passed: "illegal",
+    checker_requested_changes: "illegal",
+    checker_escalated: "illegal",
+    work_satisfied: "illegal",
+    publish_failed: "illegal",
+    human_cancelled: "illegal",
+    merge_completed: "illegal",
+    timeout_elapsed: "illegal",
+    budget_exceeded: "illegal",
+  },
+} satisfies Record<WorkflowState, Record<WorkflowEventType, TransitionExpectation>>;
+
+const snapshotFor = (state: WorkflowState, developerAttempts?: number): WorkflowSnapshot => ({
+  issueId: "LIN-123",
+  state,
+  developerAttempts:
+    developerAttempts ??
+    (state === "new" || state === "planning" || state === "awaiting_plan_approval" ? 0 : 1),
+  artifactIds: [],
+});
+
+const eventFor = (type: WorkflowEventType, issueId = "LIN-123"): WorkflowEvent => ({
+  type,
+  issueId,
+  artifactId: `artifact-${type}`,
+  reason: `reason-${type}`,
+});
+
 describe("workflow reducer", () => {
+  it("covers every state and event pair with explicit transition expectations", () => {
+    for (const state of WORKFLOW_STATES) {
+      for (const eventType of WORKFLOW_EVENT_TYPES) {
+        const expectation = expectedTransitions[state]?.[eventType];
+        expect(expectation, `missing expectation for ${state} x ${eventType}`).toBeDefined();
+
+        const snapshot = snapshotFor(state);
+        const event = eventFor(eventType, snapshot.issueId);
+
+        if (expectation === "illegal") {
+          expect(() => transitionWorkflow(snapshot, event)).toThrow(
+            new RegExp(`Illegal transition from "${state}" on "${eventType}"`),
+          );
+          continue;
+        }
+
+        const result = transitionWorkflow(snapshot, event);
+
+        expect(result.snapshot.state, `${state} x ${eventType} target state`).toBe(
+          expectation.state,
+        );
+        expect(
+          result.snapshot.developerAttempts,
+          `${state} x ${eventType} developer attempts`,
+        ).toBe(expectation.developerAttempts ?? snapshot.developerAttempts);
+        expect(commandTypes(result.commands), `${state} x ${eventType} commands`).toEqual([
+          expectation.command,
+        ]);
+      }
+    }
+  });
+
+  it("asserts both retry and escalation outcomes for attempt-capped transitions", () => {
+    const cappedTransitions: Array<{
+      state: WorkflowState;
+      eventType: WorkflowEventType;
+    }> = [
+      { state: "verifying", eventType: "verification_failed" },
+      { state: "checking", eventType: "checker_requested_changes" },
+    ];
+
+    for (const { state, eventType } of cappedTransitions) {
+      const retryResult = transitionWorkflow(snapshotFor(state, 1), eventFor(eventType), {
+        maxDeveloperAttempts: 2,
+      });
+
+      expect(retryResult.snapshot.state, `${state} x ${eventType} retry state`).toBe("developing");
+      expect(retryResult.snapshot.developerAttempts, `${state} x ${eventType} retry attempts`).toBe(
+        2,
+      );
+      expect(commandTypes(retryResult.commands), `${state} x ${eventType} retry commands`).toEqual([
+        "start_developer_attempt",
+      ]);
+
+      const escalateResult = transitionWorkflow(snapshotFor(state, 2), eventFor(eventType), {
+        maxDeveloperAttempts: 2,
+      });
+
+      expect(escalateResult.snapshot.state, `${state} x ${eventType} escalation state`).toBe(
+        "escalated",
+      );
+      expect(
+        escalateResult.snapshot.developerAttempts,
+        `${state} x ${eventType} escalation attempts`,
+      ).toBe(2);
+      expect(
+        commandTypes(escalateResult.commands),
+        `${state} x ${eventType} escalation commands`,
+      ).toEqual(["request_human_attention"]);
+    }
+  });
+
   it("advances the happy path through merge with explicit commands", () => {
     const issueId = "LIN-123";
     const result = replayWorkflow(initialWorkflowSnapshot(issueId), [
