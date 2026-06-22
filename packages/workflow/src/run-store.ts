@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkflowArtifact, WorkflowEvent } from "@aigile/types";
 
@@ -20,6 +20,8 @@ export interface RunStore {
     event: WorkflowEvent,
     artifacts?: readonly WorkflowArtifact[],
   ): Promise<void>;
+  // Issue ids of all persisted runs, so interrupted runs can be discovered and resumed.
+  list(): Promise<string[]>;
 }
 
 const mergeArtifacts = (
@@ -48,6 +50,7 @@ export const createInMemoryRunStore = (): RunStore => {
         artifacts: mergeArtifacts(existing.artifacts, artifacts),
       });
     },
+    list: async () => [...runs.keys()],
   };
 };
 
@@ -83,6 +86,28 @@ export const createFileRunStore = (options: { directory: string }): RunStore => 
       };
       await mkdir(options.directory, { recursive: true });
       await writeFile(fileFor(issueId), `${JSON.stringify(next, null, 2)}\n`);
+    },
+    list: async () => {
+      let entries: string[];
+      try {
+        entries = await readdir(options.directory);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw error;
+      }
+      const issueIds: string[] = [];
+      for (const entry of entries) {
+        if (!entry.endsWith(".json")) continue;
+        try {
+          const run = JSON.parse(
+            await readFile(join(options.directory, entry), "utf8"),
+          ) as PersistedRun;
+          if (typeof run.issueId === "string" && run.issueId.length > 0) issueIds.push(run.issueId);
+        } catch {
+          // Skip unreadable/corrupt run files rather than failing enumeration.
+        }
+      }
+      return issueIds;
     },
   };
 };

@@ -53,4 +53,14 @@ describe("file run store", () => {
     expect(run?.artifacts.map((entry) => entry.id)).toEqual(["a1"]);
     expect(run?.events).toHaveLength(2);
   });
+
+  it("lists persisted run issue ids (empty for a missing directory)", async () => {
+    const directory = join(await makeDir(), "nested-runs");
+    const store = createFileRunStore({ directory });
+    expect(await store.list()).toEqual([]); // directory does not exist yet
+
+    await store.appendEvent("LIN-1", { type: "issue_received", issueId: "LIN-1" });
+    await store.appendEvent("LIN-2", { type: "issue_received", issueId: "LIN-2" });
+    expect((await store.list()).sort()).toEqual(["LIN-1", "LIN-2"]);
+  });
 });

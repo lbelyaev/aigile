@@ -18,7 +18,7 @@ export { createFileRunStore, createInMemoryRunStore } from "./run-store.js";
 
 export type { PersistedRun, RunStore } from "./run-store.js";
 
-export { runWorkflowEngine } from "./engine.js";
+export { listResumableRuns, runWorkflowEngine } from "./engine.js";
 
 export type {
   WorkflowCommandContext,
