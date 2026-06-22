@@ -1252,6 +1252,8 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     const description = optionValue(args, "--description");
     const acceptanceCriteria = optionValues(args, "--acceptance");
     const runtimeConfigPath = optionValue(args, "--runtime-config");
+    const productsConfigPath = optionValue(args, "--products-config");
+    const product = optionValue(args, "--product");
     const repoPath = optionValue(args, "--repo");
     const worktreesPath = optionValue(args, "--worktrees");
     const baseBranch = optionValue(args, "--base-branch");
@@ -1263,6 +1265,8 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (description !== undefined) parsed.description = description;
     if (acceptanceCriteria.length > 0) parsed.acceptanceCriteria = acceptanceCriteria;
     if (runtimeConfigPath !== undefined) parsed.runtimeConfigPath = runtimeConfigPath;
+    if (productsConfigPath !== undefined) parsed.productsConfigPath = productsConfigPath;
+    if (product !== undefined) parsed.product = product;
     if (repoPath !== undefined) parsed.repoPath = repoPath;
     if (worktreesPath !== undefined) parsed.worktreesPath = worktreesPath;
     if (baseBranch !== undefined) parsed.baseBranch = baseBranch;
@@ -1288,6 +1292,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
 
 const main = async (): Promise<void> => {
   const args = parseCliArgs(process.argv.slice(2));
+  const runContext = args.mode === "run" ? resolveProductCliContext(args) : undefined;
   const linearIssue =
     args.mode === "run" && args.linear
       ? await (async (): Promise<IssueRecord> => {
@@ -1309,10 +1314,11 @@ const main = async (): Promise<void> => {
         linearIssue?.acceptanceCriteria ??
         defaultIssue.acceptanceCriteria,
     },
-    repoPath: args.repoPath ?? process.cwd(),
-    worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
+    repoPath: runContext?.repoPath ?? args.repoPath ?? process.cwd(),
+    worktreesPath: runContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`,
   };
-  if (args.baseBranch !== undefined) runInput.baseBranch = args.baseBranch;
+  if (runContext !== undefined) runInput.baseBranch = runContext.baseBranch;
+  else if (args.baseBranch !== undefined) runInput.baseBranch = args.baseBranch;
   if (args.mode === "status") {
     const output = await runIssueWorkspaceStatus({
       issueKey: args.issueKey ?? defaultIssue.key,
@@ -1477,18 +1483,31 @@ const main = async (): Promise<void> => {
   if (args.mode === "run" && args.preflightOnly) {
     const preflightInput: RunModePreflightInput = {
       issueKey: args.issueKey ?? defaultIssue.key,
-      repoPath: args.repoPath ?? process.cwd(),
-      worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
-      baseBranch: args.baseBranch ?? "main",
+      repoPath: runContext?.repoPath ?? args.repoPath ?? process.cwd(),
+      worktreesPath:
+        runContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`,
+      baseBranch: runContext?.baseBranch ?? args.baseBranch ?? "main",
     };
-    if (args.publish !== undefined) preflightInput.publish = args.publish;
-    if (args.githubRepo !== undefined) preflightInput.githubRepo = args.githubRepo;
+    if (runContext?.publish !== undefined) preflightInput.publish = runContext.publish;
+    else if (args.publish !== undefined) preflightInput.publish = args.publish;
+    if (runContext?.githubRepo !== undefined) preflightInput.githubRepo = runContext.githubRepo;
+    else if (args.githubRepo !== undefined) preflightInput.githubRepo = args.githubRepo;
     if (args.remote !== undefined) preflightInput.remote = args.remote;
     const output = await runRunModePreflight(preflightInput);
     process.stdout.write(`${output}\n`);
     return;
   }
-  if (args.dryRun) {
+  if (runContext?.verification !== undefined) {
+    const verificationCommands = [
+      ...(runContext.verification.install ?? []),
+      ...(runContext.verification.checks ?? []),
+    ];
+    if (verificationCommands.length > 0) runInput.verificationCommands = verificationCommands;
+    if (runContext.verification.changedFileGuards !== undefined) {
+      runInput.changedFileGuards = runContext.verification.changedFileGuards;
+    }
+  }
+  if (runContext?.dryRun === true || args.dryRun) {
     runInput.dryRun = true;
     runInput.exec = createDryRunExec();
   }
@@ -1496,23 +1515,23 @@ const main = async (): Promise<void> => {
     args.mode === "run" &&
     args.runtimeConfigPath &&
     !args.preflightOnly &&
-    !args.dryRun &&
-    !args.agentWrite
+    runContext?.dryRun !== true &&
+    runContext?.agentWrite !== true
   ) {
     throw new Error("run with --runtime-config requires --dry-run or --agent-write");
   }
-  if (args.mode === "run" && args.agentWrite && !args.publish) {
+  if (args.mode === "run" && runContext?.agentWrite === true && runContext.publish !== true) {
     runInput.createPullRequest = false;
   }
-  if (args.mode === "run" && args.publish && !args.dryRun) {
+  if (args.mode === "run" && runContext?.publish === true && runContext.dryRun !== true) {
     const remote = args.remote ?? "origin";
-    const baseBranch = args.baseBranch ?? "main";
     const publishPreflightInput: PublishPreflightInput = {
-      repoPath: args.repoPath ?? process.cwd(),
+      repoPath: runContext.repoPath,
       remote,
-      baseBranch,
+      baseBranch: runContext.baseBranch,
     };
-    if (args.githubRepo !== undefined) publishPreflightInput.githubRepo = args.githubRepo;
+    if (runContext.githubRepo !== undefined)
+      publishPreflightInput.githubRepo = runContext.githubRepo;
     const publishPreflight = await runPublishPreflight(publishPreflightInput);
     const [owner, repo] = publishPreflight.githubRepo.split("/");
     if (!owner || !repo) throw new Error("--github-repo must be in owner/repo format");
@@ -1521,10 +1540,10 @@ const main = async (): Promise<void> => {
     runInput.pullRequestTarget = {
       owner,
       repo,
-      baseBranch,
+      baseBranch: runContext.baseBranch,
     };
     runInput.codeHost = createGitHubCliCodeHostAdapter({
-      cwd: args.repoPath ?? process.cwd(),
+      cwd: runContext.repoPath,
       exec: async (command, commandArgs, options) =>
         defaultExecCommand(command, commandArgs, { cwd: options.cwd ?? process.cwd() }),
     });
