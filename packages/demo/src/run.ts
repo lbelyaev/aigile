@@ -23,6 +23,7 @@ import {
   createAcpRoleRunner,
   createRoleRuntimeRegistry,
   createScriptedRoleRunner,
+  runAssignedDeepReview,
   runAssignedRole,
   type AcpRuntimeConnector,
   type RoleRunner,
@@ -46,6 +47,7 @@ import {
 import {
   createFileRunStore,
   initialWorkflowSnapshot,
+  reviewRoleForChangedFiles,
   runWorkflowEngine,
   transitionWorkflow,
   type WorkflowEngineInput,
@@ -274,6 +276,13 @@ const developerAttemptHasChanges = (artifact: WorkflowArtifact): boolean => {
   return artifact.payload.changedFiles.length > 0;
 };
 
+const developerAttemptChangedFiles = (artifact: WorkflowArtifact): readonly string[] => {
+  if (!isDeveloperAttemptPayload(artifact.payload)) {
+    throw new Error(`Developer artifact payload is invalid: ${artifact.id}`);
+  }
+  return artifact.payload.changedFiles;
+};
+
 const markdownList = (items: readonly string[]): string[] =>
   items.length === 0 ? ["- None"] : items.map((item) => `- ${item}`);
 
@@ -433,11 +442,13 @@ const createDemoRegistry = (): RoleRuntimeRegistry =>
       { id: "demo-architect", transport: "stdio", command: ["aigile-demo-acp"] },
       { id: "demo-developer", transport: "stdio", command: ["aigile-demo-acp"] },
       { id: "demo-checker", transport: "stdio", command: ["aigile-demo-acp"] },
+      { id: "demo-deep-reviewer", transport: "stdio", command: ["aigile-demo-acp"] },
     ],
     assignments: [
       { roleId: "architect", runtimeProfileId: "demo-architect" },
       { roleId: "developer", runtimeProfileId: "demo-developer" },
       { roleId: "checker", runtimeProfileId: "demo-checker" },
+      { roleId: "deep_reviewer", runtimeProfileId: "demo-deep-reviewer" },
     ],
   });
 
@@ -574,13 +585,32 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     };
   }
 
-  const verdict = await runAssignedRole({
-    roleId: "checker",
-    issueId: issue.key,
-    inputArtifacts: checkerInputArtifacts(artifacts, issue.key),
-    registry: input.registry,
-    runner: input.runner,
-  });
+  const reviewRole = reviewRoleForChangedFiles(developerAttemptChangedFiles(attempt));
+  const reviewInputArtifacts = checkerInputArtifacts(artifacts, issue.key);
+  const verdict =
+    reviewRole === "deep_reviewer"
+      ? await runAssignedDeepReview({
+          issueId: issue.key,
+          inputArtifacts: reviewInputArtifacts,
+          reviewerModel:
+            input.registry.getRuntimeForRole("deep_reviewer").defaultModel ??
+            input.registry.getRuntimeForRole("deep_reviewer").id,
+          runRole: (roleId, inputArtifacts) =>
+            runAssignedRole({
+              roleId,
+              issueId: issue.key,
+              inputArtifacts,
+              registry: input.registry,
+              runner: input.runner,
+            }),
+        })
+      : await runAssignedRole({
+          roleId: reviewRole,
+          issueId: issue.key,
+          inputArtifacts: reviewInputArtifacts,
+          registry: input.registry,
+          runner: input.runner,
+        });
   artifacts.push(verdict);
   const checkerEvent = checkerEventForVerdict(verdict);
   const developerChangedFiles = developerAttemptHasChanges(attempt);
@@ -985,7 +1015,7 @@ export const runWorkspaceIssueWithEngine = async (
         // path too — not just the legacy runDemoIssueWithRoles path — so the path
         // that actually runs in production gets it.
         inputArtifacts:
-          roleId === "checker"
+          roleId === "checker" || roleId === "deep_reviewer"
             ? checkerInputArtifacts(inputArtifacts, input.issue.key)
             : inputArtifacts,
         registry,

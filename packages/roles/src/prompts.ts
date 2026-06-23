@@ -28,12 +28,21 @@ const DEFAULT_ROLE_INSTRUCTIONS: Record<string, string> = {
     "Return checker.verdict with a verdict of pass, changes_requested, or escalate and grounded reasons.",
     "Do not edit files, merge, or update source-of-truth systems directly.",
   ].join(" "),
+  deep_reviewer: [
+    "Run a deeper, independent review over the plan, implementation artifact, verification result, and diff.",
+    "Use multiple independent angles: correctness, removed-behavior, cross-file/callers, and tests-faithful-to-reality.",
+    "For every finding and for every angle-level pass verdict, perform an adversarial refutation step before it influences the final verdict.",
+    "Only surviving findings and unrefuted pass verdicts may drive the final result; if a pass verdict is refuted, bias to changes_requested.",
+    "Return checker.verdict with a verdict of pass, changes_requested, or escalate and grounded reasons so the FSM can consume it like the light checker.",
+    "Do not edit files, merge, or update source-of-truth systems directly.",
+  ].join(" "),
 };
 
 const ARTIFACT_KIND_BY_ROLE: Record<string, string> = {
   architect: "architect.plan",
   developer: "developer.attempt",
   checker: "checker.verdict",
+  deep_reviewer: "checker.verdict",
 };
 
 const PAYLOAD_EXAMPLES_BY_ROLE: Record<string, unknown> = {
@@ -51,6 +60,11 @@ const PAYLOAD_EXAMPLES_BY_ROLE: Record<string, unknown> = {
   },
   checker: {
     verdict: "pass",
+    summary: "string",
+    reasons: ["string"],
+  },
+  deep_reviewer: {
+    verdict: "changes_requested",
     summary: "string",
     reasons: ["string"],
   },
@@ -80,7 +94,7 @@ const runtimeCapabilitySection = (input: BuildRolePromptInput): string[] => {
   } else {
     lines.push(`- Advertised agent-native skills: ${advertisedSkills.join(", ")}`);
   }
-  if (input.roleId === "checker") {
+  if (input.roleId === "checker" || input.roleId === "deep_reviewer") {
     if (skills.has("code_review")) {
       lines.push(
         "- A code_review skill/tool/plugin was advertised; it may be used as an optional aid, but the explicit checker methodology in the instructions remains authoritative.",
@@ -93,6 +107,11 @@ const runtimeCapabilitySection = (input: BuildRolePromptInput): string[] => {
     lines.push(
       "- The checker.verdict JSON contract is authoritative regardless of which skill or fallback path is used.",
     );
+    if (input.roleId === "deep_reviewer") {
+      lines.push(
+        "- This role is intentionally configurable to a runtime/model distinct from the developer and light checker.",
+      );
+    }
   }
   return lines;
 };

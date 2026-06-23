@@ -72,4 +72,30 @@ describe("role runner", () => {
 
     expect(() => registry.getRuntimeForRole("checker")).toThrow(/no runtime assigned/i);
   });
+
+  it("resolves deep reviewer runtime independently from the checker runtime", () => {
+    const registry = createRoleRuntimeRegistry({
+      runtimes: [
+        {
+          id: "runtime-checker",
+          transport: "stdio",
+          command: ["checker-acp"],
+          defaultModel: "same-family-checker",
+        },
+        {
+          id: "runtime-deep-reviewer",
+          transport: "stdio",
+          command: ["deep-reviewer-acp"],
+          defaultModel: "independent-reviewer",
+        },
+      ],
+      assignments: [
+        { roleId: "checker", runtimeProfileId: "runtime-checker" },
+        { roleId: "deep_reviewer", runtimeProfileId: "runtime-deep-reviewer" },
+      ],
+    });
+
+    expect(registry.getRuntimeForRole("checker").defaultModel).toBe("same-family-checker");
+    expect(registry.getRuntimeForRole("deep_reviewer").defaultModel).toBe("independent-reviewer");
+  });
 });

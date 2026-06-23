@@ -24,11 +24,13 @@ const registry = createRoleRuntimeRegistry({
     { id: "demo-architect", transport: "stdio", command: ["demo-acp"] },
     { id: "demo-developer", transport: "stdio", command: ["demo-acp"] },
     { id: "demo-checker", transport: "stdio", command: ["demo-acp"] },
+    { id: "demo-deep-reviewer", transport: "stdio", command: ["demo-acp"] },
   ],
   assignments: [
     { roleId: "architect", runtimeProfileId: "demo-architect" },
     { roleId: "developer", runtimeProfileId: "demo-developer" },
     { roleId: "checker", runtimeProfileId: "demo-checker" },
+    { roleId: "deep_reviewer", runtimeProfileId: "demo-deep-reviewer" },
   ],
 });
 
@@ -147,6 +149,88 @@ describe("demo orchestration", () => {
         body: expect.stringContaining("## Aigile checker review"),
       },
     ]);
+  });
+
+  it("routes high-risk legacy demo changes to the deep reviewer", async () => {
+    const roles: string[] = [];
+    const requestModes: string[] = [];
+    const runner: RoleRunner = {
+      run: async (input) => {
+        roles.push(input.roleId);
+        if (input.roleId === "architect") {
+          return {
+            id: "agent:LIN-123:architect:architect.plan",
+            kind: "architect.plan",
+            source: "agent",
+            producerRoleId: "architect",
+            payload: {
+              summary: "Plan",
+              scope: ["demo"],
+              acceptanceCriteria: ["deep review routes"],
+              verificationCommands: ["bun run check"],
+              risks: [],
+            },
+          };
+        }
+        if (input.roleId === "developer") {
+          return {
+            id: "agent:LIN-123:developer:developer.attempt",
+            kind: "developer.attempt",
+            source: "agent",
+            producerRoleId: "developer",
+            payload: {
+              summary: "Attempt",
+              changedFiles: ["packages/workflow/src/reducer.ts"],
+              verificationNotes: "Verifier runs.",
+            },
+          };
+        }
+        if (input.roleId === "deep_reviewer") {
+          const request = input.inputArtifacts.at(-1);
+          const payload = request?.payload as { mode?: string; angle?: string } | undefined;
+          requestModes.push(`${payload?.mode}:${payload?.angle}`);
+          return {
+            id: `agent:LIN-123:deep_reviewer:${requestModes.length}`,
+            kind: "checker.verdict",
+            source: "agent",
+            producerRoleId: "deep_reviewer",
+            payload: {
+              verdict:
+                payload?.mode === "angle_pass" && payload.angle === "cross-file"
+                  ? "changes_requested"
+                  : "pass",
+              summary: `${payload?.mode} ${payload?.angle}`,
+              reasons:
+                payload?.mode === "angle_pass" && payload.angle === "cross-file"
+                  ? ["risk-gated deep review ran"]
+                  : [],
+            },
+          };
+        }
+        throw new Error(`unexpected role ${input.roleId}`);
+      },
+    };
+
+    const result = await runDemoIssueWithRoles({
+      issue,
+      registry,
+      runner,
+      createPullRequest: false,
+    });
+
+    expect(roles).toContain("deep_reviewer");
+    expect(roles).not.toContain("checker");
+    expect(requestModes).toEqual([
+      "angle_pass:correctness",
+      "refute_pass:correctness",
+      "angle_pass:removed-behavior",
+      "refute_pass:removed-behavior",
+      "angle_pass:cross-file",
+      "refute_finding:cross-file",
+      "angle_pass:tests-faithful-to-reality",
+      "refute_pass:tests-faithful-to-reality",
+    ]);
+    expect(result.finalState).toBe("developing");
   });
 
   it("publishes checker feedback as a comment when GitHub rejects self-review", async () => {

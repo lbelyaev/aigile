@@ -273,6 +273,83 @@ describe("engine command handlers", () => {
     expect(statuses).toEqual(["Blocked"]);
   });
 
+  it("routes high-risk engine-path changes to the deep reviewer", async () => {
+    const roles: string[] = [];
+    const requestModes: string[] = [];
+    const handlers = createEngineCommandHandlers(
+      buildDeps({
+        runRole: async (roleId, artifacts) => {
+          roles.push(roleId);
+          if (roleId === "deep_reviewer") {
+            const request = artifacts.at(-1);
+            const payload = request?.payload as { mode?: string; angle?: string } | undefined;
+            requestModes.push(`${payload?.mode}:${payload?.angle}`);
+            return {
+              id: `checker:LIN-1:${requestModes.length}`,
+              kind: "checker.verdict",
+              source: "agent",
+              producerRoleId: "deep_reviewer",
+              payload: {
+                verdict:
+                  payload?.mode === "angle_pass" && payload.angle === "cross-file"
+                    ? "changes_requested"
+                    : "pass",
+                summary: `${payload?.mode} ${payload?.angle}`,
+                reasons:
+                  payload?.mode === "angle_pass" && payload.angle === "cross-file"
+                    ? ["missing engine-path wiring"]
+                    : [],
+              },
+            };
+          }
+          throw new Error(`unexpected role ${roleId}`);
+        },
+      }),
+    );
+    const result = await handlers.start_checker_review!({
+      command: { type: "start_checker_review", issueId: "LIN-1" },
+      snapshot: {
+        issueId: "LIN-1",
+        state: "checking",
+        developerAttempts: 1,
+        artifactIds: [],
+      },
+      artifacts: [attemptArtifact("developer:LIN-1", ["packages/workflow/src/engine.ts"])],
+    });
+
+    expect(roles).toContain("deep_reviewer");
+    expect(roles).not.toContain("checker");
+    expect(requestModes).toEqual([
+      "angle_pass:correctness",
+      "refute_pass:correctness",
+      "angle_pass:removed-behavior",
+      "refute_pass:removed-behavior",
+      "angle_pass:cross-file",
+      "refute_finding:cross-file",
+      "angle_pass:tests-faithful-to-reality",
+      "refute_pass:tests-faithful-to-reality",
+    ]);
+    expect(result.event?.type).toBe("checker_requested_changes");
+  });
+
+  it("keeps trivial engine-path changes on the light checker", async () => {
+    const roles: string[] = [];
+    await run(
+      buildDeps({
+        runRole: async (roleId) => {
+          roles.push(roleId);
+          if (roleId === "architect") return planArtifact();
+          if (roleId === "developer") return attemptArtifact("developer:LIN-1", ["README.md"]);
+          if (roleId === "checker") return verdictArtifact("pass");
+          throw new Error(`unexpected role ${roleId}`);
+        },
+      }),
+    );
+
+    expect(roles).toContain("checker");
+    expect(roles).not.toContain("deep_reviewer");
+  });
+
   it("treats a no-change developer attempt + checker pass as satisfied", async () => {
     const statuses: string[] = [];
     const result = await run(
