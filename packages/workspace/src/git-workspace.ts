@@ -13,6 +13,11 @@ export type ExecCommand = (
   options: { cwd: string },
 ) => Promise<ExecResult>;
 
+export interface DefaultExecCommandOptions {
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+}
+
 export interface IssueWorkspaceInput {
   issueKey: string;
   baseBranch: string;
@@ -55,24 +60,94 @@ export interface GitWorkspaceAdapterOptions {
   exec?: ExecCommand;
 }
 
-export const defaultExecCommand: ExecCommand = async (command, args, options) =>
-  new Promise((resolve) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("close", (code) => {
-      resolve({
-        stdout: Buffer.concat(stdout).toString(),
-        stderr: Buffer.concat(stderr).toString(),
-        exitCode: code ?? 1,
+const DEFAULT_EXEC_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_EXEC_MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+
+export const createDefaultExecCommand =
+  ({
+    timeoutMs = DEFAULT_EXEC_TIMEOUT_MS,
+    maxOutputBytes = DEFAULT_EXEC_MAX_OUTPUT_BYTES,
+  }: DefaultExecCommandOptions = {}): ExecCommand =>
+  async (command, args, options) =>
+    new Promise((resolve, reject) => {
+      const child = spawn(command, args, {
+        cwd: options.cwd,
+        stdio: ["ignore", "pipe", "pipe"],
       });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      let totalOutputBytes = 0;
+      let settled = false;
+
+      const cleanup = (): void => {
+        clearTimeout(timeout);
+        child.stdout.off("data", onStdoutData);
+        child.stderr.off("data", onStderrData);
+        child.off("error", onError);
+        child.off("close", onClose);
+      };
+
+      const settle = (callback: () => void): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        callback();
+      };
+
+      const rejectAndKill = (error: Error): void => {
+        if (!child.killed) child.kill();
+        settle(() => reject(error));
+      };
+
+      const appendOutput = (target: Buffer[], chunk: Buffer): void => {
+        if (settled) return;
+        totalOutputBytes += chunk.byteLength;
+        if (totalOutputBytes > maxOutputBytes) {
+          rejectAndKill(
+            new Error(
+              `${command} exceeded max output of ${maxOutputBytes} bytes; process was killed.`,
+            ),
+          );
+          return;
+        }
+        target.push(chunk);
+      };
+
+      const onStdoutData = (chunk: Buffer): void => appendOutput(stdout, chunk);
+      const onStderrData = (chunk: Buffer): void => appendOutput(stderr, chunk);
+      const onError = (error: Error): void => {
+        const errorCode =
+          typeof (error as Error & { code?: unknown }).code === "string"
+            ? (error as Error & { code: string }).code
+            : error.message.includes("not found")
+              ? "ENOENT"
+              : undefined;
+        const errorLabel = errorCode === undefined ? "" : ` (${errorCode})`;
+        settle(() =>
+          reject(new Error(`Failed to spawn ${command}${errorLabel}: ${error.message}`)),
+        );
+      };
+      const onClose = (code: number | null): void => {
+        settle(() =>
+          resolve({
+            stdout: Buffer.concat(stdout).toString(),
+            stderr: Buffer.concat(stderr).toString(),
+            exitCode: code ?? 1,
+          }),
+        );
+      };
+
+      const timeout = setTimeout(() => {
+        rejectAndKill(new Error(`${command} timed out after ${timeoutMs}ms; process was killed.`));
+      }, timeoutMs);
+
+      child.stdout.on("data", onStdoutData);
+      child.stderr.on("data", onStderrData);
+      child.on("error", onError);
+      child.on("close", onClose);
     });
-  });
+
+export const defaultExecCommand: ExecCommand = createDefaultExecCommand();
 
 const safeIssueSlug = (issueKey: string): string => {
   const slug = issueKey
