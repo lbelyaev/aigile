@@ -1,25 +1,28 @@
 import { describe, expect, it } from "bun:test";
-import type { IssueTrackerAdapter } from "@aigile/adapters";
+import { createFakeIssueTrackerAdapter } from "@aigile/adapters";
 import { syncIssueStatusForState } from "./status-sync.js";
-
-const trackerThatRejectsStatus = (): IssueTrackerAdapter => ({
-  getIssue: async () => {
-    throw new Error("getIssue should not be called");
-  },
-  // Real Linear rejects a label with no matching workflow state.
-  updateIssueStatus: async (_key, status) => {
-    throw new Error(`Linear workflow state not found for team LBE: ${status}`);
-  },
-  appendIssueComment: async () => undefined,
-});
 
 describe("syncIssueStatusForState", () => {
   it("does not throw when the tracker rejects an unresolvable status label", async () => {
     const errors: Array<{ state: string; status: string; message: string }> = [];
+    const issueTracker = createFakeIssueTrackerAdapter(
+      [
+        {
+          id: "issue-1",
+          key: "LBE-99",
+          title: "Sync status",
+          description: "",
+          acceptanceCriteria: [],
+          status: "Todo",
+          comments: [],
+        },
+      ],
+      { validStatusLabels: ["In Progress", "Done"] },
+    );
 
     await expect(
       syncIssueStatusForState({
-        issueTracker: trackerThatRejectsStatus(),
+        issueTracker,
         issueKey: "LBE-99",
         state: "escalated",
         issueStatusLabels: { blocked: "Blocked" }, // not a real state on the team

@@ -58,6 +58,28 @@ describe("fake source-of-truth adapters", () => {
     });
   });
 
+  it("rejects unknown issue statuses when valid statuses are configured", async () => {
+    const issues = createFakeIssueTrackerAdapter(
+      [
+        {
+          id: "issue-1",
+          key: "LIN-123",
+          title: "Build the first workflow",
+          description: "Coordinate role-based agents.",
+          acceptanceCriteria: [],
+          status: "Todo",
+          priority: 1,
+          comments: [],
+        },
+      ],
+      { validStatusLabels: ["In Progress", "Done"] },
+    );
+
+    await expect(issues.updateIssueStatus("LIN-123", "Blocked")).rejects.toThrow(
+      /Linear workflow state not found .*: Blocked/,
+    );
+  });
+
   it("lists ready issues without exposing mutable records", async () => {
     const source = createFakeReadyIssueSource([
       {
@@ -360,6 +382,33 @@ describe("fake source-of-truth adapters", () => {
     await expect(codeHost.getPullRequestMergeState(pr.id)).resolves.toEqual({
       status: "merged",
     });
+  });
+
+  it("reports merged fake pull request mergeability as unknown", async () => {
+    const codeHost = createFakeCodeHostAdapter({ mergeability: "mergeable", merged: true });
+    const pr = await codeHost.createPullRequest({
+      owner: "example",
+      repo: "aigile",
+      branch: "aigile/LIN-123",
+      baseBranch: "main",
+      title: "LIN-123 Build workflow",
+      body: "Implements the workflow.",
+    });
+
+    await expect(codeHost.getPullRequestMergeability(pr.id)).resolves.toEqual({
+      status: "unknown",
+    });
+  });
+
+  it("throws when reading an unknown fake pull request", async () => {
+    const codeHost = createFakeCodeHostAdapter();
+
+    await expect(codeHost.getPullRequest("example/aigile#404")).rejects.toThrow(
+      "Pull request not found: example/aigile#404",
+    );
+    await expect(codeHost.getPullRequestMergeability("example/aigile#404")).rejects.toThrow(
+      "Pull request not found: example/aigile#404",
+    );
   });
 
   it.each([

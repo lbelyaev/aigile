@@ -39,15 +39,27 @@ const requirePullRequest = (
   return pullRequest;
 };
 
+export interface FakeIssueTrackerAdapterOptions {
+  validStatusLabels?: readonly string[];
+}
+
 export const createFakeIssueTrackerAdapter = (
   seedIssues: readonly IssueRecord[] = [],
+  options: FakeIssueTrackerAdapterOptions = {},
 ): IssueTrackerAdapter => {
   const issues = new Map(seedIssues.map((issue) => [issue.key, cloneIssue(issue)]));
+  const validStatuses =
+    options.validStatusLabels === undefined
+      ? undefined
+      : new Set([...seedIssues.map((issue) => issue.status), ...options.validStatusLabels]);
 
   return {
     getIssue: async (key) => cloneIssue(requireIssue(issues, key)),
     updateIssueStatus: async (key, status) => {
       const issue = requireIssue(issues, key);
+      if (validStatuses !== undefined && !validStatuses.has(status)) {
+        throw new Error(`Linear workflow state not found for fake tracker: ${status}`);
+      }
       issue.status = status;
     },
     appendIssueComment: async (key, comment) => {
@@ -82,6 +94,7 @@ export const createFakeCodeHostAdapter = (
   let nextNumber = 1;
 
   const mergeabilityFor = (id: string): PullRequestMergeabilityStatus => {
+    if (mergeStateFor(id) === "merged") return "unknown";
     if (options.mergeability === undefined) return "unknown";
     if (typeof options.mergeability === "string") return options.mergeability;
     return options.mergeability[id] ?? "unknown";
