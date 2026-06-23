@@ -184,6 +184,7 @@ describe("demo orchestration", () => {
       registry,
       runner: runnerWithCheckerVerdict("pass"),
       issueTracker,
+      codeHost: createFakeCodeHostAdapter({ mergeability: "mergeable", merged: false }),
       issueStatusLabels: {
         inReview: "Needs Review",
         done: "Completed",

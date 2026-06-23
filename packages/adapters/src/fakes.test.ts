@@ -1,11 +1,35 @@
 import { describe, expect, it } from "bun:test";
 import {
+  createGitHubCliCodeHostAdapter,
   createFakeCodeHostAdapter,
   createFakeIssueTrackerAdapter,
   createFakeReadyIssueSource,
+  type CodeHostAdapter,
+  type GitHubCliExec,
   issueToArtifact,
   pullRequestToArtifact,
 } from "./index.js";
+
+const createPr = (codeHost: CodeHostAdapter) =>
+  codeHost.createPullRequest({
+    owner: "example",
+    repo: "aigile",
+    branch: "aigile/LIN-123",
+    baseBranch: "main",
+    title: "LIN-123 Build workflow",
+    body: "Implements the workflow.",
+  });
+
+const expectUnknownDefaultMergeSignals = async (codeHost: CodeHostAdapter): Promise<void> => {
+  const pr = await createPr(codeHost);
+
+  await expect(codeHost.getPullRequestMergeability(pr.id)).resolves.toMatchObject({
+    status: "unknown",
+  });
+  await expect(codeHost.getPullRequestMergeState(pr.id)).resolves.toMatchObject({
+    status: "unknown",
+  });
+};
 
 describe("fake source-of-truth adapters", () => {
   it("reads issues and records status/comment updates", async () => {
@@ -329,6 +353,31 @@ describe("fake source-of-truth adapters", () => {
     });
   });
 
+  it.each([
+    ["fake adapter", () => createFakeCodeHostAdapter()],
+    [
+      "github-cli adapter",
+      () => {
+        const exec: GitHubCliExec = async (_command, args) => {
+          if (args[0] === "pr" && args[1] === "create") {
+            return {
+              stdout: "https://github.com/example/aigile/pull/1\n",
+              stderr: "",
+              exitCode: 0,
+            };
+          }
+          if (args[0] === "pr" && args[1] === "view") {
+            return { stdout: "{}", stderr: "", exitCode: 0 };
+          }
+          throw new Error(`unexpected gh invocation: ${args.join(" ")}`);
+        };
+        return createGitHubCliCodeHostAdapter({ exec });
+      },
+    ],
+  ])("defaults %s merge signals to unknown", async (_name, createCodeHost) => {
+    await expectUnknownDefaultMergeSignals(createCodeHost());
+  });
+
   it("turns pull request records into workflow artifacts", async () => {
     const codeHost = createFakeCodeHostAdapter();
     const pr = await codeHost.createPullRequest({
@@ -359,7 +408,7 @@ describe("fake source-of-truth adapters", () => {
       body: "Implements the workflow.",
     });
 
-    expect((await codeHost.getPullRequestMergeState(pr.id)).status).toBe("unmerged");
+    expect((await codeHost.getPullRequestMergeState(pr.id)).status).toBe("unknown");
     await codeHost.mergePullRequest(pr.id);
     expect((await codeHost.getPullRequestMergeState(pr.id)).status).toBe("merged");
   });
