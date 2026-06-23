@@ -181,8 +181,39 @@ export interface AcpRoleProgressFormatter {
   flush: () => string[];
 }
 
+// Progress verbosity. "quiet" = lifecycle milestones + things needing attention
+// only; "normal" (default) adds the agent's text output, tool starts, and
+// permission decisions; "verbose" adds raw streams (thinking, subprocess stderr,
+// connection chatter, tool ends) for debugging.
+export type ProgressLevel = "quiet" | "normal" | "verbose";
+
+const LEVEL_RANK: Record<ProgressLevel, number> = { quiet: 0, normal: 1, verbose: 2 };
+
+// Minimum level at which each event type is shown.
+const EVENT_MIN_LEVEL: Record<AcpRoleProgressEvent["type"], ProgressLevel> = {
+  role_started: "quiet",
+  runtime_connected: "quiet",
+  policy_violation: "quiet",
+  approval_request: "quiet",
+  artifact_parsed: "quiet",
+  text_delta: "normal",
+  tool_start: "normal",
+  permission_decision: "normal",
+  runtime_stopped: "normal",
+  runtime_connecting: "verbose",
+  prompt_started: "verbose",
+  thinking_delta: "verbose",
+  runtime_stderr: "verbose",
+  tool_end: "verbose",
+  token_usage: "verbose",
+};
+
+const isEventVisible = (level: ProgressLevel, type: AcpRoleProgressEvent["type"]): boolean =>
+  LEVEL_RANK[level] >= LEVEL_RANK[EVENT_MIN_LEVEL[type]];
+
 export interface AcpRoleProgressFormatterOptions {
   textFlushThreshold?: number;
+  level?: ProgressLevel;
 }
 
 const progressKey = (
@@ -202,6 +233,7 @@ export const createAcpRoleProgressFormatter = (
   options: AcpRoleProgressFormatterOptions = {},
 ): AcpRoleProgressFormatter => {
   const textFlushThreshold = options.textFlushThreshold ?? 160;
+  const level = options.level ?? "normal";
   const buffers = new Map<string, { issueId: string; roleId: string; text: string }>();
 
   const flushKey = (key: string): string[] => {
@@ -215,6 +247,11 @@ export const createAcpRoleProgressFormatter = (
   return {
     format: (event) => {
       const key = progressKey(event);
+      // Drop events below the configured level, but still flush any buffered text
+      // we already committed to showing so it is not lost behind a suppressed event.
+      if (!isEventVisible(level, event.type)) {
+        return flushKey(key);
+      }
       if (event.type !== "text_delta") {
         return [...flushKey(key), formatAcpRoleProgress(event)].filter(
           (line) => line.trim().length > 0,
@@ -302,6 +339,7 @@ export interface CliArgs {
   maxPolls?: number;
   startRun?: boolean;
   retryEscalated?: boolean;
+  progressLevel?: ProgressLevel;
 }
 
 export interface ProductCliResolutionOptions {
@@ -705,6 +743,7 @@ export interface LinearIssueWorkflowCliInput {
   verification?: ProductVerificationPolicy;
   runStatePath?: string;
   retryEscalated?: boolean;
+  progressLevel?: ProgressLevel;
 }
 
 const formatListSection = (items: readonly string[]): string[] =>
@@ -860,7 +899,9 @@ export const runLinearIssueWorkflowCli = async (
     );
     await tracker.appendIssueComment(input.issueKey, body);
   };
-  const progressFormatter = createAcpRoleProgressFormatter();
+  const progressFormatter = createAcpRoleProgressFormatter(
+    input.progressLevel === undefined ? {} : { level: input.progressLevel },
+  );
   runInput.runner = createAcpRoleRunner({
     onProgress: (event) => {
       for (const line of progressFormatter.format(event)) {
@@ -1123,7 +1164,17 @@ const parsePositiveInteger = (value: string, name: string): number => {
   return parsed;
 };
 
+const resolveProgressLevel = (args: readonly string[]): ProgressLevel | undefined => {
+  const quiet = args.includes("--quiet");
+  const verbose = args.includes("--verbose");
+  if (quiet && verbose) throw new Error("choose only one of --quiet or --verbose");
+  if (quiet) return "quiet";
+  if (verbose) return "verbose";
+  return undefined;
+};
+
 export const parseCliArgs = (args: readonly string[]): CliArgs => {
+  const progressLevel = resolveProgressLevel(args);
   if (args[0] === "watch") {
     const preflightOnly = args.includes("--preflight");
     const pollInterval = optionValue(args, "--poll-interval");
@@ -1186,6 +1237,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
         throw new Error("watch --start-run requires --dry-run or --agent-write");
       }
     }
+    if (progressLevel !== undefined) parsed.progressLevel = progressLevel;
     return parsed;
   }
   if (args[0] === "status") {
@@ -1239,11 +1291,13 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
       throw new Error("choose only one of --dry-run or --agent-write");
     }
     if (args.includes("--preflight-only")) parsed.preflightOnly = true;
+    if (progressLevel !== undefined) parsed.progressLevel = progressLevel;
     return parsed;
   }
   const parsed: CliArgs = { mode: selectDemoMode(args) };
   const runtimeConfigPath = optionValue(args, "--runtime-config");
   if (runtimeConfigPath !== undefined) parsed.runtimeConfigPath = runtimeConfigPath;
+  if (progressLevel !== undefined) parsed.progressLevel = progressLevel;
   return parsed;
 };
 
@@ -1399,6 +1453,7 @@ const main = async (): Promise<void> => {
                 ? {}
                 : { verification: watchContext.verification }),
               ...(options.retryEscalated === true ? { retryEscalated: true } : {}),
+              ...(args.progressLevel === undefined ? {} : { progressLevel: args.progressLevel }),
               ...publishRunInput,
               onProgressLine: (line) => process.stderr.write(`${line}\n`),
             });
@@ -1521,6 +1576,7 @@ const main = async (): Promise<void> => {
       ...(runContext?.agentWrite === true ? { agentWrite: true } : {}),
       ...(runContext?.verification === undefined ? {} : { verification: runContext.verification }),
       ...(args.retryEscalated === true ? { retryEscalated: true } : {}),
+      ...(args.progressLevel === undefined ? {} : { progressLevel: args.progressLevel }),
       runStatePath: join(
         runContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`,
         "..",
@@ -1587,7 +1643,9 @@ const main = async (): Promise<void> => {
     const runtimeConfig = loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8"));
     runInput.registry = runtimeConfigToRegistry(runtimeConfig);
     runInput.issueStatusLabels = runtimeConfig.issueStatusLabels;
-    const progressFormatter = createAcpRoleProgressFormatter();
+    const progressFormatter = createAcpRoleProgressFormatter(
+      args.progressLevel === undefined ? {} : { level: args.progressLevel },
+    );
     runInput.runner = createAcpRoleRunner({
       onProgress: (event) => {
         for (const line of progressFormatter.format(event)) {

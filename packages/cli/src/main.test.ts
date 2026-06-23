@@ -382,6 +382,51 @@ describe("cli formatting", () => {
     expect(formatter.flush()).toEqual([]);
   });
 
+  it("quiet level emits only lifecycle milestones", () => {
+    const formatter = createAcpRoleProgressFormatter({ level: "quiet" });
+    const base = { roleId: "developer", issueId: "LIN-9", runtimeId: "codex-acp" };
+    expect(formatter.format({ type: "role_started", ...base })).toEqual([
+      "[LIN-9 developer] starting codex-acp",
+    ]);
+    expect(formatter.format({ type: "text_delta", ...base, delta: "hello world" })).toEqual([]);
+    expect(formatter.format({ type: "tool_start", ...base, tool: "Bash" })).toEqual([]);
+    expect(formatter.format({ type: "thinking_delta", ...base, delta: "x" })).toEqual([]);
+    expect(
+      formatter.format({ type: "artifact_parsed", ...base, artifactKind: "developer.attempt" }),
+    ).toEqual(["[LIN-9 developer] artifact parsed: developer.attempt"]);
+    expect(formatter.flush()).toEqual([]);
+  });
+
+  it("normal level (default) drops thinking and stderr noise but keeps text and tools", () => {
+    const formatter = createAcpRoleProgressFormatter();
+    const base = { roleId: "developer", issueId: "LIN-9", runtimeId: "codex-acp" };
+    expect(formatter.format({ type: "thinking_delta", ...base, delta: "x" })).toEqual([]);
+    expect(formatter.format({ type: "runtime_stderr", ...base, chunk: "noise\n" })).toEqual([]);
+    expect(formatter.format({ type: "tool_start", ...base, tool: "Bash" })).toEqual([
+      "[LIN-9 developer] tool started: Bash",
+    ]);
+  });
+
+  it("verbose level emits raw streams suppressed at normal", () => {
+    const formatter = createAcpRoleProgressFormatter({ level: "verbose" });
+    const base = { roleId: "developer", issueId: "LIN-9", runtimeId: "codex-acp" };
+    expect(formatter.format({ type: "thinking_delta", ...base, delta: "x" })).toEqual([
+      "[LIN-9 developer] thinking",
+    ]);
+    expect(formatter.format({ type: "runtime_stderr", ...base, chunk: "warn: foo\n" })).toEqual([
+      "[LIN-9 developer] stderr: warn: foo",
+    ]);
+  });
+
+  it("parses --quiet and --verbose into a progress level", () => {
+    expect(parseCliArgs(["run", "LIN-1", "--quiet"]).progressLevel).toBe("quiet");
+    expect(parseCliArgs(["run", "LIN-1", "--verbose"]).progressLevel).toBe("verbose");
+    expect(parseCliArgs(["run", "LIN-1"]).progressLevel).toBeUndefined();
+    expect(() => parseCliArgs(["run", "LIN-1", "--quiet", "--verbose"])).toThrow(
+      /only one of --quiet/,
+    );
+  });
+
   it("selects the ACP-agent demo mode from argv", () => {
     expect(selectDemoMode(["demo:agents"])).toBe("agents");
     expect(selectDemoMode(["demo:workspace"])).toBe("workspace");
