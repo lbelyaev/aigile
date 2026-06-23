@@ -160,6 +160,7 @@ describe("workspace-aware demo orchestration", () => {
 
   it("adds a dry-run execution policy artifact to every role handoff", async () => {
     const seenArtifactKinds: Record<string, string[]> = {};
+    const seenPolicyModes: Record<string, unknown> = {};
     const registry = createRoleRuntimeRegistry({
       runtimes: [{ id: "custom-runtime", transport: "stdio", command: ["custom-acp"] }],
       assignments: [
@@ -171,6 +172,11 @@ describe("workspace-aware demo orchestration", () => {
     const runner: RoleRunner = {
       run: async (input) => {
         seenArtifactKinds[input.roleId] = input.inputArtifacts.map((artifact) => artifact.kind);
+        seenPolicyModes[input.roleId] = (
+          input.inputArtifacts.find((artifact) => artifact.kind === "execution.policy")?.payload as
+            | { mode?: unknown }
+            | undefined
+        )?.mode;
         if (input.roleId === "architect") {
           return {
             id: "agent:LIN-123:architect:architect.plan",
@@ -256,6 +262,9 @@ describe("workspace-aware demo orchestration", () => {
     expect(seenArtifactKinds.architect).toContain("execution.policy");
     expect(seenArtifactKinds.developer).toContain("execution.policy");
     expect(seenArtifactKinds.checker).toContain("execution.policy");
+    expect(seenPolicyModes.architect).toBe("dry_run");
+    expect(seenPolicyModes.developer).toBe("dry_run");
+    expect(seenPolicyModes.checker).toBe("review");
   });
 
   it("runs workspace verification after the developer role", async () => {

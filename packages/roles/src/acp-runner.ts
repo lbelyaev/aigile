@@ -203,12 +203,16 @@ const EXPECTED_ARTIFACT_KIND_BY_ROLE: Record<string, string> = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-type ExecutionPolicyMode = "dry_run" | "agent_write";
+type ExecutionPolicyMode = "dry_run" | "agent_write" | "review";
 
 const executionPolicyMode = (input: RoleRunInput): ExecutionPolicyMode | undefined => {
   for (const artifact of input.inputArtifacts) {
     if (artifact.kind !== "execution.policy" || !isRecord(artifact.payload)) continue;
-    if (artifact.payload.mode === "dry_run" || artifact.payload.mode === "agent_write") {
+    if (
+      artifact.payload.mode === "dry_run" ||
+      artifact.payload.mode === "agent_write" ||
+      artifact.payload.mode === "review"
+    ) {
       return artifact.payload.mode;
     }
   }
@@ -232,7 +236,9 @@ const commandSegments = (command: string): string[] =>
     .filter((segment) => segment.length > 0);
 
 const gitSubcommandPattern = (subcommands: string): RegExp =>
-  new RegExp(`^git(?:\\s+-c\\s+(?:"[^"]+"|'[^']+'|\\S+))*\\s+(?:${subcommands})\\b`);
+  new RegExp(
+    `^git(?:\\s+(?:-c\\s+(?:"[^"]+"|'[^']+'|\\S+)|-C\\s+(?:"[^"]+"|'[^']+'|\\S+)))*\\s+(?:${subcommands})\\b`,
+  );
 
 const toolCommand = (tool: string, params: unknown): string => {
   if (isRecord(params) && typeof params.command === "string") return params.command;
@@ -301,19 +307,45 @@ const isReadOnlyPermission = (request: AcpPermissionRequest): boolean => {
   return [
     /^pwd$/,
     /^ls\b/,
-    /^git\s+(status|diff|log|show|branch)\b/,
+    gitSubcommandPattern("status|diff|log|show|branch"),
     /^cat\b/,
     /^sed\s+-n\b/,
     /^head\b/,
     /^tail\b/,
     /^rg\b/,
+    /^grep\b/,
     /^find\b/,
     /^test\b/,
   ].some((pattern) => pattern.test(command));
 };
 
+const isReviewAllowedExecution = (request: AcpPermissionRequest): boolean => {
+  const command = extractCommand(request).trim().toLowerCase();
+  return commandSegments(command).every((segment) =>
+    [
+      /^cd\b/,
+      /^pwd$/,
+      /^ls\b/,
+      gitSubcommandPattern("status|diff|log|show|branch"),
+      /^cat\b/,
+      /^sed\s+-n\b/,
+      /^head\b/,
+      /^tail\b/,
+      /^rg\b/,
+      /^grep\b/,
+      /^bun\s+(test|run\s+(check|typecheck|test|test:e2e|test:e2e:static|test:e2e:real))\b/,
+      /^npm\s+(test|run\s+(check|typecheck|test))\b/,
+      /^pnpm\s+(test|run\s+(check|typecheck|test))\b/,
+      /^yarn\s+(test|run\s+(check|typecheck|test))\b/,
+      /^npx\s+tsc\b/,
+      /^bunx\s+tsc\b/,
+      /^tsc\b/,
+    ].some((pattern) => pattern.test(segment)),
+  );
+};
+
 // ACP tool-call kinds (agent-defined): file-mutating vs. read-only categories.
-const WRITE_TOOL_KINDS = new Set(["edit", "delete", "move"]);
+const WRITE_TOOL_KINDS = new Set(["edit", "write", "delete", "move"]);
 const READ_TOOL_KINDS = new Set(["read", "search", "fetch"]);
 
 const isEditToolName = (tool: string): boolean =>
@@ -323,10 +355,11 @@ const isEditToolName = (tool: string): boolean =>
 // otherwise allow ordinary commands (tests, typecheck, builds, targeted reads).
 const decideExecutePermission = (
   request: AcpPermissionRequest,
-  mode: "dry_run" | "agent_write",
+  mode: ExecutionPolicyMode,
 ): PermissionDecision => {
-  if (isBroadDiscoveryPermission(request)) return "reject_once";
   if (isWriteLikePermission(request)) return "reject_once";
+  if (mode === "review") return isReviewAllowedExecution(request) ? "allow_once" : "reject_once";
+  if (isBroadDiscoveryPermission(request)) return "reject_once";
   if (mode === "dry_run") return isReadOnlyPermission(request) ? "allow_once" : "reject_once";
   return "allow_once";
 };
@@ -346,7 +379,9 @@ const buildExecutionPolicyPermissionDecision = (
       if (WRITE_TOOL_KINDS.has(kind)) return mode === "agent_write" ? "allow_once" : "reject_once";
       if (kind === "execute") return decideExecutePermission(request, mode);
       if (READ_TOOL_KINDS.has(kind))
-        return isBroadDiscoveryPermission(request) ? "reject_once" : "allow_once";
+        return mode === "review" || !isBroadDiscoveryPermission(request)
+          ? "allow_once"
+          : "reject_once";
       // Unknown kind: fall through to label/command heuristics below.
     }
 
@@ -449,7 +484,7 @@ export const createAcpRoleRunner = (options: AcpRoleRunnerOptions = {}): RoleRun
             options.onProgress?.({ type: "tool_start", ...progressBase(input), tool: event.tool });
             const command = toolCommand(event.tool, event.params);
             const mode = executionPolicyMode(input);
-            if (mode !== undefined && isBroadDiscoveryCommand(command)) {
+            if (mode !== undefined && mode !== "review" && isBroadDiscoveryCommand(command)) {
               policyViolation = { reason: "broad_discovery", detail: command };
               options.onProgress?.({
                 type: "policy_violation",
