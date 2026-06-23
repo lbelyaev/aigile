@@ -466,7 +466,6 @@ describe("GitHub CLI code host adapter", () => {
               number: 7,
               url: "https://github.com/o/r/pull/7",
               state: "OPEN",
-              merged: false,
             }),
             stderr: "",
             exitCode: 0,
@@ -490,7 +489,11 @@ describe("GitHub CLI code host adapter", () => {
   it("reports a merged branch pull request", async () => {
     const adapter = createGitHubCliCodeHostAdapter({
       exec: async () => ({
-        stdout: JSON.stringify({ number: 7, url: "u", state: "MERGED", merged: true }),
+        stdout: JSON.stringify({
+          number: 7,
+          url: "u",
+          state: "MERGED",
+        }),
         stderr: "",
         exitCode: 0,
       }),
