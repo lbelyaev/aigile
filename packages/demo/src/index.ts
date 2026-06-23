@@ -24,6 +24,8 @@ export { createEngineCommandHandlers } from "./engine-handlers.js";
 
 export type { EngineHandlerDeps } from "./engine-handlers.js";
 
+export { issueStatusLabelForState } from "./status-sync.js";
+
 export { resolveMergePolicy } from "./merge-policy.js";
 
 export type { MergePolicy } from "./merge-policy.js";

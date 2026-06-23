@@ -53,6 +53,25 @@ describe("workflow engine", () => {
     expect(persisted?.events.at(-1)?.type).toBe("merge_completed");
   });
 
+  it("dispatches the terminal command once before returning and skips it on terminal resume", async () => {
+    const store = createInMemoryRunStore();
+    const terminalCommands: string[] = [];
+    const handlers = {
+      ...baseHandlers(async () => ({ event: ev("verification_passed") })),
+      sync_sources_of_truth: async ({ snapshot }) => {
+        terminalCommands.push(snapshot.state);
+        return {};
+      },
+    } satisfies WorkflowCommandHandlers;
+
+    const first = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+    const second = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+
+    expect(first.outcome).toBe("merged");
+    expect(second.outcome).toBe("merged");
+    expect(terminalCommands).toEqual(["merged"]);
+  });
+
   it("notifies on each state change including bootstrap and terminal states", async () => {
     const store = createInMemoryRunStore();
     const states: WorkflowState[] = [];

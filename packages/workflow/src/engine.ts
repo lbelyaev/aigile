@@ -181,6 +181,7 @@ export const runWorkflowEngine = async (
   let snapshot: WorkflowSnapshot;
   let artifacts: WorkflowArtifact[];
   let pending: WorkflowCommand[];
+  let dispatchStopCommand = false;
 
   const persisted = await store.load(issueId);
   if (persisted !== undefined && persisted.events.length > 0) {
@@ -238,6 +239,16 @@ export const runWorkflowEngine = async (
       artifacts: [...artifacts],
     });
     pending = result.commands;
+    dispatchStopCommand = isStopState(snapshot.state);
+  }
+
+  if (isStopState(snapshot.state) && dispatchStopCommand) {
+    const command = pending[0];
+    const handler = command === undefined ? undefined : handlers[command.type];
+    if (command !== undefined && handler !== undefined) {
+      const output = await handler({ command, snapshot, artifacts: [...artifacts] });
+      if (output.artifact !== undefined) artifacts = mergeArtifact(artifacts, output.artifact);
+    }
   }
 
   return buildResult(snapshot, artifacts, outcomeForState(snapshot.state), pending[0]?.reason);

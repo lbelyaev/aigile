@@ -412,7 +412,7 @@ describe("workspace-aware demo orchestration", () => {
         id: "issue-777",
         key: "LIN-777",
         title: "Review feedback",
-        description: "manual merge",
+        description: "aigile-merge: manual",
         acceptanceCriteria: [],
         status: "todo",
         comments: [],
@@ -836,7 +836,7 @@ describe("durable engine-backed workspace run", () => {
     }
   });
 
-  it("updates issue status as the engine progresses through a successful run", async () => {
+  it("updates terminal issue status through the engine command", async () => {
     const directory = await mkdtemp(join(tmpdir(), "aigile-engine-status-"));
     const statuses: string[] = [];
     try {
@@ -881,7 +881,7 @@ describe("durable engine-backed workspace run", () => {
       });
 
       expect(result.finalState).toBe("merged");
-      expect(statuses).toEqual(["In Progress", "In Review", "Done"]);
+      expect(statuses).toEqual(["Done"]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -932,7 +932,7 @@ describe("durable engine-backed workspace run", () => {
       });
 
       expect(result.finalState).toBe("escalated");
-      expect(statuses).toEqual(["In Progress", "Blocked"]);
+      expect(statuses).toEqual(["Blocked"]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

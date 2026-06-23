@@ -5,6 +5,7 @@ import {
   issueToArtifact,
   type CodeHostAdapter,
   type IssueRecord,
+  type IssueTrackerAdapter,
 } from "@aigile/adapters";
 import { createInMemoryRunStore, runWorkflowEngine } from "@aigile/workflow";
 import { createEngineCommandHandlers, type EngineHandlerDeps } from "./engine-handlers.js";
@@ -77,6 +78,10 @@ const buildDeps = (
     verify: overrides.verify ?? (async () => verificationArtifact("passed")),
     publish: overrides.publish ?? (async () => {}),
     ...(overrides.mergePolicy === undefined ? {} : { mergePolicy: overrides.mergePolicy }),
+    ...(overrides.issueTracker === undefined ? {} : { issueTracker: overrides.issueTracker }),
+    ...(overrides.issueStatusLabels === undefined
+      ? {}
+      : { issueStatusLabels: overrides.issueStatusLabels }),
   };
 };
 
@@ -88,6 +93,19 @@ const run = (deps: EngineHandlerDeps) =>
     initialArtifacts: [issueToArtifact(deps.issue)],
   });
 
+const strictStatusTracker = (statuses: string[], comments: string[] = []): IssueTrackerAdapter => ({
+  getIssue: async () => makeIssue(),
+  updateIssueStatus: async (_key, status) => {
+    if (!["Todo", "In Review", "Done", "Blocked"].includes(status)) {
+      throw new Error(`unresolved state name: ${status}`);
+    }
+    statuses.push(status);
+  },
+  appendIssueComment: async (_key, comment) => {
+    comments.push(comment);
+  },
+});
+
 describe("engine command handlers", () => {
   it("auto-merges a green PR end to end", async () => {
     let published = 0;
@@ -96,6 +114,14 @@ describe("engine command handlers", () => {
     expect(result.outcome).toBe("merged");
     expect(result.snapshot.state).toBe("merged");
     expect(published).toBe(1);
+  });
+
+  it("writes merged status through the terminal FSM command exactly once", async () => {
+    const statuses: string[] = [];
+    const result = await run(buildDeps({ issueTracker: strictStatusTracker(statuses) }));
+
+    expect(result.outcome).toBe("merged");
+    expect(statuses).toEqual(["Done"]);
   });
 
   it("auto-merges when GitHub rejects an approving review from the PR author", async () => {
@@ -125,7 +151,7 @@ describe("engine command handlers", () => {
     const deps = buildDeps({ codeHost, publish: async () => void (publishes += 1) });
     const handlers = createEngineCommandHandlers(deps);
 
-    // First merge attempt: PR is created but not mergeable -> pause.
+    // First merge attempt: PR is created but terminally not mergeable.
     const ctx = {
       command: { type: "merge_pull_request" as const, issueId: "LIN-1" },
       snapshot: {
@@ -137,18 +163,18 @@ describe("engine command handlers", () => {
       artifacts: [],
     };
     const first = await handlers.merge_pull_request!(ctx);
-    expect(first.event).toBeUndefined(); // paused
+    expect(first.event?.type).toBe("publish_failed");
     expect(publishes).toBe(1);
     expect((await codeHost.getPullRequest("o/r#1")).number).toBe(1);
 
     // Re-run (resume): must NOT publish again or create a second PR.
     const second = await handlers.merge_pull_request!(ctx);
-    expect(second.event).toBeUndefined();
+    expect(second.event?.type).toBe("publish_failed");
     expect(publishes).toBe(1);
     await expect(codeHost.getPullRequest("o/r#2")).rejects.toThrow(); // no second PR
   });
 
-  it("completes the merge on resume once the existing PR is mergeable", async () => {
+  it("completes the merge on resume once the existing PR is merged", async () => {
     const codeHost = createFakeCodeHostAdapter({ mergeability: "conflicting" });
     const deps = buildDeps({ codeHost });
     const handlers = createEngineCommandHandlers(deps);
@@ -162,8 +188,8 @@ describe("engine command handlers", () => {
       },
       artifacts: [],
     };
-    const paused = await handlers.merge_pull_request!(ctx);
-    expect(paused.event).toBeUndefined();
+    const blocked = await handlers.merge_pull_request!(ctx);
+    expect(blocked.event?.type).toBe("publish_failed");
 
     // The PR becomes merged externally; resume should report merge_completed.
     await codeHost.mergePullRequest("o/r#1");
@@ -183,11 +209,18 @@ describe("engine command handlers", () => {
     expect((await codeHost.getPullRequestMergeState("o/r#1")).status).toBe("unknown");
   });
 
-  it("pauses when the PR is not yet mergeable", async () => {
+  it("escalates when the PR is terminally blocked by mergeability", async () => {
     const codeHost = createFakeCodeHostAdapter({ mergeability: "conflicting", merged: false });
-    const result = await run(buildDeps({ codeHost }));
+    const statuses: string[] = [];
+    const comments: string[] = [];
+    const result = await run(
+      buildDeps({ codeHost, issueTracker: strictStatusTracker(statuses, comments) }),
+    );
 
-    expect(result.outcome).toBe("paused");
+    expect(result.outcome).toBe("escalated");
+    expect(result.snapshot.state).toBe("escalated");
+    expect(statuses).toEqual(["Blocked"]);
+    expect(comments.at(-1)).toContain("pull request has merge conflicts");
     expect((await codeHost.getPullRequestMergeState("o/r#1")).status).toBe("unmerged");
   });
 
@@ -226,8 +259,10 @@ describe("engine command handlers", () => {
   });
 
   it("escalates when the checker escalates", async () => {
+    const statuses: string[] = [];
     const result = await run(
       buildDeps({
+        issueTracker: strictStatusTracker(statuses),
         runRole: async (roleId) =>
           roleId === "checker" ? verdictArtifact("escalate") : defaultRunRole(roleId),
       }),
@@ -235,16 +270,40 @@ describe("engine command handlers", () => {
 
     expect(result.outcome).toBe("escalated");
     expect(result.reason).toBe("looks good");
+    expect(statuses).toEqual(["Blocked"]);
   });
 
   it("treats a no-change developer attempt + checker pass as satisfied", async () => {
+    const statuses: string[] = [];
     const result = await run(
       buildDeps({
+        issueTracker: strictStatusTracker(statuses),
         runRole: async (roleId) =>
           roleId === "developer" ? attemptArtifact("developer:LIN-1", []) : defaultRunRole(roleId),
       }),
     );
 
     expect(result.outcome).toBe("satisfied");
+    expect(statuses).toEqual(["Done"]);
+  });
+
+  it("reverts cancelled runs to the original issue status through the shared label map", async () => {
+    const statuses: string[] = [];
+    const handlers = createEngineCommandHandlers(
+      buildDeps({ issueTracker: strictStatusTracker(statuses) }),
+    );
+
+    await handlers.sync_sources_of_truth!({
+      command: { type: "sync_sources_of_truth", issueId: "LIN-1" },
+      snapshot: {
+        issueId: "LIN-1",
+        state: "cancelled",
+        developerAttempts: 0,
+        artifactIds: [],
+      },
+      artifacts: [],
+    });
+
+    expect(statuses).toEqual(["Todo"]);
   });
 });
