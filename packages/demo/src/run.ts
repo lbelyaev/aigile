@@ -823,6 +823,11 @@ export const runDemoIssueWithWorkspace = async (input: DemoWorkspaceInput): Prom
     baseBranch: input.baseBranch ?? "main",
   });
   const verifier = createLocalVerifier(input.exec === undefined ? {} : { exec: input.exec });
+  const publishTarget = input.pullRequestTarget ?? {
+    owner: "aigile",
+    repo: "aigile",
+    baseBranch: input.baseBranch ?? "main",
+  };
 
   const roleInput: DemoWithRolesInput = {
     issue: input.issue,
@@ -888,6 +893,8 @@ export const runDemoIssueWithWorkspace = async (input: DemoWorkspaceInput): Prom
         worktreePath: workspace.worktreePath,
         branchName: workspace.branchName,
         remote: input.remote ?? "origin",
+        owner: publishTarget.owner,
+        repo: publishTarget.repo,
         commitMessage: `${input.issue.key} ${input.issue.title}`,
       });
     };
@@ -959,6 +966,8 @@ export const runWorkspaceIssueWithEngine = async (
         worktreePath: workspace.worktreePath,
         branchName: workspace.branchName,
         remote,
+        owner: target.owner,
+        repo: target.repo,
         commitMessage: `${input.issue.key} ${input.issue.title}`,
       });
     },

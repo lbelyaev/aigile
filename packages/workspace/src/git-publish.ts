@@ -3,7 +3,9 @@ import { defaultExecCommand, type ExecCommand, type ExecResult } from "./git-wor
 export interface GitPublishInput {
   worktreePath: string;
   branchName: string;
-  remote: string;
+  remote?: string;
+  owner?: string;
+  repo?: string;
   commitMessage: string;
 }
 
@@ -19,6 +21,17 @@ const assertSuccess = (result: ExecResult, operation: string): void => {
   if (result.exitCode !== 0) {
     throw new Error(`${operation} failed (${result.exitCode}): ${result.stderr || result.stdout}`);
   }
+};
+
+const githubHttpsUrl = (owner: string, repo: string): string =>
+  `https://github.com/${owner}/${repo}.git`;
+
+const pushTargetFor = (input: GitPublishInput): string => {
+  if (input.owner !== undefined && input.repo !== undefined) {
+    return githubHttpsUrl(input.owner, input.repo);
+  }
+  if (input.remote !== undefined) return input.remote;
+  throw new Error("git push target requires owner/repo or remote");
 };
 
 export const createGitPublisher = (options: GitPublisherOptions = {}): GitPublisher => {
@@ -38,10 +51,23 @@ export const createGitPublisher = (options: GitPublisherOptions = {}): GitPublis
       } else {
         assertSuccess(stagedDiff, "git diff --cached --quiet");
       }
+      const pushTarget = pushTargetFor(input);
       assertSuccess(
-        await exec("git", ["push", "-u", input.remote, input.branchName], {
-          cwd: input.worktreePath,
-        }),
+        await exec(
+          "git",
+          [
+            "-c",
+            "credential.helper=",
+            "-c",
+            "credential.helper=!gh auth git-credential",
+            "push",
+            pushTarget,
+            `HEAD:${input.branchName}`,
+          ],
+          {
+            cwd: input.worktreePath,
+          },
+        ),
         "git push",
       );
     },

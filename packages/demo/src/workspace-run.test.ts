@@ -597,7 +597,9 @@ describe("workspace-aware demo orchestration", () => {
       publish: true,
       publisher: {
         publish: async (input) => {
-          steps.push(`publish:${input.branchName}:${input.remote}:${input.commitMessage}`);
+          steps.push(
+            `publish:${input.branchName}:${input.remote}:${input.owner}/${input.repo}:${input.commitMessage}`,
+          );
         },
       },
       codeHost: {
@@ -654,7 +656,7 @@ describe("workspace-aware demo orchestration", () => {
 
     expect(result.pullRequest?.url).toBe("https://github.local/aigile/aigile/pull/7");
     expect(steps).toEqual([
-      "publish:aigile/LIN-123:origin:LIN-123 Publish branch",
+      "publish:aigile/LIN-123:origin:aigile/aigile:LIN-123 Publish branch",
       "pr:aigile/LIN-123",
     ]);
   });
