@@ -3,9 +3,6 @@
   "workspaces": {
     "": {
       "name": "aigile",
-      "dependencies": {
-        "date-fns": "^4.4.0",
-      },
       "devDependencies": {
         "@eslint/js": "^10.0.1",
         "@types/bun": "^1.2.21",
@@ -36,8 +33,12 @@
         "@aigile/adapters": "workspace:*",
         "@aigile/config": "workspace:*",
         "@aigile/demo": "workspace:*",
+        "@aigile/roles": "workspace:*",
+        "@aigile/types": "workspace:*",
         "@aigile/watch": "workspace:*",
+        "@aigile/workflow": "workspace:*",
         "@aigile/workspace": "workspace:*",
+        "date-fns": "^4.4.0",
       },
     },
     "packages/config": {
@@ -66,6 +67,7 @@
       "name": "@aigile/restate",
       "version": "0.0.0",
       "dependencies": {
+        "@aigile/types": "workspace:*",
         "@aigile/workflow": "workspace:*",
         "@restatedev/restate-sdk": "^1.14.5",
       },
