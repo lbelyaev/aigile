@@ -818,11 +818,15 @@ const getPublishedMergeabilityStatus = async (
   }
 };
 
+const syncErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 const syncLinearIssueWorkflowResult = async (
   input: LinearIssueWorkflowCliInput,
   result: DemoResult,
   codeHost?: CodeHostAdapter,
   issueStatusLabels: IssueStatusLabels = DEFAULT_ISSUE_STATUS_LABELS,
+  lastSyncedIssueStatus?: string,
 ): Promise<DemoResult> => {
   if (input.dryRun === true) return result;
   const shouldSyncSatisfied = result.finalState === "satisfied";
@@ -854,20 +858,30 @@ const syncLinearIssueWorkflowResult = async (
           ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
         },
   );
-  await tracker.updateIssueStatus(
-    input.issueKey,
-    markDone ? issueStatusLabels.done : issueStatusLabels.inReview,
-  );
-  await tracker.appendIssueComment(
-    input.issueKey,
-    shouldSyncSatisfied
-      ? alreadySatisfiedComment(result)
-      : publishedMerged
-        ? publishedComment(result)
-        : publishedBlocked
-          ? blockedPublishedComment(result, mergeabilityStatus)
-          : publishedInReviewComment(result),
-  );
+  const targetStatus = markDone ? issueStatusLabels.done : issueStatusLabels.inReview;
+  if (targetStatus !== lastSyncedIssueStatus) {
+    try {
+      await tracker.updateIssueStatus(input.issueKey, targetStatus);
+    } catch (error) {
+      input.onProgressLine?.(
+        `Linear final status sync failed for ${input.issueKey} (${targetStatus}): ${syncErrorMessage(error)}`,
+      );
+    }
+  }
+  const comment = shouldSyncSatisfied
+    ? alreadySatisfiedComment(result)
+    : publishedMerged
+      ? publishedComment(result)
+      : publishedBlocked
+        ? blockedPublishedComment(result, mergeabilityStatus)
+        : publishedInReviewComment(result);
+  try {
+    await tracker.appendIssueComment(input.issueKey, comment);
+  } catch (error) {
+    input.onProgressLine?.(
+      `Linear final comment sync failed for ${input.issueKey}: ${syncErrorMessage(error)}`,
+    );
+  }
   return syncResult;
 };
 
@@ -896,8 +910,9 @@ export const runLinearIssueWorkflowCli = async (
     registry: runtimeConfigToRegistry(runtimeConfig),
     issueStatusLabels: runtimeConfig.issueStatusLabels,
   };
+  let lastSyncedIssueStatus: string | undefined;
   if (input.dryRun !== true) {
-    runInput.issueTracker = createLinearGraphqlIssueTrackerAdapter(
+    const issueTracker = createLinearGraphqlIssueTrackerAdapter(
       input.fetchGraphql === undefined
         ? {
             apiKey: input.apiKey,
@@ -909,6 +924,14 @@ export const runLinearIssueWorkflowCli = async (
             ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
           },
     );
+    runInput.issueTracker = {
+      getIssue: issueTracker.getIssue,
+      updateIssueStatus: async (key, status) => {
+        await issueTracker.updateIssueStatus(key, status);
+        lastSyncedIssueStatus = status;
+      },
+      appendIssueComment: issueTracker.appendIssueComment,
+    };
     runInput.onIssueStatusUpdateError = (error, state, status) => {
       const message = error instanceof Error ? error.message : String(error);
       input.onProgressLine?.(
@@ -976,6 +999,7 @@ export const runLinearIssueWorkflowCli = async (
     result,
     runInput.codeHost,
     runtimeConfig.issueStatusLabels,
+    lastSyncedIssueStatus,
   );
   const formattedResult = formatDemoResult(syncedResult);
   return dryRunPlanOutputs.length === 0

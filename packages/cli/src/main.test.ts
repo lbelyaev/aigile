@@ -1724,6 +1724,99 @@ describe("cli formatting", () => {
     ]);
   });
 
+  it("surfaces no-team final status sync failures without aborting the run", async () => {
+    const progressLines: string[] = [];
+
+    const output = await runLinearIssueWorkflowCli({
+      apiKey: "test-key",
+      issueKey: "LBE-6",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      agentWrite: true,
+      onProgressLine: (line) => progressLines.push(line),
+      fetchGraphql: async (query, variables) => {
+        if (query.includes("IssueByKey")) {
+          return {
+            issue: {
+              id: "issue-id",
+              identifier: "LBE-6",
+              title: "Start Linear-claimed issues automatically",
+              description: "Acceptance:\n- Starts run",
+              state: { name: "In Progress" },
+              comments: { nodes: [] },
+            },
+          };
+        }
+        if (query.includes("issueUpdate")) {
+          throw new Error(`Linear rejected unresolved state id: ${String(variables.status)}`);
+        }
+        if (query.includes("commentCreate")) return {};
+        throw new Error(`unexpected query: ${query}`);
+      },
+      runWorkspace: async (input) => ({
+        issueKey: input.issue.key,
+        finalState: "satisfied",
+        artifacts: [],
+        timeline: [{ label: "work_satisfied -> satisfied", elapsedMs: 1 }],
+        durationMs: 1,
+      }),
+    });
+
+    expect(output).toContain("Final state: satisfied");
+    expect(progressLines).toContain(
+      "Linear final status sync failed for LBE-6 (Done): Linear rejected unresolved state id: Done",
+    );
+  });
+
+  it("does not repeat a terminal status already synced by the workspace engine", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+
+    await runLinearIssueWorkflowCli({
+      apiKey: "test-key",
+      issueKey: "LBE-6",
+      teamKey: "LBE",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      agentWrite: true,
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("IssueByKey")) {
+          return {
+            issue: {
+              id: "issue-id",
+              identifier: "LBE-6",
+              title: "Start Linear-claimed issues automatically",
+              description: "Acceptance:\n- Starts run",
+              state: { name: "In Progress" },
+              comments: { nodes: [] },
+            },
+          };
+        }
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-done", name: "Done" }] } };
+        }
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("issueUpdate")) return {};
+        if (query.includes("commentCreate")) return {};
+        throw new Error(`unexpected query: ${query}`);
+      },
+      runWorkspace: async (input) => {
+        await input.issueTracker?.updateIssueStatus(input.issue.key, "Done");
+        return {
+          issueKey: input.issue.key,
+          finalState: "satisfied",
+          artifacts: [],
+          timeline: [{ label: "work_satisfied -> satisfied", elapsedMs: 1 }],
+          durationMs: 1,
+        };
+      },
+    });
+
+    expect(calls.filter((call) => call.query.includes("issueUpdate"))).toHaveLength(1);
+  });
+
   it("syncs published Linear runs to Done with pull request evidence", async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
     const codeHost: CodeHostAdapter = {
