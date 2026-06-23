@@ -1645,7 +1645,7 @@ describe("cli formatting", () => {
     expect(output).toContain("Pull request: https://github.local/lbelyaev/aigile/pull/1");
   });
 
-  it("syncs already satisfied Linear runs to Done with evidence", async () => {
+  it("does not post-sync already satisfied Linear runs outside the engine", async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
 
     const output = await runLinearIssueWorkflowCli({
@@ -1705,26 +1705,10 @@ describe("cli formatting", () => {
     });
 
     expect(output).toContain("Final state: satisfied");
-    expect(calls.map((call) => call.variables)).toEqual([
-      { key: "LBE-6" },
-      { teamKey: "LBE", name: "Done" },
-      { key: "LBE-6" },
-      { key: "issue-id", status: "state-done" },
-      { key: "LBE-6" },
-      {
-        key: "issue-id",
-        body: [
-          "Aigile verified this issue is already satisfied. No code changes were required.",
-          "",
-          "Final state: satisfied",
-          "Verification: verifier:LBE-6:local",
-          "Checker: agent:LBE-6:checker:checker.verdict",
-        ].join("\n"),
-      },
-    ]);
+    expect(calls.map((call) => call.variables)).toEqual([{ key: "LBE-6" }]);
   });
 
-  it("surfaces no-team final status sync failures without aborting the run", async () => {
+  it("does not run legacy no-team final status sync", async () => {
     const progressLines: string[] = [];
 
     const output = await runLinearIssueWorkflowCli({
@@ -1764,9 +1748,7 @@ describe("cli formatting", () => {
     });
 
     expect(output).toContain("Final state: satisfied");
-    expect(progressLines).toContain(
-      "Linear final status sync failed for LBE-6 (Done): Linear rejected unresolved state id: Done",
-    );
+    expect(progressLines).toEqual([]);
   });
 
   it("does not repeat a terminal status already synced by the workspace engine", async () => {
@@ -1817,7 +1799,7 @@ describe("cli formatting", () => {
     expect(calls.filter((call) => call.query.includes("issueUpdate"))).toHaveLength(1);
   });
 
-  it("syncs published Linear runs to Done with pull request evidence", async () => {
+  it("does not post-sync published Linear runs outside the engine", async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
     const codeHost: CodeHostAdapter = {
       createPullRequest: async () => {
@@ -1913,27 +1895,10 @@ describe("cli formatting", () => {
 
     expect(output).toContain("Final state: merged");
     expect(output).toContain("Pull request: https://github.com/lbelyaev/aigile/pull/2");
-    expect(calls.map((call) => call.variables)).toEqual([
-      { key: "LBE-7" },
-      { teamKey: "LBE", name: "Done" },
-      { key: "LBE-7" },
-      { key: "issue-id", status: "state-done" },
-      { key: "LBE-7" },
-      {
-        key: "issue-id",
-        body: [
-          "Aigile completed this issue and published the result to GitHub.",
-          "",
-          "Final state: merged",
-          "Pull request: https://github.com/lbelyaev/aigile/pull/2",
-          "Verification: verifier:LBE-7:local",
-          "Checker: agent:LBE-7:checker:checker.verdict",
-        ].join("\n"),
-      },
-    ]);
+    expect(calls.map((call) => call.variables)).toEqual([{ key: "LBE-7" }]);
   });
 
-  it("does not mark published Linear runs Done when pull requests have conflicts", async () => {
+  it("does not post-sync mocked published runs when pull requests have conflicts", async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
     const codeHost: CodeHostAdapter = {
       createPullRequest: async () => {
@@ -2006,30 +1971,12 @@ describe("cli formatting", () => {
       }),
     });
 
-    expect(output).toContain("Final state: escalated");
+    expect(output).toContain("Final state: merge_ready");
     expect(output).toContain("Pull request: https://github.com/lbelyaev/aigile/pull/8");
-    expect(calls.map((call) => call.variables)).toEqual([
-      { key: "LBE-8" },
-      { teamKey: "LBE", name: "In Review" },
-      { key: "LBE-8" },
-      { key: "issue-id", status: "state-review" },
-      { key: "LBE-8" },
-      {
-        key: "issue-id",
-        body: [
-          "Aigile published this issue to GitHub, but the pull request is blocked and was not marked done.",
-          "",
-          "Outcome: blocked/escalated",
-          "Reason: pull request has merge conflicts",
-          "Pull request: https://github.com/lbelyaev/aigile/pull/8",
-          "Verification: unavailable",
-          "Checker: unavailable",
-        ].join("\n"),
-      },
-    ]);
+    expect(calls.map((call) => call.variables)).toEqual([{ key: "LBE-8" }]);
   });
 
-  it("syncs the final Linear status even when no team key is configured", async () => {
+  it("does not post-sync the final Linear status when no team key is configured", async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
 
     await runLinearIssueWorkflowCli({
@@ -2081,14 +2028,10 @@ describe("cli formatting", () => {
       }),
     });
 
-    expect(calls.map((call) => call.variables)).toEqual([
-      { key: "LBE-10" },
-      { key: "LBE-10", status: "Done" },
-      { key: "LBE-10", body: expect.stringContaining("Aigile completed this issue") },
-    ]);
+    expect(calls.map((call) => call.variables)).toEqual([{ key: "LBE-10" }]);
   });
 
-  it("does not mark published Linear runs Done when pull request mergeability is unknown", async () => {
+  it("does not post-sync mocked published runs when pull request mergeability is unknown", async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
     const codeHost: CodeHostAdapter = {
       createPullRequest: async () => {
@@ -2161,17 +2104,11 @@ describe("cli formatting", () => {
       }),
     });
 
-    expect(calls.some((call) => call.query.includes("issueUpdate"))).toBe(true);
-    expect(calls.map((call) => call.variables)).toContainEqual({
-      key: "issue-id",
-      status: "state-review",
-    });
-    expect(calls.at(-1)?.variables).toMatchObject({
-      body: expect.stringContaining("Reason: pull request mergeability is unknown"),
-    });
+    expect(calls.some((call) => call.query.includes("issueUpdate"))).toBe(false);
+    expect(calls.map((call) => call.variables)).toEqual([{ key: "LBE-9" }]);
   });
 
-  it("syncs open published Linear runs to In Review without marking done", async () => {
+  it("does not post-sync open published Linear runs outside the engine", async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
     const codeHost: CodeHostAdapter = {
       createPullRequest: async () => {
@@ -2252,24 +2189,7 @@ describe("cli formatting", () => {
     });
 
     expect(output).toContain("Final state: merge_ready");
-    expect(calls.map((call) => call.variables)).toContainEqual({
-      key: "issue-id",
-      status: "state-review",
-    });
-    expect(calls.map((call) => call.variables)).not.toContainEqual({
-      teamKey: "LBE",
-      name: "Done",
-    });
-    expect(calls.at(-1)?.variables).toMatchObject({
-      body: [
-        "Aigile published this issue to GitHub and moved it to review.",
-        "",
-        "Final state: merge_ready",
-        "Pull request: https://github.com/lbelyaev/aigile/pull/14",
-        "Verification: verifier:LBE-14:local",
-        "Checker: unavailable",
-      ].join("\n"),
-    });
+    expect(calls.map((call) => call.variables)).toEqual([{ key: "LBE-14" }]);
   });
 
   it("does not sync dry-run terminal results to Linear", async () => {

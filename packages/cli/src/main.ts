@@ -19,7 +19,6 @@ import {
   resolveProductPaths,
   runtimeConfigToRegistry,
   splitGithubRepo,
-  type IssueStatusLabels,
   type ProductVerificationPolicy,
   type RuntimeProductConfig,
 } from "@aigile/config";
@@ -40,7 +39,6 @@ import type {
   IssueRecord,
   IssueTrackerAdapter,
   LinearFetchGraphql,
-  PullRequestMergeabilityStatus,
   ReadyIssueSource,
 } from "@aigile/adapters";
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
@@ -709,38 +707,6 @@ export interface LinearIssueWorkflowCliInput {
   retryEscalated?: boolean;
 }
 
-const artifactIdByKind = (result: DemoResult, kind: string): string =>
-  result.artifacts.find((artifact) => artifact.kind === kind)?.id ?? "unavailable";
-
-const alreadySatisfiedComment = (result: DemoResult): string =>
-  [
-    "Aigile verified this issue is already satisfied. No code changes were required.",
-    "",
-    `Final state: ${result.finalState}`,
-    `Verification: ${artifactIdByKind(result, "verification.result")}`,
-    `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
-  ].join("\n");
-
-const publishedComment = (result: DemoResult): string =>
-  [
-    "Aigile completed this issue and published the result to GitHub.",
-    "",
-    `Final state: ${result.finalState}`,
-    `Pull request: ${result.pullRequest?.url ?? "unavailable"}`,
-    `Verification: ${artifactIdByKind(result, "verification.result")}`,
-    `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
-  ].join("\n");
-
-const publishedInReviewComment = (result: DemoResult): string =>
-  [
-    "Aigile published this issue to GitHub and moved it to review.",
-    "",
-    `Final state: ${result.finalState}`,
-    `Pull request: ${result.pullRequest?.url ?? "unavailable"}`,
-    `Verification: ${artifactIdByKind(result, "verification.result")}`,
-    `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
-  ].join("\n");
-
 const formatListSection = (items: readonly string[]): string[] =>
   items.length === 0 ? ["- None."] : items.map((item) => `- ${item}`);
 
@@ -790,102 +756,12 @@ const productRouteFromInput = (input: {
   ];
 };
 
-const blockedPublishedComment = (
-  result: DemoResult,
-  status: Exclude<PullRequestMergeabilityStatus, "mergeable">,
-): string =>
-  [
-    "Aigile published this issue to GitHub, but the pull request is blocked and was not marked done.",
-    "",
-    "Outcome: blocked/escalated",
-    `Reason: ${status === "conflicting" ? "pull request has merge conflicts" : "pull request mergeability is unknown"}`,
-    `Pull request: ${result.pullRequest?.url ?? "unavailable"}`,
-    `Verification: ${artifactIdByKind(result, "verification.result")}`,
-    `Checker: ${artifactIdByKind(result, "checker.verdict")}`,
-  ].join("\n");
-
-const publishedResultBlockedByMergeability = (result: DemoResult): DemoResult => ({
-  ...result,
-  finalState: "escalated",
-});
-
-const getPublishedMergeabilityStatus = async (
-  codeHost: CodeHostAdapter | undefined,
-  result: DemoResult,
-): Promise<PullRequestMergeabilityStatus> => {
-  if (result.pullRequest === undefined || codeHost === undefined) return "unknown";
-  try {
-    return (await codeHost.getPullRequestMergeability(result.pullRequest.id)).status;
-  } catch {
-    return "unknown";
-  }
-};
-
-const syncErrorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
-
 const syncLinearIssueWorkflowResult = async (
   input: LinearIssueWorkflowCliInput,
   result: DemoResult,
-  codeHost?: CodeHostAdapter,
-  issueStatusLabels: IssueStatusLabels = DEFAULT_ISSUE_STATUS_LABELS,
-  lastSyncedIssueStatus?: string,
 ): Promise<DemoResult> => {
-  if (input.dryRun === true) return result;
-  const shouldSyncSatisfied = result.finalState === "satisfied";
-  const shouldSyncPublished = input.publish === true && result.pullRequest !== undefined;
-  if (!shouldSyncSatisfied && !shouldSyncPublished) return result;
-
-  const publishedMerged = shouldSyncPublished && result.finalState === "merged";
-  // Mergeability only matters for a published-but-unmerged PR. A merged PR reports
-  // mergeable "unknown" (GitHub stops computing it post-merge), so querying it would
-  // falsely look blocked — skip the query and treat a merged run as mergeable.
-  const mergeabilityStatus =
-    shouldSyncPublished && !publishedMerged
-      ? await getPublishedMergeabilityStatus(codeHost ?? input.codeHost, result)
-      : "mergeable";
-  const publishedBlocked =
-    shouldSyncPublished && !publishedMerged && mergeabilityStatus !== "mergeable";
-  const markDone = shouldSyncSatisfied || publishedMerged;
-  const syncResult = publishedBlocked ? publishedResultBlockedByMergeability(result) : result;
-
-  const tracker = createLinearGraphqlIssueTrackerAdapter(
-    input.fetchGraphql === undefined
-      ? {
-          apiKey: input.apiKey,
-          ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
-        }
-      : {
-          apiKey: input.apiKey,
-          fetchGraphql: input.fetchGraphql,
-          ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
-        },
-  );
-  const targetStatus = markDone ? issueStatusLabels.done : issueStatusLabels.inReview;
-  if (targetStatus !== lastSyncedIssueStatus) {
-    try {
-      await tracker.updateIssueStatus(input.issueKey, targetStatus);
-    } catch (error) {
-      input.onProgressLine?.(
-        `Linear final status sync failed for ${input.issueKey} (${targetStatus}): ${syncErrorMessage(error)}`,
-      );
-    }
-  }
-  const comment = shouldSyncSatisfied
-    ? alreadySatisfiedComment(result)
-    : publishedMerged
-      ? publishedComment(result)
-      : publishedBlocked
-        ? blockedPublishedComment(result, mergeabilityStatus)
-        : publishedInReviewComment(result);
-  try {
-    await tracker.appendIssueComment(input.issueKey, comment);
-  } catch (error) {
-    input.onProgressLine?.(
-      `Linear final comment sync failed for ${input.issueKey}: ${syncErrorMessage(error)}`,
-    );
-  }
-  return syncResult;
+  void input;
+  return result;
 };
 
 export const fetchLinearIssueForRun = async (input: LinearRunIssueInput): Promise<IssueRecord> => {
@@ -913,7 +789,6 @@ export const runLinearIssueWorkflowCli = async (
     registry: runtimeConfigToRegistry(runtimeConfig),
     issueStatusLabels: runtimeConfig.issueStatusLabels,
   };
-  let lastSyncedIssueStatus: string | undefined;
   if (input.dryRun !== true) {
     const issueTracker = createLinearGraphqlIssueTrackerAdapter(
       input.fetchGraphql === undefined
@@ -929,10 +804,7 @@ export const runLinearIssueWorkflowCli = async (
     );
     runInput.issueTracker = {
       getIssue: issueTracker.getIssue,
-      updateIssueStatus: async (key, status) => {
-        await issueTracker.updateIssueStatus(key, status);
-        lastSyncedIssueStatus = status;
-      },
+      updateIssueStatus: issueTracker.updateIssueStatus,
       appendIssueComment: issueTracker.appendIssueComment,
     };
     runInput.onIssueStatusUpdateError = (error, state, status) => {
@@ -997,13 +869,7 @@ export const runLinearIssueWorkflowCli = async (
     },
   });
   const result = await (input.runWorkspace ?? runWorkspaceIssueWithEngine)(runInput);
-  const syncedResult = await syncLinearIssueWorkflowResult(
-    input,
-    result,
-    runInput.codeHost,
-    runtimeConfig.issueStatusLabels,
-    lastSyncedIssueStatus,
-  );
+  const syncedResult = await syncLinearIssueWorkflowResult(input, result);
   const formattedResult = formatDemoResult(syncedResult);
   return dryRunPlanOutputs.length === 0
     ? formattedResult

@@ -10,11 +10,14 @@ import {
   type BranchPullRequest,
   type CodeHostAdapter,
   type IssueRecord,
+  type IssueTrackerAdapter,
   type PullRequestRecord,
   type PullRequestReviewInput,
 } from "@aigile/adapters";
+import type { IssueStatusLabels } from "@aigile/config";
 import type { WorkflowCommandHandlers } from "@aigile/workflow";
 import { resolveMergePolicy, type MergePolicy } from "./merge-policy.js";
+import { syncIssueStatusForState } from "./status-sync.js";
 
 export interface EngineHandlerDeps {
   issue: IssueRecord;
@@ -29,6 +32,8 @@ export interface EngineHandlerDeps {
   verify: (inputArtifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact>;
   publish: () => Promise<void>;
   mergePolicy?: MergePolicy;
+  issueTracker?: IssueTrackerAdapter;
+  issueStatusLabels?: Partial<IssueStatusLabels>;
 }
 
 const findLatestByKind = (
@@ -283,7 +288,17 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
         }
 
         // Manual override: publish the PR and pause for a human/CI to merge.
-        if (mergePolicy === "manual") return { artifact: prArtifact };
+        if (mergePolicy === "manual") {
+          await syncIssueStatusForState({
+            issueTracker: deps.issueTracker,
+            issueKey: issue.key,
+            state: ctx.snapshot.state,
+            issueStatusLabels: deps.issueStatusLabels,
+            originalStatus: issue.status,
+            artifacts: [...ctx.artifacts, prArtifact],
+          });
+          return { artifact: prArtifact };
+        }
 
         const state = await codeHost.getPullRequestMergeState(prId);
         if (state.status === "merged") {
@@ -294,12 +309,50 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
           await codeHost.mergePullRequest(prId);
           return { event: eventFor("merge_completed", issue.key), artifact: prArtifact };
         }
-        // Not mergeable yet (checks pending / conflict): pause; reconcile later.
+        if (mergeability.status === "conflicting" || mergeability.status === "unknown") {
+          const reason =
+            mergeability.status === "conflicting"
+              ? "pull request has merge conflicts"
+              : "pull request mergeability is unknown";
+          return { event: eventFor("publish_failed", issue.key, { reason }), artifact: prArtifact };
+        }
+        await syncIssueStatusForState({
+          issueTracker: deps.issueTracker,
+          issueKey: issue.key,
+          state: ctx.snapshot.state,
+          issueStatusLabels: deps.issueStatusLabels,
+          originalStatus: issue.status,
+          artifacts: [...ctx.artifacts, prArtifact],
+        });
         return { artifact: prArtifact };
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         return { event: eventFor("publish_failed", issue.key, { reason }) };
       }
+    },
+    sync_sources_of_truth: async (ctx) => {
+      await syncIssueStatusForState({
+        issueTracker: deps.issueTracker,
+        issueKey: issue.key,
+        state: ctx.snapshot.state,
+        issueStatusLabels: deps.issueStatusLabels,
+        originalStatus: issue.status,
+        artifacts: ctx.artifacts,
+        reason: ctx.command.reason,
+      });
+      return {};
+    },
+    request_human_attention: async (ctx) => {
+      await syncIssueStatusForState({
+        issueTracker: deps.issueTracker,
+        issueKey: issue.key,
+        state: ctx.snapshot.state,
+        issueStatusLabels: deps.issueStatusLabels,
+        originalStatus: issue.status,
+        artifacts: ctx.artifacts,
+        reason: ctx.command.reason,
+      });
+      return {};
     },
   };
 };

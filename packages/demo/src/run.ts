@@ -53,6 +53,7 @@ import {
 } from "@aigile/workflow";
 import { join } from "node:path";
 import { createEngineCommandHandlers, type EngineHandlerDeps } from "./engine-handlers.js";
+import { issueStatusLabelForState } from "./status-sync.js";
 
 export interface DemoIssueInput {
   issue: IssueRecord;
@@ -386,28 +387,6 @@ const publishCheckerFeedback = async (
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
-
-const issueStatusLabelForState = (
-  state: WorkflowState,
-  labels: IssueStatusLabels,
-  originalStatus = "Todo",
-): string => {
-  if (
-    state === "planning" ||
-    state === "awaiting_plan_approval" ||
-    state === "developing" ||
-    state === "changes_requested" ||
-    state === "verifying" ||
-    state === "checking"
-  ) {
-    return labels.developing;
-  }
-  if (state === "merge_ready") return labels.inReview;
-  if (state === "satisfied" || state === "merged") return labels.done;
-  if (state === "escalated" || state === "failed") return labels.blocked;
-  if (state === "cancelled") return originalStatus;
-  return state;
-};
 
 const formatPullRequestBlockedComment = (
   pullRequest: PullRequestRecord,
@@ -954,7 +933,6 @@ export const runWorkspaceIssueWithEngine = async (
     ...DEFAULT_ISSUE_STATUS_LABELS,
     ...(input.issueStatusLabels ?? {}),
   };
-  let lastSyncedStatus: string | undefined = input.issue.status;
 
   const deps: EngineHandlerDeps = {
     issue: input.issue,
@@ -984,6 +962,12 @@ export const runWorkspaceIssueWithEngine = async (
         commitMessage: `${input.issue.key} ${input.issue.title}`,
       });
     },
+    ...(input.issueTracker !== undefined && input.dryRun !== true
+      ? {
+          issueTracker: input.issueTracker,
+          issueStatusLabels,
+        }
+      : {}),
   };
 
   const store = createFileRunStore({
@@ -1000,26 +984,6 @@ export const runWorkspaceIssueWithEngine = async (
       executionPolicyToArtifact(input.issue.key, input.dryRun === true),
     ],
   };
-  if (input.issueTracker !== undefined && input.dryRun !== true) {
-    engineInput.onStateChange = async ({ snapshot }) => {
-      const status = issueStatusLabelForState(
-        snapshot.state,
-        issueStatusLabels,
-        input.issue.status,
-      );
-      if (status === lastSyncedStatus) return;
-      lastSyncedStatus = status;
-      await input.issueTracker!.updateIssueStatus(input.issue.key, status);
-    };
-    engineInput.onStateChangeError = async ({ error, snapshot }) => {
-      const status = issueStatusLabelForState(
-        snapshot.state,
-        issueStatusLabels,
-        input.issue.status,
-      );
-      input.onIssueStatusUpdateError?.(error, snapshot.state, status);
-    };
-  }
 
   const result = await runWorkflowEngine(engineInput);
 
