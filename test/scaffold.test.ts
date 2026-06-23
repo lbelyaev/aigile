@@ -21,7 +21,7 @@ describe("project scaffold", () => {
     expect(pkg.packageManager).toBe("bun@1.2.21");
     expect(pkg.workspaces).toEqual(["packages/*"]);
     expect(pkg.scripts?.test).toBe("bun test");
-    expect(pkg.scripts?.typecheck).toBe("tsc -b");
+    expect(pkg.scripts?.typecheck).toBe("tsc --noEmit");
   });
 
   it("ships an MIT license file", () => {

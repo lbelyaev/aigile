@@ -13,7 +13,11 @@
     "@aigile/adapters": "workspace:*",
     "@aigile/config": "workspace:*",
     "@aigile/demo": "workspace:*",
+    "@aigile/roles": "workspace:*",
+    "@aigile/types": "workspace:*",
     "@aigile/watch": "workspace:*",
-    "@aigile/workspace": "workspace:*"
+    "@aigile/workflow": "workspace:*",
+    "@aigile/workspace": "workspace:*",
+    "date-fns": "^4.4.0"
   }
 }
