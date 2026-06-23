@@ -26,6 +26,7 @@ export const WORKFLOW_EVENT_TYPES = [
   "verification_failed",
   "checker_passed",
   "checker_requested_changes",
+  "review_changes_requested",
   "checker_escalated",
   "work_satisfied",
   "publish_failed",

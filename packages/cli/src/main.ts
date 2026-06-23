@@ -47,6 +47,7 @@ import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
 import { isArchitectPlanPayload, type WorkflowArtifact } from "@aigile/types";
 import {
   defaultClaimComment,
+  ingestExternalReviewFeedback,
   reconcileIssueStatus,
   watchLoop,
   watchOnce,
@@ -665,6 +666,8 @@ export interface LinearWatchLoopCliInput extends LinearWatchOnceCliInput {
   codeHost?: CodeHostAdapter;
   pullRequestTarget?: { owner: string; repo: string };
   reviewStatus?: string;
+  reworkStatus?: string;
+  runStatePath?: string;
   reconcileLabels?: ReconcileStatusLabels;
   resume?: {
     listResumable: () => Promise<string[]>;
@@ -1062,6 +1065,9 @@ const formatWatchLoopEvent = (event: WatchLoopEvent): string | undefined => {
   if (event.type === "issue_status_reconciled") {
     return `Poll ${event.poll}: reconciled ${event.issueKey} (${event.from} -> ${event.to})`;
   }
+  if (event.type === "external_feedback_ingested") {
+    return `Poll ${event.poll}: ingested ${event.source} feedback for ${event.issueKey} (${event.outcome})`;
+  }
   if (event.type === "run_resumed") {
     return `Poll ${event.poll}: resumed ${event.issueId} (${event.outcome})`;
   }
@@ -1104,6 +1110,22 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
               tracker,
               labels,
             }),
+          ...(input.runStatePath === undefined
+            ? {}
+            : {
+                ingestExternalFeedback: (issue: IssueRecord) =>
+                  ingestExternalReviewFeedback({
+                    issueKey: issue.key,
+                    branchName: issueBranchName(issue.key),
+                    target: input.pullRequestTarget!,
+                    codeHost: input.codeHost!,
+                    store: createFileRunStore({ directory: input.runStatePath! }),
+                    issue,
+                    ...(input.reworkStatus === undefined
+                      ? {}
+                      : { reworkStatus: input.reworkStatus }),
+                  }),
+              }),
         };
   const emit = (line: string): void => {
     lines.push(line);
@@ -1489,6 +1511,7 @@ const main = async (): Promise<void> => {
             }
           }
           const runStatePath = join(watchContext.worktreesPath, "..", "runs");
+          loopInput.runStatePath = runStatePath;
           const runIssueByKey = (
             issueKey: string,
             options: { retryEscalated?: boolean } = {},

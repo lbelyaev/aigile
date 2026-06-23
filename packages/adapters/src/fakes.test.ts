@@ -319,6 +319,15 @@ describe("fake source-of-truth adapters", () => {
         { event: "comment", body: "Checker escalated" },
       ],
     });
+    await expect(codeHost.listPullRequestReviews!(pr.id)).resolves.toMatchObject([
+      { id: "example/aigile#1:review:1", state: "APPROVED", body: "Checker passed" },
+      {
+        id: "example/aigile#1:review:2",
+        state: "CHANGES_REQUESTED",
+        body: "Checker requested changes",
+      },
+      { id: "example/aigile#1:review:3", state: "COMMENTED", body: "Checker escalated" },
+    ]);
   });
 
   it("reports configured fake pull request mergeability", async () => {

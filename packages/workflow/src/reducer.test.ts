@@ -40,6 +40,7 @@ const expectedTransitions: Record<
     verification_failed: "illegal",
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
+    review_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -58,6 +59,7 @@ const expectedTransitions: Record<
     verification_failed: "illegal",
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
+    review_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -80,6 +82,7 @@ const expectedTransitions: Record<
     verification_failed: "illegal",
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
+    review_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -98,6 +101,7 @@ const expectedTransitions: Record<
     verification_failed: "illegal",
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
+    review_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -120,6 +124,7 @@ const expectedTransitions: Record<
     },
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
+    review_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -142,6 +147,7 @@ const expectedTransitions: Record<
       command: "start_developer_attempt",
       developerAttempts: 2,
     },
+    review_changes_requested: "illegal",
     checker_escalated: { state: "escalated", command: "request_human_attention" },
     work_satisfied: { state: "satisfied", command: "sync_sources_of_truth" },
     publish_failed: "illegal",
@@ -160,6 +166,7 @@ const expectedTransitions: Record<
     verification_failed: "illegal",
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
+    review_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -178,6 +185,7 @@ const expectedTransitions: Record<
     verification_failed: "illegal",
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
+    review_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -196,6 +204,11 @@ const expectedTransitions: Record<
     verification_failed: "illegal",
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
+    review_changes_requested: {
+      state: "changes_requested",
+      command: "start_developer_attempt",
+      developerAttempts: 2,
+    },
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: { state: "escalated", command: "request_human_attention" },
@@ -214,6 +227,7 @@ const expectedTransitions: Record<
     verification_failed: "illegal",
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
+    review_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -232,6 +246,7 @@ const expectedTransitions: Record<
     verification_failed: "illegal",
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
+    review_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -250,6 +265,7 @@ const expectedTransitions: Record<
     verification_failed: "illegal",
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
+    review_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -268,6 +284,7 @@ const expectedTransitions: Record<
     verification_failed: "illegal",
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
+    review_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -334,6 +351,7 @@ describe("workflow reducer", () => {
     }> = [
       { state: "verifying", eventType: "verification_failed" },
       { state: "checking", eventType: "checker_requested_changes" },
+      { state: "merge_ready", eventType: "review_changes_requested" },
     ];
 
     for (const { state, eventType } of cappedTransitions) {
@@ -341,7 +359,9 @@ describe("workflow reducer", () => {
         maxDeveloperAttempts: 2,
       });
 
-      expect(retryResult.snapshot.state, `${state} x ${eventType} retry state`).toBe("developing");
+      const retryState =
+        eventType === "review_changes_requested" ? "changes_requested" : "developing";
+      expect(retryResult.snapshot.state, `${state} x ${eventType} retry state`).toBe(retryState);
       expect(retryResult.snapshot.developerAttempts, `${state} x ${eventType} retry attempts`).toBe(
         2,
       );

@@ -46,6 +46,25 @@ export interface CheckResult {
 export interface PullRequestReviewInput {
   event: "approve" | "request_changes" | "comment";
   body: string;
+  comments?: readonly PullRequestReviewComment[];
+}
+
+export interface PullRequestReviewComment {
+  id: string;
+  body: string;
+  path?: string;
+  line?: number;
+}
+
+export type PullRequestReviewState = "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
+
+export interface PullRequestReview {
+  id: string;
+  state: PullRequestReviewState;
+  submittedAt: string;
+  body: string;
+  author?: string;
+  comments: PullRequestReviewComment[];
 }
 
 export type PullRequestMergeabilityStatus = "mergeable" | "conflicting" | "unknown";
@@ -93,6 +112,7 @@ export interface CodeHostAdapter {
   getPullRequestMergeState: (id: string) => Promise<PullRequestMergeState>;
   appendPullRequestComment: (id: string, comment: string) => Promise<void>;
   submitPullRequestReview: (id: string, review: PullRequestReviewInput) => Promise<void>;
+  listPullRequestReviews?: (id: string) => Promise<PullRequestReview[]>;
   recordCheckResult: (id: string, result: CheckResult) => Promise<void>;
   mergePullRequest: (id: string, method?: PullRequestMergeMethod) => Promise<void>;
   findPullRequestForBranch: (

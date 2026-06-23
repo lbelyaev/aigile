@@ -1,5 +1,5 @@
 import type { IssueRecord, IssueTrackerAdapter, ReadyIssueSource } from "@aigile/adapters";
-import type { ReconcileOutcome } from "./reconcile.js";
+import type { IngestExternalReviewFeedbackOutcome, ReconcileOutcome } from "./reconcile.js";
 
 export interface WatchOnceInput {
   source: ReadyIssueSource;
@@ -38,6 +38,13 @@ export type WatchLoopEvent =
       error: string;
     }
   | { type: "issue_status_reconciled"; poll: number; issueKey: string; from: string; to: string }
+  | {
+      type: "external_feedback_ingested";
+      poll: number;
+      issueKey: string;
+      source: "github" | "linear";
+      outcome: string;
+    }
   | { type: "run_resumed"; poll: number; issueId: string; outcome: string }
   | { type: "run_resume_failed"; poll: number; issueId: string; error: string }
   | { type: "watch_stopped"; polls: number; reason: WatchLoopStopReason };
@@ -52,6 +59,7 @@ export interface WatchLoopInput extends WatchOnceInput {
   reconcile?: {
     listIssues: () => Promise<IssueRecord[]>;
     reconcileIssue: (issue: IssueRecord) => Promise<ReconcileOutcome>;
+    ingestExternalFeedback?: (issue: IssueRecord) => Promise<IngestExternalReviewFeedbackOutcome>;
   };
   // Resume interrupted/paused runs each poll before claiming new work.
   resume?: {
@@ -233,6 +241,25 @@ export const watchLoop = async (input: WatchLoopInput): Promise<void> => {
               to: outcome.to,
             });
           }
+          const feedback = await input.reconcile.ingestExternalFeedback?.(issue);
+          if (feedback?.kind === "ingested") {
+            input.onEvent?.({
+              type: "external_feedback_ingested",
+              poll: polls,
+              issueKey: issue.key,
+              source: feedback.source,
+              outcome: feedback.state,
+            });
+            if (input.resume !== undefined) {
+              const { outcome: resumeOutcome } = await input.resume.resumeRun(issue.key);
+              input.onEvent?.({
+                type: "run_resumed",
+                poll: polls,
+                issueId: issue.key,
+                outcome: resumeOutcome,
+              });
+            }
+          }
         } catch {
           // Reconciliation is best-effort; a single failure must not stop the loop.
         }
@@ -296,10 +323,12 @@ export const watchLoop = async (input: WatchLoopInput): Promise<void> => {
 
 export { defaultClaimComment, defaultClaimStatus };
 
-export { reconcileIssueStatus } from "./reconcile.js";
+export { ingestExternalReviewFeedback, reconcileIssueStatus } from "./reconcile.js";
 
 export type {
   FindPullRequestForBranch,
+  IngestExternalReviewFeedbackInput,
+  IngestExternalReviewFeedbackOutcome,
   ReconcileIssueStatusInput,
   ReconcileOutcome,
   ReconcileStatusLabels,
