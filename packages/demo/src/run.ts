@@ -220,6 +220,32 @@ const executionPolicyToArtifact = (issueKey: string, dryRun: boolean): WorkflowA
       },
 });
 
+const checkerReviewPolicyToArtifact = (issueKey: string): WorkflowArtifact => ({
+  id: `policy:${issueKey}:review`,
+  kind: "execution.policy",
+  source: "system",
+  payload: {
+    mode: "review",
+    fileWrites: "forbidden",
+    commits: "forbidden",
+    pushes: "forbidden",
+    pullRequests: "forbidden",
+    shellCommands: "review_read_only",
+    instructions: [
+      "Use read-only tooling to review the plan, implementation, diff, and verification artifacts.",
+      "You may run rg/grep, git diff/log/show, and verification or typecheck commands.",
+      "Do not edit files.",
+      "Do not create commits.",
+      "Do not push branches or open pull requests.",
+    ],
+  },
+});
+
+const checkerInputArtifacts = (artifacts: readonly WorkflowArtifact[], issueKey: string) =>
+  artifacts.map((artifact) =>
+    artifact.kind === "execution.policy" ? checkerReviewPolicyToArtifact(issueKey) : artifact,
+  );
+
 const checkerEventForVerdict = (artifact: WorkflowArtifact): WorkflowEvent["type"] => {
   if (!isCheckerVerdictPayload(artifact.payload)) {
     throw new Error(`Checker artifact payload is invalid: ${artifact.id}`);
@@ -551,7 +577,7 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
   const verdict = await runAssignedRole({
     roleId: "checker",
     issueId: issue.key,
-    inputArtifacts: artifacts,
+    inputArtifacts: checkerInputArtifacts(artifacts, issue.key),
     registry: input.registry,
     runner: input.runner,
   });
@@ -951,7 +977,20 @@ export const runWorkspaceIssueWithEngine = async (
     },
     codeHost,
     runRole: (roleId, inputArtifacts) =>
-      runAssignedRole({ roleId, issueId: input.issue.key, inputArtifacts, registry, runner }),
+      runAssignedRole({
+        roleId,
+        issueId: input.issue.key,
+        // The checker reviews under a read-only `review` execution policy so it can
+        // grep/diff/run the gate but not edit/commit/publish. Apply it on the engine
+        // path too — not just the legacy runDemoIssueWithRoles path — so the path
+        // that actually runs in production gets it.
+        inputArtifacts:
+          roleId === "checker"
+            ? checkerInputArtifacts(inputArtifacts, input.issue.key)
+            : inputArtifacts,
+        registry,
+        runner,
+      }),
     verify: async () =>
       verifier.verify({
         issueKey: input.issue.key,

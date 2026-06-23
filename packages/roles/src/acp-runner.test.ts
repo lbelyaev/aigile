@@ -358,6 +358,118 @@ describe("ACP role runner", () => {
     ).toBe("allow_once");
   });
 
+  it("allows read-only review tooling and rejects writes under review execution policy", () => {
+    const connectInput = buildAcpRuntimeConnectInput({
+      roleId: "checker",
+      issueId: "LIN-123",
+      runtime: {
+        id: "runtime-checker",
+        transport: "stdio",
+        command: ["agent-acp"],
+      },
+      assignment: {
+        roleId: "checker",
+        runtimeProfileId: "runtime-checker",
+      },
+      inputArtifacts: [
+        {
+          id: "policy:LIN-123:review",
+          kind: "execution.policy",
+          source: "system",
+          payload: {
+            mode: "review",
+            fileWrites: "forbidden",
+            commits: "forbidden",
+            pushes: "forbidden",
+            shellCommands: "review_read_only",
+          },
+        },
+      ],
+    });
+
+    for (const [requestId, command] of [
+      ["review-read", "cat packages/roles/src/acp-runner.ts"],
+      ["review-sed", "sed -n '1,120p' packages/roles/src/acp-runner.ts"],
+      ["review-rg-targeted", "rg TODO packages/roles/src/acp-runner.ts"],
+      ["review-rg-broad", "rg TODO"],
+      ["review-grep-broad", "grep -R TODO ."],
+      ["review-diff", "git diff"],
+      ["review-log", "git log --oneline -5"],
+      ["review-show", "git show HEAD -- packages/roles/src/acp-runner.ts"],
+      ["review-bun-test", "bun test packages/roles/src/acp-runner.test.ts"],
+      ["review-bun-check", "bun run check"],
+      ["review-tsc", "npx tsc --noEmit"],
+      ["review-oracle", "bun test packages/roles/src/prompts.test.ts"],
+    ] as const) {
+      expect(
+        connectInput.decidePermission?.({
+          sessionId: "LIN-123:checker",
+          requestId,
+          tool: "Bash",
+          kind: "execute",
+          description: JSON.stringify({ command }),
+          options: [],
+        }),
+      ).toBe("allow_once");
+    }
+
+    for (const [requestId, command] of [
+      ["review-edit-shell", "printf test > README.md"],
+      ["review-touch", "touch README.md"],
+      ["review-git-add", "git add packages/roles/src/acp-runner.ts"],
+      ["review-git-commit", "git commit -m test"],
+      ["review-git-push", "git push origin aigile/LIN-123"],
+      ["review-git-merge", "git merge main"],
+      ["review-git-rebase", "git rebase main"],
+      ["review-git-reset", "git reset --hard"],
+      ["review-pr-create", "gh pr create --fill"],
+      ["review-hub-pr", "hub pull-request"],
+      ["review-build", "bun run build"],
+    ] as const) {
+      expect(
+        connectInput.decidePermission?.({
+          sessionId: "LIN-123:checker",
+          requestId,
+          tool: "Bash",
+          kind: "execute",
+          description: JSON.stringify({ command }),
+          options: [],
+        }),
+      ).toBe("reject_once");
+    }
+
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:checker",
+        requestId: "review-read-kind",
+        tool: "Read",
+        kind: "read",
+        description: "/repo/aigile/packages/roles/src/acp-runner.ts",
+        options: [],
+      }),
+    ).toBe("allow_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:checker",
+        requestId: "review-search-kind",
+        tool: "Search",
+        kind: "search",
+        description: JSON.stringify({ command: "rg TODO" }),
+        options: [],
+      }),
+    ).toBe("allow_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:checker",
+        requestId: "review-write-kind",
+        tool: "Write",
+        kind: "write",
+        description: "/repo/aigile/README.md",
+        options: [],
+      }),
+    ).toBe("reject_once");
+  });
+
   it("classifies agent-write permissions by ACP tool kind regardless of tool label", () => {
     const connectInput = buildAcpRuntimeConnectInput({
       roleId: "developer",
@@ -993,6 +1105,91 @@ describe("ACP role runner", () => {
       }),
     ).resolves.toMatchObject({
       kind: "developer.attempt",
+    });
+    expect(progress).not.toContain("policy_violation");
+    expect(progress).toContain("artifact_parsed");
+  });
+
+  it("allows broad review searches and file reads without dry-run budget violations", async () => {
+    const progress: string[] = [];
+    let eventHandler:
+      | ((event: { type: "tool_start"; sessionId: string; tool: string; params?: unknown }) => void)
+      | undefined;
+    const connector: AcpRuntimeConnector = async () => ({
+      session: {
+        sessionId: "role-session-1",
+        acpSessionId: "acp-session-1",
+        prompt: async () => {
+          eventHandler?.({
+            type: "tool_start",
+            sessionId: "role-session-1",
+            tool: "Bash",
+            params: { command: "rg TODO" },
+          });
+          for (let index = 1; index <= 6; index += 1) {
+            eventHandler?.({
+              type: "tool_start",
+              sessionId: "role-session-1",
+              tool: "Read File",
+              params: { path: `/repo/file-${index}.ts` },
+            });
+          }
+          return {
+            artifactKind: "checker.verdict",
+            payload: {
+              verdict: "pass",
+              summary: "Review policy allowed investigation.",
+              reasons: [],
+            },
+          };
+        },
+        cancel: () => undefined,
+        onEvent: (handler) => {
+          eventHandler = handler as typeof eventHandler;
+          return () => {
+            eventHandler = undefined;
+          };
+        },
+      },
+      process: {
+        kill: async () => undefined,
+      },
+    });
+    const runner = createAcpRoleRunner({
+      connector,
+      onProgress: (event) => progress.push(event.type),
+    });
+
+    await expect(
+      runner.run({
+        roleId: "checker",
+        issueId: "LIN-123",
+        runtime: {
+          id: "runtime-checker",
+          transport: "stdio",
+          command: ["agent-acp"],
+        },
+        assignment: {
+          roleId: "checker",
+          runtimeProfileId: "runtime-checker",
+        },
+        inputArtifacts: [
+          {
+            id: "policy:LIN-123:review",
+            kind: "execution.policy",
+            source: "system",
+            payload: {
+              mode: "review",
+              fileWrites: "forbidden",
+              commits: "forbidden",
+              pushes: "forbidden",
+              shellCommands: "review_read_only",
+            },
+          },
+        ],
+      }),
+    ).resolves.toMatchObject({
+      kind: "checker.verdict",
     });
     expect(progress).not.toContain("policy_violation");
     expect(progress).toContain("artifact_parsed");

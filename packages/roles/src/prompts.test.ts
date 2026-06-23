@@ -76,7 +76,8 @@ describe("role prompt builder", () => {
     });
 
     expect(prompt).toContain("Advertised agent-native skills: code_review, repo_read");
-    expect(prompt).toContain("Prefer the runtime's native code_review skill/tool/plugin");
+    expect(prompt).toContain("may be used as an optional aid");
+    expect(prompt).toContain("explicit checker methodology");
     expect(prompt).toContain("checker.verdict JSON contract is authoritative");
     expect(prompt).toContain('"artifactKind": "checker.verdict"');
     expect(prompt).not.toContain("Claude");
@@ -96,6 +97,18 @@ describe("role prompt builder", () => {
 
     expect(prompt).toContain("Advertised agent-native skills: repo_read");
     expect(prompt).toContain("No code_review skill was advertised");
-    expect(prompt).toContain("perform a focused manual code review");
+    expect(prompt).toContain("perform the explicit checker methodology manually");
+    expect(prompt).toContain("correctness/diff-scan");
+    expect(prompt).toContain("removed-behavior");
+    expect(prompt).toContain("cross-file/callers");
+    expect(prompt).toContain("tests-faithful-to-reality lens");
+    expect(prompt).toContain(
+      "mocks that return values real GitHub, Linear, CLIs, APIs, or adapters would not return",
+    );
+    expect(prompt).toContain("nonexistent gh --json fields");
+    expect(prompt).toContain("nonexistent Linear states");
+    expect(prompt).toContain("self-refutation pass");
+    expect(prompt).toContain("bias to changes_requested");
+    expect(prompt).toContain("checker.verdict JSON contract is authoritative");
   });
 });

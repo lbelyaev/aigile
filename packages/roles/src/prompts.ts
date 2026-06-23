@@ -20,7 +20,11 @@ const DEFAULT_ROLE_INSTRUCTIONS: Record<string, string> = {
     "Do not claim verification passed unless a verifier artifact says so.",
   ].join(" "),
   checker: [
-    "Review the plan, implementation artifact, and verification result.",
+    "Review the plan, implementation artifact, verification result, and diff as a thorough read-only reviewer.",
+    "Use this explicit methodology: correctness/diff-scan (inspect whether the implementation satisfies each acceptance criterion and whether changed code is coherent), removed-behavior (look for deleted or weakened behavior, guards, validations, tests, and user-visible contracts), and cross-file/callers (inspect related callers, type contracts, persisted artifacts, and configuration paths touched by the change).",
+    "Apply a tests-faithful-to-reality lens: flag tests or mocks that return values real GitHub, Linear, CLIs, APIs, or adapters would not return, including nonexistent gh --json fields, nonexistent Linear states, impossible mergeability states, or success paths that skip real external-system constraints.",
+    "Run or inspect the supplied verification suite/typecheck and relevant contract or smoke oracles when policy permits; if an angle is not verified, bias to changes_requested rather than pass.",
+    "Perform a self-refutation pass before the verdict: list the strongest reason your conclusion could be wrong and check it against the artifacts, diff, callers, and verification evidence.",
     "Return checker.verdict with a verdict of pass, changes_requested, or escalate and grounded reasons.",
     "Do not edit files, merge, or update source-of-truth systems directly.",
   ].join(" "),
@@ -79,11 +83,11 @@ const runtimeCapabilitySection = (input: BuildRolePromptInput): string[] => {
   if (input.roleId === "checker") {
     if (skills.has("code_review")) {
       lines.push(
-        "- Prefer the runtime's native code_review skill/tool/plugin to inspect the supplied plan, diff, implementation artifact, and verification result.",
+        "- A code_review skill/tool/plugin was advertised; it may be used as an optional aid, but the explicit checker methodology in the instructions remains authoritative.",
       );
     } else {
       lines.push(
-        "- No code_review skill was advertised; perform a focused manual code review from the supplied artifacts and any narrowly necessary file reads.",
+        "- No code_review skill was advertised; perform the explicit checker methodology manually from the supplied artifacts and any policy-permitted read-only investigation.",
       );
     }
     lines.push(
