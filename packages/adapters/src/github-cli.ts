@@ -284,7 +284,6 @@ export const createGitHubCliCodeHostAdapter = (
           input.title,
           "--body",
           input.body,
-          "--draft",
         ],
         execOptions(options.cwd),
       );

@@ -53,7 +53,6 @@ describe("GitHub CLI code host adapter", () => {
         "LIN-123 Build workflow",
         "--body",
         "PR body",
-        "--draft",
       ],
     });
   });
