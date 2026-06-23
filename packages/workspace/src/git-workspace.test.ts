@@ -1,7 +1,38 @@
 import { describe, expect, it } from "bun:test";
 import { createGitWorkspaceAdapter } from "./index.js";
+import { createDefaultExecCommand, defaultExecCommand } from "./git-workspace.js";
 
 describe("git workspace adapter", () => {
+  it("resolves successful spawn output through the default exec command", async () => {
+    await expect(defaultExecCommand("printf", ["hello"], { cwd: process.cwd() })).resolves.toEqual({
+      stdout: "hello",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("rejects clearly when spawn fails", async () => {
+    await expect(
+      defaultExecCommand("aigile-nonexistent-binary", [], { cwd: process.cwd() }),
+    ).rejects.toThrow(/aigile-nonexistent-binary.*ENOENT/);
+  });
+
+  it("kills and rejects commands that exceed the configured timeout", async () => {
+    const exec = createDefaultExecCommand({ timeoutMs: 25 });
+
+    await expect(exec("sleep", ["1"], { cwd: process.cwd() })).rejects.toThrow(
+      /sleep.*timed out.*25ms/,
+    );
+  });
+
+  it("kills and rejects commands that exceed the configured output cap", async () => {
+    const exec = createDefaultExecCommand({ maxOutputBytes: 4 });
+
+    await expect(exec("printf", ["12345"], { cwd: process.cwd() })).rejects.toThrow(
+      /printf.*output.*4 bytes/,
+    );
+  });
+
   it("creates an issue worktree with a safe branch name", async () => {
     const commands: Array<{ command: string; args: string[]; cwd: string }> = [];
     const adapter = createGitWorkspaceAdapter({
