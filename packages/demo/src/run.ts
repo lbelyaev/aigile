@@ -977,7 +977,20 @@ export const runWorkspaceIssueWithEngine = async (
     },
     codeHost,
     runRole: (roleId, inputArtifacts) =>
-      runAssignedRole({ roleId, issueId: input.issue.key, inputArtifacts, registry, runner }),
+      runAssignedRole({
+        roleId,
+        issueId: input.issue.key,
+        // The checker reviews under a read-only `review` execution policy so it can
+        // grep/diff/run the gate but not edit/commit/publish. Apply it on the engine
+        // path too — not just the legacy runDemoIssueWithRoles path — so the path
+        // that actually runs in production gets it.
+        inputArtifacts:
+          roleId === "checker"
+            ? checkerInputArtifacts(inputArtifacts, input.issue.key)
+            : inputArtifacts,
+        registry,
+        runner,
+      }),
     verify: async () =>
       verifier.verify({
         issueKey: input.issue.key,

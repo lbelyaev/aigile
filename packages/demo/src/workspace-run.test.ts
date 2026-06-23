@@ -487,6 +487,97 @@ describe("workspace-aware demo orchestration", () => {
     }
   });
 
+  it("runs the checker under a read-only review execution policy on the engine path", async () => {
+    const runStatePath = await mkdtemp(join(tmpdir(), "aigile-checker-policy-"));
+    try {
+      let checkerPolicyMode: unknown;
+      const registry = createRoleRuntimeRegistry({
+        runtimes: [{ id: "custom-runtime", transport: "stdio", command: ["custom-acp"] }],
+        assignments: [
+          { roleId: "architect", runtimeProfileId: "custom-runtime" },
+          { roleId: "developer", runtimeProfileId: "custom-runtime" },
+          { roleId: "checker", runtimeProfileId: "custom-runtime" },
+        ],
+      });
+      const runner: RoleRunner = {
+        run: async (input) => {
+          if (input.roleId === "checker") {
+            const policy = input.inputArtifacts.find(
+              (artifact) => artifact.kind === "execution.policy",
+            );
+            checkerPolicyMode = (policy?.payload as { mode?: unknown } | undefined)?.mode;
+            return {
+              id: "agent:CHK-1:checker:checker.verdict",
+              kind: "checker.verdict",
+              source: "agent",
+              producerRoleId: "checker",
+              payload: { verdict: "pass", summary: "ok", reasons: [] },
+            };
+          }
+          if (input.roleId === "architect") {
+            return {
+              id: "agent:CHK-1:architect:architect.plan",
+              kind: "architect.plan",
+              source: "agent",
+              producerRoleId: "architect",
+              payload: {
+                summary: "Plan",
+                scope: ["x"],
+                acceptanceCriteria: ["a"],
+                verificationCommands: ["bun run check"],
+                risks: [],
+              },
+            };
+          }
+          return {
+            id: "agent:CHK-1:developer:developer.attempt",
+            kind: "developer.attempt",
+            source: "agent",
+            producerRoleId: "developer",
+            payload: { summary: "d", changedFiles: ["README.md"], verificationNotes: "ok" },
+          };
+        },
+      };
+      const issue = {
+        id: "issue-chk",
+        key: "CHK-1",
+        title: "Checker policy",
+        description: "aigile-merge: manual",
+        acceptanceCriteria: [],
+        status: "todo",
+        comments: [],
+      };
+      const exec = async (command: string, args: readonly string[], options: { cwd?: string }) => {
+        const preflight = availableWorkspaceTarget(command, args);
+        if (preflight) return preflight;
+        if (command === "git" && args[0] === "worktree")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "diff")
+          return { stdout: "README.md | 1 +", stderr: "", exitCode: 0 };
+        return {
+          stdout: `${command} ${args.join(" ")} in ${options.cwd}`,
+          stderr: "",
+          exitCode: 0,
+        };
+      };
+
+      await runWorkspaceIssueWithEngine({
+        issue,
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        runStatePath,
+        registry,
+        runner,
+        codeHost: createFakeCodeHostAdapter(),
+        exec,
+      });
+
+      expect(checkerPolicyMode).toBe("review");
+    } finally {
+      await rm(runStatePath, { recursive: true, force: true });
+    }
+  });
+
   it("uses an existing read-only workspace path in dry-run role handoffs", async () => {
     const seenWorkspaceArtifacts: unknown[] = [];
     const registry = createRoleRuntimeRegistry({
