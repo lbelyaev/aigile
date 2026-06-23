@@ -4,6 +4,8 @@ export { buildAcpRuntimeConnectInput, createAcpRoleRunner } from "./acp-runner.j
 
 export { buildRolePrompt, getDefaultRoleInstruction } from "./prompts.js";
 
+export { DEEP_REVIEW_ANGLES, runAssignedDeepReview, runDeepReview } from "./deep-review.js";
+
 export type {
   RoleRunInput,
   RoleRunner,
@@ -21,3 +23,18 @@ export type {
 } from "./acp-runner.js";
 
 export type { BuildRolePromptInput } from "./prompts.js";
+
+export type {
+  DeepReviewAngle,
+  DeepReviewFinding,
+  DeepReviewFindingRefutationInput,
+  DeepReviewInput,
+  DeepReviewPassInput,
+  DeepReviewPassRefutationInput,
+  DeepReviewPassResult,
+  DeepReviewRefutationRecord,
+  DeepReviewRefutationResult,
+  DeepReviewSurvivingFinding,
+  DeepReviewVerdictPayload,
+  RunAssignedDeepReviewInput,
+} from "./deep-review.js";

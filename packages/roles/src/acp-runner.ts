@@ -198,6 +198,7 @@ const EXPECTED_ARTIFACT_KIND_BY_ROLE: Record<string, string> = {
   architect: "architect.plan",
   developer: "developer.attempt",
   checker: "checker.verdict",
+  deep_reviewer: "checker.verdict",
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

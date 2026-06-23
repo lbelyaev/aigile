@@ -20,6 +20,10 @@ export type { PersistedRun, RunStore } from "./run-store.js";
 
 export { listResumableRuns, runWorkflowEngine } from "./engine.js";
 
+export { reviewDepthForChangedFiles, reviewRoleForChangedFiles } from "./review-routing.js";
+
+export type { ReviewDepth } from "./review-routing.js";
+
 export type {
   WorkflowCommandContext,
   WorkflowCommandHandler,

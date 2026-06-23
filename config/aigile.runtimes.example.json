@@ -38,6 +38,7 @@
   "assignments": [
     { "roleId": "architect", "runtimeProfileId": "claude-acp" },
     { "roleId": "developer", "runtimeProfileId": "codex-acp" },
-    { "roleId": "checker", "runtimeProfileId": "claude-acp" }
+    { "roleId": "checker", "runtimeProfileId": "claude-acp" },
+    { "roleId": "deep_reviewer", "runtimeProfileId": "codex-acp" }
   ]
 }

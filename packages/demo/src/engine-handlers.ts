@@ -15,7 +15,8 @@ import {
   type PullRequestReviewInput,
 } from "@aigile/adapters";
 import type { IssueStatusLabels } from "@aigile/config";
-import type { WorkflowCommandHandlers } from "@aigile/workflow";
+import { runAssignedDeepReview } from "@aigile/roles";
+import { reviewRoleForChangedFiles, type WorkflowCommandHandlers } from "@aigile/workflow";
 import { resolveMergePolicy, type MergePolicy } from "./merge-policy.js";
 import { syncIssueStatusForState } from "./status-sync.js";
 
@@ -77,6 +78,13 @@ const developerHasChanges = (attempt: WorkflowArtifact): boolean => {
     throw new Error(`Developer artifact payload is invalid: ${attempt.id}`);
   }
   return attempt.payload.changedFiles.length > 0;
+};
+
+const developerChangedFiles = (attempt: WorkflowArtifact): readonly string[] => {
+  if (!isDeveloperAttemptPayload(attempt.payload)) {
+    throw new Error(`Developer artifact payload is invalid: ${attempt.id}`);
+  }
+  return attempt.payload.changedFiles;
 };
 
 const checkerReview = (verdict: WorkflowArtifact): PullRequestReviewInput => {
@@ -225,12 +233,19 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
       return { event: eventFor(type, issue.key, { artifactId: artifact.id }), artifact };
     },
     start_checker_review: async (ctx) => {
+      const attempt = requireByKind(ctx.artifacts, "developer.attempt");
+      const reviewRole = reviewRoleForChangedFiles(developerChangedFiles(attempt));
       const verdict = artifactWithRunSuffix(
-        await deps.runRole("checker", ctx.artifacts),
+        reviewRole === "deep_reviewer"
+          ? await runAssignedDeepReview({
+              issueId: issue.key,
+              inputArtifacts: ctx.artifacts,
+              runRole: deps.runRole,
+            })
+          : await deps.runRole(reviewRole, ctx.artifacts),
         `attempt-${ctx.snapshot.developerAttempts}`,
       );
       const base = checkerBaseEvent(verdict);
-      const attempt = requireByKind(ctx.artifacts, "developer.attempt");
       const type =
         base === "checker_passed" && !developerHasChanges(attempt) ? "work_satisfied" : base;
       const reason = isCheckerVerdictPayload(verdict.payload) ? verdict.payload.summary : undefined;
