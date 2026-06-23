@@ -75,16 +75,17 @@ export const createFakeCodeHostAdapter = (
   let nextNumber = 1;
 
   const mergeabilityFor = (id: string): PullRequestMergeabilityStatus => {
-    if (options.mergeability === undefined) return "mergeable";
+    if (options.mergeability === undefined) return "unknown";
     if (typeof options.mergeability === "string") return options.mergeability;
-    return options.mergeability[id] ?? "mergeable";
+    return options.mergeability[id] ?? "unknown";
   };
 
   const mergeStateFor = (id: string): PullRequestMergeStateStatus => {
     if (mergedIds.has(id)) return "merged";
-    if (options.merged === undefined) return "unmerged";
+    if (options.merged === undefined) return "unknown";
     if (typeof options.merged === "boolean") return options.merged ? "merged" : "unmerged";
-    return options.merged[id] === true ? "merged" : "unmerged";
+    if (options.merged[id] === undefined) return "unknown";
+    return options.merged[id] ? "merged" : "unmerged";
   };
 
   return {

@@ -71,7 +71,8 @@ const buildDeps = (
     issue,
     branchName: "aigile/LIN-1",
     pullRequestTarget: { owner: "o", repo: "r", baseBranch: "main" },
-    codeHost: overrides.codeHost ?? createFakeCodeHostAdapter(),
+    codeHost:
+      overrides.codeHost ?? createFakeCodeHostAdapter({ mergeability: "mergeable", merged: false }),
     runRole: overrides.runRole ?? defaultRunRole,
     verify: overrides.verify ?? (async () => verificationArtifact("passed")),
     publish: overrides.publish ?? (async () => {}),
@@ -98,7 +99,7 @@ describe("engine command handlers", () => {
   });
 
   it("auto-merges when GitHub rejects an approving review from the PR author", async () => {
-    const baseCodeHost = createFakeCodeHostAdapter();
+    const baseCodeHost = createFakeCodeHostAdapter({ mergeability: "mergeable", merged: false });
     const codeHost: CodeHostAdapter = {
       ...baseCodeHost,
       submitPullRequestReview: async () => {
@@ -179,11 +180,11 @@ describe("engine command handlers", () => {
     expect(result.outcome).toBe("paused");
     expect(result.snapshot.state).toBe("merge_ready");
     // PR #1 was published but not merged.
-    expect((await codeHost.getPullRequestMergeState("o/r#1")).status).toBe("unmerged");
+    expect((await codeHost.getPullRequestMergeState("o/r#1")).status).toBe("unknown");
   });
 
   it("pauses when the PR is not yet mergeable", async () => {
-    const codeHost = createFakeCodeHostAdapter({ mergeability: "conflicting" });
+    const codeHost = createFakeCodeHostAdapter({ mergeability: "conflicting", merged: false });
     const result = await run(buildDeps({ codeHost }));
 
     expect(result.outcome).toBe("paused");

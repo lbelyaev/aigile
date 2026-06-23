@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { createFakeCodeHostAdapter } from "@aigile/adapters";
 import {
   createRoleRuntimeRegistry,
   createScriptedRoleRunner,
@@ -687,6 +688,7 @@ describe("durable engine-backed workspace run", () => {
         worktreesPath: "/repo/aigile/.worktrees",
         runStatePath: directory,
         runner: scriptedRunner(),
+        codeHost: createFakeCodeHostAdapter({ mergeability: "mergeable", merged: false }),
         exec: async (command, args) => {
           if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
           if (command === "git" && args[0] === "show-ref")
@@ -763,6 +765,7 @@ describe("durable engine-backed workspace run", () => {
         runStatePath: directory,
         retryEscalated: true,
         runner: scriptedRunner(),
+        codeHost: createFakeCodeHostAdapter({ mergeability: "mergeable", merged: false }),
         exec: async (command, args) => {
           if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
           if (command === "git" && args[0] === "show-ref")
