@@ -31,7 +31,10 @@ export type {
   PullRequestMergeState,
   PullRequestMergeStateStatus,
   PullRequestRecord,
+  PullRequestReview,
+  PullRequestReviewComment,
   PullRequestReviewInput,
+  PullRequestReviewState,
   ReadyIssueSource,
 } from "./contracts.js";
 

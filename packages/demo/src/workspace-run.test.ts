@@ -350,6 +350,134 @@ describe("workspace-aware demo orchestration", () => {
     });
   });
 
+  it("passes externally ingested review feedback to a resumed developer attempt", async () => {
+    const runStatePath = await mkdtemp(join(tmpdir(), "aigile-review-feedback-"));
+    try {
+      const developerInputs: string[][] = [];
+      const registry = createRoleRuntimeRegistry({
+        runtimes: [{ id: "custom-runtime", transport: "stdio", command: ["custom-acp"] }],
+        assignments: [
+          { roleId: "architect", runtimeProfileId: "custom-runtime" },
+          { roleId: "developer", runtimeProfileId: "custom-runtime" },
+          { roleId: "checker", runtimeProfileId: "custom-runtime" },
+        ],
+      });
+      const runner: RoleRunner = {
+        run: async (input) => {
+          if (input.roleId === "developer") {
+            developerInputs.push(input.inputArtifacts.map((artifact) => artifact.kind));
+          }
+          if (input.roleId === "architect") {
+            return {
+              id: "agent:LIN-777:architect:architect.plan",
+              kind: "architect.plan",
+              source: "agent",
+              producerRoleId: "architect",
+              payload: {
+                summary: "Plan",
+                scope: ["workspace"],
+                acceptanceCriteria: ["review feedback is visible"],
+                verificationCommands: ["bun run check"],
+                risks: [],
+              },
+            };
+          }
+          if (input.roleId === "developer") {
+            return {
+              id: "agent:LIN-777:developer:developer.attempt",
+              kind: "developer.attempt",
+              source: "agent",
+              producerRoleId: "developer",
+              payload: {
+                summary: "Attempt",
+                changedFiles: ["README.md"],
+                verificationNotes: "Verifier should run.",
+              },
+            };
+          }
+          return {
+            id: "agent:LIN-777:checker:checker.verdict",
+            kind: "checker.verdict",
+            source: "agent",
+            producerRoleId: "checker",
+            payload: {
+              verdict: "pass",
+              summary: "Checker passed.",
+              reasons: [],
+            },
+          };
+        },
+      };
+      const issue = {
+        id: "issue-777",
+        key: "LIN-777",
+        title: "Review feedback",
+        description: "manual merge",
+        acceptanceCriteria: [],
+        status: "todo",
+        comments: [],
+      };
+      const codeHost = createFakeCodeHostAdapter();
+      const exec = async (command: string, args: readonly string[], options: { cwd?: string }) => {
+        const preflight = availableWorkspaceTarget(command, args);
+        if (preflight) return preflight;
+        if (command === "git" && args[0] === "worktree")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "diff")
+          return { stdout: "README.md | 1 +", stderr: "", exitCode: 0 };
+        return {
+          stdout: `${command} ${args.join(" ")} in ${options.cwd}`,
+          stderr: "",
+          exitCode: 0,
+        };
+      };
+
+      await runWorkspaceIssueWithEngine({
+        issue,
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        runStatePath,
+        registry,
+        runner,
+        codeHost,
+        exec,
+      });
+      const feedback = {
+        id: "review-feedback:LIN-777:review-1",
+        kind: "review.feedback",
+        source: "github" as const,
+        payload: { source: "github", signalId: "review-1", body: "Please rework this." },
+      };
+      await createFileRunStore({ directory: runStatePath }).appendEvent(
+        issue.key,
+        {
+          type: "review_changes_requested",
+          issueId: issue.key,
+          artifactId: feedback.id,
+          reason: "Please rework this.",
+        },
+        [feedback],
+      );
+
+      const result = await runWorkspaceIssueWithEngine({
+        issue,
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        runStatePath,
+        registry,
+        runner,
+        codeHost,
+        exec,
+      });
+
+      expect(result.finalState).toBe("merge_ready");
+      expect(developerInputs).toHaveLength(2);
+      expect(developerInputs[1]).toContain("review.feedback");
+    } finally {
+      await rm(runStatePath, { recursive: true, force: true });
+    }
+  });
+
   it("uses an existing read-only workspace path in dry-run role handoffs", async () => {
     const seenWorkspaceArtifacts: unknown[] = [];
     const registry = createRoleRuntimeRegistry({

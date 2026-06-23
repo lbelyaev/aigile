@@ -103,6 +103,7 @@ describe("domain schemas", () => {
     expect(WORKFLOW_STATES).toContain("merged");
     expect(WORKFLOW_EVENT_TYPES).toContain("plan_drafted");
     expect(WORKFLOW_EVENT_TYPES).toContain("checker_requested_changes");
+    expect(WORKFLOW_EVENT_TYPES).toContain("review_changes_requested");
     expect(WORKFLOW_EVENT_TYPES).toContain("work_satisfied");
   });
 

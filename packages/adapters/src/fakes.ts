@@ -7,6 +7,7 @@ import type {
   PullRequestMergeabilityStatus,
   PullRequestMergeStateStatus,
   PullRequestRecord,
+  PullRequestReview,
   PullRequestReviewInput,
   ReadyIssueSource,
 } from "./contracts.js";
@@ -16,6 +17,12 @@ const cloneIssue = (issue: IssueRecord): IssueRecord => structuredClone(issue);
 
 const clonePullRequest = (pullRequest: PullRequestRecord): PullRequestRecord =>
   structuredClone(pullRequest);
+
+const reviewStateFor = (event: PullRequestReviewInput["event"]): PullRequestReview["state"] => {
+  if (event === "approve") return "APPROVED";
+  if (event === "request_changes") return "CHANGES_REQUESTED";
+  return "COMMENTED";
+};
 
 const requireIssue = (issues: Map<string, IssueRecord>, key: string): IssueRecord => {
   const issue = issues.get(key);
@@ -127,6 +134,16 @@ export const createFakeCodeHostAdapter = (
       const pullRequest = requirePullRequest(pullRequests, id);
       pullRequest.reviews ??= [];
       pullRequest.reviews.push(structuredClone(review));
+    },
+    listPullRequestReviews: async (id) => {
+      const pullRequest = requirePullRequest(pullRequests, id);
+      return pullRequest.reviews.map((review, index) => ({
+        id: `${id}:review:${index + 1}`,
+        state: reviewStateFor(review.event),
+        submittedAt: new Date(index * 1000).toISOString(),
+        body: review.body,
+        comments: [...structuredClone(review.comments ?? [])],
+      }));
     },
     mergePullRequest: async (id) => {
       requirePullRequest(pullRequests, id);

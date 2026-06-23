@@ -174,6 +174,62 @@ describe("GitHub CLI code host adapter", () => {
     ]);
   });
 
+  it("lists pull request reviews and associated review comments with gh api", async () => {
+    const calls: string[][] = [];
+    const adapter = createGitHubCliCodeHostAdapter({
+      exec: async (_command, args) => {
+        calls.push([...args]);
+        if (args.some((arg) => arg.includes("/reviews/101/comments"))) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: 501,
+                body: "Please keep this adapter pure.",
+                path: "packages/watch/src/reconcile.ts",
+                line: 44,
+              },
+            ]),
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        return {
+          stdout: JSON.stringify([
+            {
+              id: 101,
+              state: "CHANGES_REQUESTED",
+              body: "Please rework this.",
+              submitted_at: "2026-06-23T01:00:00Z",
+              user: { login: "reviewer" },
+            },
+          ]),
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    });
+
+    await expect(adapter.listPullRequestReviews!("o/r#7")).resolves.toEqual([
+      {
+        id: "101",
+        state: "CHANGES_REQUESTED",
+        submittedAt: "2026-06-23T01:00:00Z",
+        body: "Please rework this.",
+        author: "reviewer",
+        comments: [
+          {
+            id: "501",
+            body: "Please keep this adapter pure.",
+            path: "packages/watch/src/reconcile.ts",
+            line: 44,
+          },
+        ],
+      },
+    ]);
+    expect(calls).toContainEqual(["api", "repos/o/r/pulls/7/reviews", "--paginate"]);
+    expect(calls).toContainEqual(["api", "repos/o/r/pulls/7/reviews/101/comments", "--paginate"]);
+  });
+
   it("submits approve, request-changes, and comment reviews with gh", async () => {
     const calls: string[][] = [];
     const adapter = createGitHubCliCodeHostAdapter({

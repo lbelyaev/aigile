@@ -121,6 +121,30 @@ const retryDevelopmentOrEscalate = (
   );
 };
 
+const requestChangesOrEscalate = (
+  snapshot: WorkflowSnapshot,
+  event: WorkflowEvent,
+  policy: Required<WorkflowPolicy>,
+): TransitionResult => {
+  if (!shouldRetryDevelopment(snapshot, policy)) {
+    return moveTo(
+      snapshot,
+      "escalated",
+      [command("request_human_attention", snapshot.issueId, event.reason)],
+      event,
+    );
+  }
+
+  const nextAttempt = snapshot.developerAttempts + 1;
+  return moveTo(
+    snapshot,
+    "changes_requested",
+    [command("start_developer_attempt", snapshot.issueId, event.reason)],
+    event,
+    nextAttempt,
+  );
+};
+
 export const transitionWorkflow = (
   snapshot: WorkflowSnapshot,
   event: WorkflowEvent,
@@ -267,6 +291,9 @@ export const transitionWorkflow = (
           [command("sync_sources_of_truth", snapshot.issueId)],
           event,
         );
+      }
+      if (event.type === "review_changes_requested") {
+        return requestChangesOrEscalate(snapshot, event, policy);
       }
       return illegalTransition(snapshot.state, event);
 

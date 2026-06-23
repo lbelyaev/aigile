@@ -7,7 +7,10 @@ import type {
   PullRequestMergeState,
   PullRequestMergeStateStatus,
   PullRequestRecord,
+  PullRequestReview,
+  PullRequestReviewComment,
   PullRequestReviewInput,
+  PullRequestReviewState,
 } from "./contracts.js";
 
 export interface GitHubCliExecResult {
@@ -113,6 +116,87 @@ const parseMergeStatePayload = (stdout: string): PullRequestMergeState => {
     ...(mergedAt === undefined ? {} : { mergedAt }),
   };
 };
+
+const parseJsonArray = (stdout: string, operation: string): unknown[] => {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(stdout) as unknown;
+  } catch (error) {
+    throw new Error(
+      `Could not parse ${operation} JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!Array.isArray(payload)) throw new Error(`Could not parse ${operation} JSON: expected array`);
+  return payload;
+};
+
+const stringValue = (value: unknown): string | undefined =>
+  typeof value === "string" && value.length > 0
+    ? value
+    : typeof value === "number"
+      ? String(value)
+      : undefined;
+
+const numberValue = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const parseReviewState = (value: unknown): PullRequestReviewState => {
+  const state = typeof value === "string" ? value.toUpperCase() : "";
+  if (
+    state === "APPROVED" ||
+    state === "CHANGES_REQUESTED" ||
+    state === "COMMENTED" ||
+    state === "DISMISSED"
+  ) {
+    return state;
+  }
+  return "COMMENTED";
+};
+
+const parseReviewComments = (stdout: string): PullRequestReviewComment[] =>
+  parseJsonArray(stdout, "pull request review comments").flatMap((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+    const value = entry as Record<string, unknown>;
+    const id = stringValue(value.id);
+    const body = stringValue(value.body);
+    if (id === undefined || body === undefined) return [];
+    const comment: PullRequestReviewComment = { id, body };
+    const path = stringValue(value.path);
+    const line = numberValue(value.line);
+    if (path !== undefined) comment.path = path;
+    if (line !== undefined) comment.line = line;
+    return [comment];
+  });
+
+const parseReviews = (
+  stdout: string,
+  commentsByReviewId: ReadonlyMap<string, PullRequestReviewComment[]>,
+): PullRequestReview[] =>
+  parseJsonArray(stdout, "pull request reviews").flatMap((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+    const value = entry as Record<string, unknown>;
+    const id = stringValue(value.id);
+    const body = stringValue(value.body) ?? "";
+    if (id === undefined) return [];
+    const submittedAt =
+      stringValue(value.submitted_at) ??
+      stringValue(value.submittedAt) ??
+      new Date(0).toISOString();
+    const user = value.user;
+    const author =
+      typeof user === "object" && user !== null && !Array.isArray(user)
+        ? stringValue((user as { login?: unknown }).login)
+        : undefined;
+    const review: PullRequestReview = {
+      id,
+      state: parseReviewState(value.state),
+      submittedAt,
+      body,
+      comments: commentsByReviewId.get(id) ?? [],
+    };
+    if (author !== undefined) review.author = author;
+    return [review];
+  });
 
 const assertSuccess = (result: GitHubCliExecResult, operation: string): void => {
   if (result.exitCode !== 0) {
@@ -288,6 +372,35 @@ export const createGitHubCliCodeHostAdapter = (
       );
       assertSuccess(result, "gh pr review");
       pullRequests.get(id)?.reviews.push(structuredClone(review));
+    },
+    listPullRequestReviews: async (id) => {
+      const reviewsResult = await options.exec(
+        "gh",
+        ["api", `repos/${repoFromId(id)}/pulls/${prNumberFromId(id)}/reviews`, "--paginate"],
+        execOptions(options.cwd),
+      );
+      assertSuccess(reviewsResult, "gh api pull request reviews");
+      const rawReviews = parseJsonArray(reviewsResult.stdout, "pull request reviews");
+      const commentsByReviewId = new Map<string, PullRequestReviewComment[]>();
+      for (const rawReview of rawReviews) {
+        if (typeof rawReview !== "object" || rawReview === null || Array.isArray(rawReview)) {
+          continue;
+        }
+        const reviewId = stringValue((rawReview as { id?: unknown }).id);
+        if (reviewId === undefined) continue;
+        const commentsResult = await options.exec(
+          "gh",
+          [
+            "api",
+            `repos/${repoFromId(id)}/pulls/${prNumberFromId(id)}/reviews/${reviewId}/comments`,
+            "--paginate",
+          ],
+          execOptions(options.cwd),
+        );
+        assertSuccess(commentsResult, "gh api pull request review comments");
+        commentsByReviewId.set(reviewId, parseReviewComments(commentsResult.stdout));
+      }
+      return parseReviews(JSON.stringify(rawReviews), commentsByReviewId);
     },
     recordCheckResult: async (id, check: CheckResult) => {
       const body = `### ${check.name}: ${check.status}\n\n${check.summary}`;
