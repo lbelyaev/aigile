@@ -854,12 +854,10 @@ const syncLinearIssueWorkflowResult = async (
           ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
         },
   );
-  if (input.teamKey !== undefined) {
-    await tracker.updateIssueStatus(
-      input.issueKey,
-      markDone ? issueStatusLabels.done : issueStatusLabels.inReview,
-    );
-  }
+  await tracker.updateIssueStatus(
+    input.issueKey,
+    markDone ? issueStatusLabels.done : issueStatusLabels.inReview,
+  );
   await tracker.appendIssueComment(
     input.issueKey,
     shouldSyncSatisfied
@@ -898,6 +896,26 @@ export const runLinearIssueWorkflowCli = async (
     registry: runtimeConfigToRegistry(runtimeConfig),
     issueStatusLabels: runtimeConfig.issueStatusLabels,
   };
+  if (input.dryRun !== true) {
+    runInput.issueTracker = createLinearGraphqlIssueTrackerAdapter(
+      input.fetchGraphql === undefined
+        ? {
+            apiKey: input.apiKey,
+            ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
+          }
+        : {
+            apiKey: input.apiKey,
+            fetchGraphql: input.fetchGraphql,
+            ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
+          },
+    );
+    runInput.onIssueStatusUpdateError = (error, state, status) => {
+      const message = error instanceof Error ? error.message : String(error);
+      input.onProgressLine?.(
+        `Linear status sync failed for ${input.issueKey} (${state} -> ${status}): ${message}`,
+      );
+    };
+  }
   const verificationCommands = [
     ...(input.verification?.install ?? []),
     ...(input.verification?.checks ?? []),
