@@ -332,15 +332,7 @@ export const createGitHubCliCodeHostAdapter = (
     getPullRequestMergeState: async (id) => {
       const result = await options.exec(
         "gh",
-        [
-          "pr",
-          "view",
-          prNumberFromId(id),
-          "--repo",
-          repoFromId(id),
-          "--json",
-          "state,merged,mergedAt",
-        ],
+        ["pr", "view", prNumberFromId(id), "--repo", repoFromId(id), "--json", "state,mergedAt"],
         execOptions(options.cwd),
       );
       assertSuccess(result, "gh pr view");
@@ -424,7 +416,7 @@ export const createGitHubCliCodeHostAdapter = (
       const repo = `${target.owner}/${target.repo}`;
       const result = await options.exec(
         "gh",
-        ["pr", "view", branch, "--repo", repo, "--json", "number,url,state,merged"],
+        ["pr", "view", branch, "--repo", repo, "--json", "number,url,state"],
         execOptions(options.cwd),
       );
       // gh exits non-zero when no PR exists for the branch.
@@ -436,10 +428,10 @@ export const createGitHubCliCodeHostAdapter = (
         return undefined;
       }
       if (typeof parsed !== "object" || parsed === null) return undefined;
-      const view = parsed as { number?: unknown; url?: unknown; state?: unknown; merged?: unknown };
+      const view = parsed as { number?: unknown; url?: unknown; state?: unknown };
       if (typeof view.number !== "number" || typeof view.url !== "string") return undefined;
       const id = `${target.owner}/${target.repo}#${view.number}`;
-      const merged = view.merged === true || view.state === "MERGED";
+      const merged = view.state === "MERGED";
       const open = view.state === "OPEN";
       return {
         id,

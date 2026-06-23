@@ -379,7 +379,6 @@ describe("GitHub CLI code host adapter", () => {
         return {
           stdout: JSON.stringify({
             state: "MERGED",
-            merged: true,
             mergedAt: "2026-06-20T12:00:00Z",
           }),
           stderr: "",
@@ -399,7 +398,6 @@ describe("GitHub CLI code host adapter", () => {
     await expect(adapter.getPullRequestMergeState(pr.id)).resolves.toEqual({
       status: "merged",
       state: "MERGED",
-      merged: true,
       mergedAt: "2026-06-20T12:00:00Z",
     });
     expect(calls).toContainEqual([
@@ -409,7 +407,7 @@ describe("GitHub CLI code host adapter", () => {
       "--repo",
       "aigile/aigile",
       "--json",
-      "state,merged,mergedAt",
+      "state,mergedAt",
     ]);
   });
 

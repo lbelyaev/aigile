@@ -78,37 +78,45 @@ export const syncIssueStatusForState = async (input: {
   originalStatus?: string | undefined;
   artifacts?: readonly WorkflowArtifact[] | undefined;
   reason?: string | undefined;
+  // Status sync is advisory: a failure (e.g. a label with no matching Linear
+  // workflow state) must never crash the run. Surface it here instead of throwing.
+  onError?: ((error: unknown, state: WorkflowState, status: string) => void) | undefined;
 }): Promise<void> => {
   if (input.issueTracker === undefined) return;
+  const tracker = input.issueTracker;
   const labels: IssueStatusLabels = {
     ...DEFAULT_ISSUE_STATUS_LABELS,
     ...(input.issueStatusLabels ?? {}),
   };
-  await input.issueTracker.updateIssueStatus(
-    input.issueKey,
-    issueStatusLabelForState(input.state, labels, input.originalStatus),
-  );
+  const status = issueStatusLabelForState(input.state, labels, input.originalStatus);
+  try {
+    await tracker.updateIssueStatus(input.issueKey, status);
 
-  const artifacts = input.artifacts ?? [];
-  const pullRequestArtifact = artifacts.find((artifact) => artifact.kind === "github.pull_request");
-  const pullRequest =
-    pullRequestArtifact?.payload !== undefined
-      ? (pullRequestArtifact.payload as PullRequestRecord)
-      : undefined;
-  if (input.state === "satisfied") {
-    await input.issueTracker.appendIssueComment(
-      input.issueKey,
-      formatSatisfiedStatusComment(input.state, artifacts),
+    const artifacts = input.artifacts ?? [];
+    const pullRequestArtifact = artifacts.find(
+      (artifact) => artifact.kind === "github.pull_request",
     );
-  } else if ((input.state === "merged" || input.state === "merge_ready") && pullRequest) {
-    await input.issueTracker.appendIssueComment(
-      input.issueKey,
-      formatPublishedStatusComment(input.state, pullRequest, artifacts),
-    );
-  } else if (input.state === "escalated" || input.state === "failed") {
-    await input.issueTracker.appendIssueComment(
-      input.issueKey,
-      formatPullRequestBlockedComment(pullRequest, input.reason, artifacts),
-    );
+    const pullRequest =
+      pullRequestArtifact?.payload !== undefined
+        ? (pullRequestArtifact.payload as PullRequestRecord)
+        : undefined;
+    if (input.state === "satisfied") {
+      await tracker.appendIssueComment(
+        input.issueKey,
+        formatSatisfiedStatusComment(input.state, artifacts),
+      );
+    } else if ((input.state === "merged" || input.state === "merge_ready") && pullRequest) {
+      await tracker.appendIssueComment(
+        input.issueKey,
+        formatPublishedStatusComment(input.state, pullRequest, artifacts),
+      );
+    } else if (input.state === "escalated" || input.state === "failed") {
+      await tracker.appendIssueComment(
+        input.issueKey,
+        formatPullRequestBlockedComment(pullRequest, input.reason, artifacts),
+      );
+    }
+  } catch (error) {
+    input.onError?.(error, input.state, status);
   }
 };
