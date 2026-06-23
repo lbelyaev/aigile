@@ -1936,6 +1936,65 @@ describe("cli formatting", () => {
     ]);
   });
 
+  it("syncs the final Linear status even when no team key is configured", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+
+    await runLinearIssueWorkflowCli({
+      apiKey: "test-key",
+      issueKey: "LBE-10",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      agentWrite: true,
+      publish: true,
+      fetchGraphql: async (query, variables) => {
+        calls.push({ query, variables });
+        if (query.includes("IssueByKey")) {
+          return {
+            issue: {
+              id: "issue-id",
+              identifier: "LBE-10",
+              title: "Sync without team",
+              description: "Acceptance:\n- Update status",
+              state: { name: "Todo" },
+              comments: { nodes: [] },
+            },
+          };
+        }
+        if (query.includes("issueUpdate")) return {};
+        if (query.includes("commentCreate")) return {};
+        throw new Error(`unexpected query: ${query}`);
+      },
+      runWorkspace: async (input) => ({
+        issueKey: input.issue.key,
+        finalState: "merged",
+        pullRequest: {
+          id: "lbelyaev/aigile#10",
+          number: 10,
+          url: "https://github.com/lbelyaev/aigile/pull/10",
+          owner: "lbelyaev",
+          repo: "aigile",
+          branch: "aigile/LBE-10",
+          baseBranch: "main",
+          title: "LBE-10 Sync without team",
+          body: "Demo PR",
+          comments: [],
+          checks: [],
+          reviews: [],
+        },
+        artifacts: [],
+        timeline: [],
+        durationMs: 0,
+      }),
+    });
+
+    expect(calls.map((call) => call.variables)).toEqual([
+      { key: "LBE-10" },
+      { key: "LBE-10", status: "Done" },
+      { key: "LBE-10", body: expect.stringContaining("Aigile completed this issue") },
+    ]);
+  });
+
   it("does not mark published Linear runs Done when pull request mergeability is unknown", async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
     const codeHost: CodeHostAdapter = {

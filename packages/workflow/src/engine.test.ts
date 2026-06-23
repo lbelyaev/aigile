@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import type { WorkflowArtifact, WorkflowEvent } from "@aigile/types";
+import type { WorkflowArtifact, WorkflowEvent, WorkflowState } from "@aigile/types";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,6 +51,51 @@ describe("workflow engine", () => {
     const persisted = await store.load("LIN-1");
     expect(persisted?.events[0]?.type).toBe("issue_received");
     expect(persisted?.events.at(-1)?.type).toBe("merge_completed");
+  });
+
+  it("notifies on each state change including bootstrap and terminal states", async () => {
+    const store = createInMemoryRunStore();
+    const states: WorkflowState[] = [];
+
+    const result = await runWorkflowEngine({
+      issueId: "LIN-1",
+      store,
+      handlers: baseHandlers(async () => ({ event: ev("verification_passed") })),
+      onStateChange: async ({ snapshot }) => {
+        states.push(snapshot.state);
+      },
+    });
+
+    expect(result.outcome).toBe("merged");
+    expect(states).toEqual([
+      "planning",
+      "awaiting_plan_approval",
+      "developing",
+      "verifying",
+      "checking",
+      "merge_ready",
+      "merged",
+    ]);
+  });
+
+  it("keeps running when the state-change hook fails", async () => {
+    const store = createInMemoryRunStore();
+    const errors: string[] = [];
+
+    const result = await runWorkflowEngine({
+      issueId: "LIN-1",
+      store,
+      handlers: baseHandlers(async () => ({ event: ev("verification_passed") })),
+      onStateChange: async () => {
+        throw new Error("tracker unavailable");
+      },
+      onStateChangeError: async ({ error }) => {
+        errors.push(error instanceof Error ? error.message : String(error));
+      },
+    });
+
+    expect(result.outcome).toBe("merged");
+    expect(errors).toContain("tracker unavailable");
   });
 
   it("retries development until verification passes, then merges", async () => {
@@ -112,16 +157,25 @@ describe("workflow engine", () => {
   it("escalates after the developer-attempt budget is exhausted", async () => {
     const store = createInMemoryRunStore();
     let verifyCalls = 0;
+    const states: WorkflowState[] = [];
     const handlers = baseHandlers(async () => {
       verifyCalls += 1;
       return { event: ev("verification_failed") };
     });
 
-    const result = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+    const result = await runWorkflowEngine({
+      issueId: "LIN-1",
+      store,
+      handlers,
+      onStateChange: async ({ snapshot }) => {
+        states.push(snapshot.state);
+      },
+    });
 
     expect(result.outcome).toBe("escalated");
     expect(result.snapshot.state).toBe("escalated");
     expect(verifyCalls).toBe(3); // three attempts then escalate (default maxDeveloperAttempts)
+    expect(states.at(-1)).toBe("escalated");
   });
 
   it("respects a custom developer-attempt budget", async () => {

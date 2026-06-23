@@ -708,6 +708,108 @@ describe("durable engine-backed workspace run", () => {
     }
   });
 
+  it("updates issue status as the engine progresses through a successful run", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "aigile-engine-status-"));
+    const statuses: string[] = [];
+    try {
+      const result = await runWorkspaceIssueWithEngine({
+        issue: {
+          id: "i",
+          key: "LIN-9",
+          title: "Engine run",
+          description: "",
+          acceptanceCriteria: [],
+          status: "Todo",
+          comments: [],
+        },
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        runStatePath: directory,
+        runner: scriptedRunner(),
+        issueStatusLabels: {
+          developing: "In Progress",
+          blocked: "Blocked",
+          inReview: "In Review",
+          done: "Done",
+        },
+        issueTracker: {
+          getIssue: async () => {
+            throw new Error("getIssue should not be called");
+          },
+          updateIssueStatus: async (_key, status) => {
+            statuses.push(status);
+          },
+          appendIssueComment: async () => undefined,
+        },
+        codeHost: createFakeCodeHostAdapter({ mergeability: "mergeable", merged: false }),
+        exec: async (command, args) => {
+          if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+          if (command === "git" && args[0] === "show-ref")
+            return { stdout: "", stderr: "", exitCode: 1 };
+          if (command === "git" && args[0] === "diff" && args.includes("--cached"))
+            return { stdout: "", stderr: "", exitCode: 1 };
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+      });
+
+      expect(result.finalState).toBe("merged");
+      expect(statuses).toEqual(["In Progress", "In Review", "Done"]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("moves unsuccessful engine runs to the blocked issue status", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "aigile-engine-status-failed-"));
+    const statuses: string[] = [];
+    try {
+      const result = await runWorkspaceIssueWithEngine({
+        issue: {
+          id: "i",
+          key: "LIN-9",
+          title: "Engine run",
+          description: "",
+          acceptanceCriteria: [],
+          status: "Todo",
+          comments: [],
+        },
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        runStatePath: directory,
+        runner: scriptedRunner(),
+        issueStatusLabels: {
+          developing: "In Progress",
+          blocked: "Blocked",
+          inReview: "In Review",
+          done: "Done",
+        },
+        issueTracker: {
+          getIssue: async () => {
+            throw new Error("getIssue should not be called");
+          },
+          updateIssueStatus: async (_key, status) => {
+            statuses.push(status);
+          },
+          appendIssueComment: async () => undefined,
+        },
+        codeHost: createFakeCodeHostAdapter({ mergeability: "mergeable", merged: false }),
+        exec: async (command, args) => {
+          if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+          if (command === "git" && args[0] === "show-ref")
+            return { stdout: "", stderr: "", exitCode: 1 };
+          if (command === "bun" && args[0] === "run" && args[1] === "check")
+            return { stdout: "", stderr: "failed", exitCode: 1 };
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+      });
+
+      expect(result.finalState).toBe("escalated");
+      expect(statuses).toEqual(["In Progress", "Blocked"]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("can retry after clearing a prior escalated run log", async () => {
     const directory = await mkdtemp(join(tmpdir(), "aigile-engine-retry-"));
     try {

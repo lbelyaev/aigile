@@ -35,6 +35,25 @@ export type WorkflowCommandHandler = (
 
 export type WorkflowCommandHandlers = Partial<Record<WorkflowCommandType, WorkflowCommandHandler>>;
 
+export interface WorkflowStateChangeContext {
+  previousSnapshot: WorkflowSnapshot;
+  snapshot: WorkflowSnapshot;
+  event: WorkflowEvent;
+  artifacts: readonly WorkflowArtifact[];
+}
+
+export interface WorkflowStateChangeErrorContext extends WorkflowStateChangeContext {
+  error: unknown;
+}
+
+export type WorkflowStateChangeHandler = (
+  context: WorkflowStateChangeContext,
+) => Promise<void> | void;
+
+export type WorkflowStateChangeErrorHandler = (
+  context: WorkflowStateChangeErrorContext,
+) => Promise<void> | void;
+
 export type WorkflowOutcome =
   | "merged"
   | "satisfied"
@@ -50,6 +69,8 @@ export interface WorkflowEngineInput {
   handlers: WorkflowCommandHandlers;
   policy?: WorkflowPolicy;
   initialArtifacts?: readonly WorkflowArtifact[];
+  onStateChange?: WorkflowStateChangeHandler;
+  onStateChangeError?: WorkflowStateChangeErrorHandler;
 }
 
 export interface WorkflowEngineResult {
@@ -128,6 +149,19 @@ const mergeArtifact = (
     ? [...artifacts]
     : [...artifacts, structuredClone(artifact)];
 
+const notifyStateChange = async (
+  input: Pick<WorkflowEngineInput, "onStateChange" | "onStateChangeError">,
+  context: WorkflowStateChangeContext,
+): Promise<void> => {
+  if (context.previousSnapshot.state === context.snapshot.state) return;
+  if (input.onStateChange === undefined) return;
+  try {
+    await input.onStateChange(context);
+  } catch (error) {
+    await input.onStateChangeError?.({ ...context, error });
+  }
+};
+
 /**
  * Drive a workflow run to a terminal outcome by repeatedly: taking the FSM's
  * pending command, invoking its handler to perform the side effect and produce
@@ -158,9 +192,16 @@ export const runWorkflowEngine = async (
     snapshot = initialWorkflowSnapshot(issueId);
     artifacts = [...(input.initialArtifacts ?? [])];
     const bootstrap: WorkflowEvent = { type: "issue_received", issueId };
+    const previousSnapshot = snapshot;
     const result = transitionWorkflow(snapshot, bootstrap, policy);
     snapshot = result.snapshot;
     await store.appendEvent(issueId, bootstrap, input.initialArtifacts ?? []);
+    await notifyStateChange(input, {
+      previousSnapshot,
+      snapshot,
+      event: bootstrap,
+      artifacts: [...artifacts],
+    });
     pending = result.commands;
   }
 
@@ -187,8 +228,15 @@ export const runWorkflowEngine = async (
       output.artifact !== undefined ? [output.artifact] : [],
     );
 
+    const previousSnapshot = snapshot;
     const result = transitionWorkflow(snapshot, output.event, policy);
     snapshot = result.snapshot;
+    await notifyStateChange(input, {
+      previousSnapshot,
+      snapshot,
+      event: output.event,
+      artifacts: [...artifacts],
+    });
     pending = result.commands;
   }
 

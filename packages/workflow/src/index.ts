@@ -28,4 +28,8 @@ export type {
   WorkflowEngineInput,
   WorkflowEngineResult,
   WorkflowOutcome,
+  WorkflowStateChangeContext,
+  WorkflowStateChangeErrorContext,
+  WorkflowStateChangeErrorHandler,
+  WorkflowStateChangeHandler,
 } from "./engine.js";

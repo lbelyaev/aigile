@@ -48,6 +48,7 @@ import {
   initialWorkflowSnapshot,
   runWorkflowEngine,
   transitionWorkflow,
+  type WorkflowEngineInput,
   type WorkflowSnapshot,
 } from "@aigile/workflow";
 import { join } from "node:path";
@@ -90,7 +91,9 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   publisher?: GitPublisher;
   remote?: string;
   codeHost?: CodeHostAdapter;
+  issueTracker?: IssueTrackerAdapter;
   issueStatusLabels?: Partial<IssueStatusLabels>;
+  onIssueStatusUpdateError?: (error: unknown, state: WorkflowState, status: string) => void;
   pullRequestTarget?: PullRequestTarget;
   createPullRequest?: boolean;
   publishPlan?: (plan: WorkflowArtifact) => Promise<void>;
@@ -384,12 +387,25 @@ const publishCheckerFeedback = async (
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const issueStatusLabelForState = (state: WorkflowState, labels: IssueStatusLabels): string => {
-  if (state === "planning") return labels.planning;
-  if (state === "developing") return labels.developing;
-  if (state === "merge_ready") return labels.inReview;
+const issueStatusLabelForState = (
+  state: WorkflowState,
+  labels: IssueStatusLabels,
+  originalStatus = "Todo",
+): string => {
+  if (
+    state === "planning" ||
+    state === "awaiting_plan_approval" ||
+    state === "developing" ||
+    state === "changes_requested" ||
+    state === "verifying" ||
+    state === "checking"
+  ) {
+    return labels.developing;
+  }
+  if (state === "merge_ready" || state === "satisfied") return labels.inReview;
   if (state === "merged") return labels.done;
-  if (state === "escalated") return labels.blocked;
+  if (state === "escalated" || state === "failed") return labels.blocked;
+  if (state === "cancelled") return originalStatus;
   return state;
 };
 
@@ -934,6 +950,11 @@ export const runWorkspaceIssueWithEngine = async (
   const target = input.pullRequestTarget ?? { owner: "aigile", repo: "aigile" };
   const checks = input.verificationCommands ?? [["bun", "run", "check"]];
   const autofix = input.autofixCommands ?? DEFAULT_AUTOFIX_COMMANDS;
+  const issueStatusLabels: IssueStatusLabels = {
+    ...DEFAULT_ISSUE_STATUS_LABELS,
+    ...(input.issueStatusLabels ?? {}),
+  };
+  let lastSyncedStatus: string | undefined = input.issue.status;
 
   const deps: EngineHandlerDeps = {
     issue: input.issue,
@@ -969,7 +990,7 @@ export const runWorkspaceIssueWithEngine = async (
     directory: input.runStatePath ?? join(input.worktreesPath, "..", "runs"),
   });
   if (input.retryEscalated === true) await store.deleteRun(input.issue.key);
-  const result = await runWorkflowEngine({
+  const engineInput: WorkflowEngineInput = {
     issueId: input.issue.key,
     store,
     handlers: createEngineCommandHandlers(deps),
@@ -978,7 +999,29 @@ export const runWorkspaceIssueWithEngine = async (
       workspaceToArtifact(workspaceRolePayload(workspace, input), input.issue.key),
       executionPolicyToArtifact(input.issue.key, input.dryRun === true),
     ],
-  });
+  };
+  if (input.issueTracker !== undefined && input.dryRun !== true) {
+    engineInput.onStateChange = async ({ snapshot }) => {
+      const status = issueStatusLabelForState(
+        snapshot.state,
+        issueStatusLabels,
+        input.issue.status,
+      );
+      if (status === lastSyncedStatus) return;
+      lastSyncedStatus = status;
+      await input.issueTracker!.updateIssueStatus(input.issue.key, status);
+    };
+    engineInput.onStateChangeError = async ({ error, snapshot }) => {
+      const status = issueStatusLabelForState(
+        snapshot.state,
+        issueStatusLabels,
+        input.issue.status,
+      );
+      input.onIssueStatusUpdateError?.(error, snapshot.state, status);
+    };
+  }
+
+  const result = await runWorkflowEngine(engineInput);
 
   const pullRequestArtifact = result.artifacts.find(
     (artifact) => artifact.kind === "github.pull_request",

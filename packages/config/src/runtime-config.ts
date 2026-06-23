@@ -21,9 +21,9 @@ export interface IssueStatusLabels {
 }
 
 export const DEFAULT_ISSUE_STATUS_LABELS: IssueStatusLabels = {
-  planning: "planning",
-  developing: "developing",
-  blocked: "escalated",
+  planning: "In Progress",
+  developing: "In Progress",
+  blocked: "Blocked",
   inReview: "In Review",
   done: "Done",
 };
