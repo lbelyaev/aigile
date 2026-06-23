@@ -23,6 +23,8 @@ export interface IssueStatusLabels {
 export const DEFAULT_ISSUE_STATUS_LABELS: IssueStatusLabels = {
   planning: "In Progress",
   developing: "In Progress",
+  // "Blocked" is not present in every Linear team's workflow. Status sync failures
+  // are reported as progress lines; override this per team when needed.
   blocked: "Blocked",
   inReview: "In Review",
   done: "Done",

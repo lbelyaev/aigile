@@ -390,6 +390,7 @@ describe("demo orchestration", () => {
   });
 
   it("marks verified no-op work as satisfied without creating a pull request", async () => {
+    const { issueTracker, statusUpdates } = createRecordingIssueTracker();
     const runner = createScriptedRoleRunner({
       architect: {
         artifactKind: "architect.plan",
@@ -423,10 +424,17 @@ describe("demo orchestration", () => {
       issue,
       registry,
       runner,
+      issueTracker,
+      issueStatusLabels: {
+        inReview: "Needs Review",
+        done: "Completed",
+      },
     });
 
     expect(result.finalState).toBe("satisfied");
     expect(result.pullRequest).toBeUndefined();
+    expect(statusUpdates).toContain("Completed");
+    expect(statusUpdates).not.toContain("Needs Review");
     expect(result.artifacts.map((artifact) => artifact.kind)).not.toContain("github.pull_request");
     expect(result.timeline.map((entry) => entry.label)).toContain("work_satisfied -> satisfied");
     expect(result.timeline.map((entry) => entry.label)).not.toContain("merge_completed -> merged");

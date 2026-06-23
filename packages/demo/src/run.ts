@@ -402,8 +402,8 @@ const issueStatusLabelForState = (
   ) {
     return labels.developing;
   }
-  if (state === "merge_ready" || state === "satisfied") return labels.inReview;
-  if (state === "merged") return labels.done;
+  if (state === "merge_ready") return labels.inReview;
+  if (state === "satisfied" || state === "merged") return labels.done;
   if (state === "escalated" || state === "failed") return labels.blocked;
   if (state === "cancelled") return originalStatus;
   return state;
