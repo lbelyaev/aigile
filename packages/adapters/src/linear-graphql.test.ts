@@ -41,6 +41,17 @@ describe("Linear GraphQL issue tracker adapter", () => {
     });
   });
 
+  it("throws a clear error when a Linear issue payload is not a record", async () => {
+    const adapter = createLinearGraphqlIssueTrackerAdapter({
+      apiKey: "test-key",
+      fetchGraphql: async () => "unexpected",
+    });
+
+    await expect(adapter.getIssue("LIN-123")).rejects.toThrow(
+      "Linear GraphQL response shape invalid: expected issue response object",
+    );
+  });
+
   it("updates issue status and appends comments", async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
     const adapter = createLinearGraphqlIssueTrackerAdapter({
@@ -156,6 +167,23 @@ describe("Linear GraphQL issue tracker adapter", () => {
         comments: [],
       },
     ]);
+  });
+
+  it("throws a clear error when a Linear ready issue node is not a record", async () => {
+    const source = createLinearGraphqlReadyIssueSource({
+      apiKey: "test-key",
+      teamKey: "ENG",
+      readyStatus: "Ready for Aigile",
+      fetchGraphql: async () => ({
+        issues: {
+          nodes: ["unexpected"],
+        },
+      }),
+    });
+
+    await expect(source.listReadyIssues()).rejects.toThrow(
+      "Linear GraphQL response shape invalid: expected ready issue node object",
+    );
   });
 
   it("lists Linear team keys and names", async () => {
