@@ -246,8 +246,14 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
         `attempt-${ctx.snapshot.developerAttempts}`,
       );
       const base = checkerBaseEvent(verdict);
-      const type =
+      const baseType =
         base === "checker_passed" && !developerHasChanges(attempt) ? "work_satisfied" : base;
+      // Route a deep reviewer's change-request to its own event so the FSM can
+      // grant it the larger deep-review retry budget (vs the light checker).
+      const type =
+        reviewRole === "deep_reviewer" && baseType === "checker_requested_changes"
+          ? "review_changes_requested"
+          : baseType;
       const reason = isCheckerVerdictPayload(verdict.payload) ? verdict.payload.summary : undefined;
       return {
         event: eventFor(type, issue.key, { artifactId: verdict.id, ...(reason ? { reason } : {}) }),

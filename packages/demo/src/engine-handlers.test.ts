@@ -329,7 +329,9 @@ describe("engine command handlers", () => {
       "angle_pass:tests-faithful-to-reality",
       "refute_pass:tests-faithful-to-reality",
     ]);
-    expect(result.event?.type).toBe("checker_requested_changes");
+    // A deep reviewer's change-request routes to its own event so the FSM grants
+    // it the larger deep-review retry budget.
+    expect(result.event?.type).toBe("review_changes_requested");
   });
 
   it("keeps trivial engine-path changes on the light checker", async () => {

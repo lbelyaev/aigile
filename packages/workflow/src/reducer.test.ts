@@ -147,7 +147,11 @@ const expectedTransitions: Record<
       command: "start_developer_attempt",
       developerAttempts: 2,
     },
-    review_changes_requested: "illegal",
+    review_changes_requested: {
+      state: "changes_requested",
+      command: "start_developer_attempt",
+      developerAttempts: 2,
+    },
     checker_escalated: { state: "escalated", command: "request_human_attention" },
     work_satisfied: { state: "satisfied", command: "sync_sources_of_truth" },
     publish_failed: "illegal",
@@ -345,19 +349,22 @@ describe("workflow reducer", () => {
   });
 
   it("asserts both retry and escalation outcomes for attempt-capped transitions", () => {
+    // Deep-review change-requests are capped by maxDeepReviewDeveloperAttempts; all
+    // other retry-capped transitions use maxDeveloperAttempts.
     const cappedTransitions: Array<{
       state: WorkflowState;
       eventType: WorkflowEventType;
+      deep?: boolean;
     }> = [
       { state: "verifying", eventType: "verification_failed" },
       { state: "checking", eventType: "checker_requested_changes" },
-      { state: "merge_ready", eventType: "review_changes_requested" },
+      { state: "checking", eventType: "review_changes_requested", deep: true },
+      { state: "merge_ready", eventType: "review_changes_requested", deep: true },
     ];
 
-    for (const { state, eventType } of cappedTransitions) {
-      const retryResult = transitionWorkflow(snapshotFor(state, 1), eventFor(eventType), {
-        maxDeveloperAttempts: 2,
-      });
+    for (const { state, eventType, deep } of cappedTransitions) {
+      const policy = deep ? { maxDeepReviewDeveloperAttempts: 2 } : { maxDeveloperAttempts: 2 };
+      const retryResult = transitionWorkflow(snapshotFor(state, 1), eventFor(eventType), policy);
 
       const retryState =
         eventType === "review_changes_requested" ? "changes_requested" : "developing";
@@ -369,9 +376,7 @@ describe("workflow reducer", () => {
         "start_developer_attempt",
       ]);
 
-      const escalateResult = transitionWorkflow(snapshotFor(state, 2), eventFor(eventType), {
-        maxDeveloperAttempts: 2,
-      });
+      const escalateResult = transitionWorkflow(snapshotFor(state, 2), eventFor(eventType), policy);
 
       expect(escalateResult.snapshot.state, `${state} x ${eventType} escalation state`).toBe(
         "escalated",
@@ -385,6 +390,32 @@ describe("workflow reducer", () => {
         `${state} x ${eventType} escalation commands`,
       ).toEqual(["request_human_attention"]);
     }
+  });
+
+  it("gives deep-review change-requests a larger default retry budget than the light checker", () => {
+    // Light checker: still retrying at attempt 2, escalates after the 3rd (default 3).
+    expect(
+      transitionWorkflow(snapshotFor("checking", 2), eventFor("checker_requested_changes")).snapshot
+        .state,
+    ).toBe("developing");
+    expect(
+      transitionWorkflow(snapshotFor("checking", 3), eventFor("checker_requested_changes")).snapshot
+        .state,
+    ).toBe("escalated");
+
+    // Deep review: still retrying at attempt 3/4, escalates only after the 5th (default 5).
+    expect(
+      transitionWorkflow(snapshotFor("checking", 3), eventFor("review_changes_requested")).snapshot
+        .state,
+    ).toBe("changes_requested");
+    expect(
+      transitionWorkflow(snapshotFor("checking", 4), eventFor("review_changes_requested")).snapshot
+        .state,
+    ).toBe("changes_requested");
+    expect(
+      transitionWorkflow(snapshotFor("checking", 5), eventFor("review_changes_requested")).snapshot
+        .state,
+    ).toBe("escalated");
   });
 
   it("advances the happy path through merge with explicit commands", () => {
