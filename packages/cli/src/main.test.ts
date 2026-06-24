@@ -10,6 +10,7 @@ import {
   formatArchitectPlanComment,
   formatDemoResult,
   formatDuration,
+  runCli,
   parseDurationMs,
   parseGitHubRepoFromRemoteUrl,
   parseCliArgs,
@@ -433,6 +434,27 @@ describe("cli formatting", () => {
     expect(selectDemoMode(["demo:github"])).toBe("github");
     expect(selectDemoMode(["demo:linear"])).toBe("linear");
     expect(selectDemoMode([])).toBe("scripted");
+  });
+
+  it("prints concise stderr and returns non-zero for top-level failures", async () => {
+    let stderr = "";
+    let exitCode = 0;
+
+    const result = await runCli(
+      async () => {
+        throw new Error("run --linear requires LINEAR_API_KEY to be set");
+      },
+      {
+        stderr: { write: (chunk) => (stderr += chunk) },
+        setExitCode: (code) => (exitCode = code),
+      },
+    );
+
+    expect(result).toBe(1);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("run --linear requires LINEAR_API_KEY to be set");
+    expect(stderr).toContain("Set LINEAR_API_KEY");
+    expect(stderr).not.toMatch(/\n\s*at\s/);
   });
 
   it("parses runtime config path from argv", () => {
