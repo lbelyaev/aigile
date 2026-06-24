@@ -83,6 +83,9 @@ interface LinearIssueIdResponse {
 
 const DEFAULT_ENDPOINT = "https://api.linear.app/graphql";
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 const defaultFetchGraphql: LinearFetchGraphql = async (query, variables, options) => {
   const response = await fetch(options.endpoint, {
     method: "POST",
@@ -95,7 +98,10 @@ const defaultFetchGraphql: LinearFetchGraphql = async (query, variables, options
   if (!response.ok) {
     throw new Error(`Linear GraphQL request failed (${response.status}): ${await response.text()}`);
   }
-  const json = (await response.json()) as { data?: unknown; errors?: unknown };
+  const json = await response.json();
+  if (!isRecord(json)) {
+    throw new Error("Linear GraphQL response shape invalid: expected GraphQL response object");
+  }
   if (json.errors)
     throw new Error(`Linear GraphQL returned errors: ${JSON.stringify(json.errors)}`);
   return json.data;
@@ -156,15 +162,36 @@ const toIssueRecordFromIssue = (issue: LinearIssueResponse["issue"], key: string
 };
 
 const toIssueRecord = (value: unknown, key: string): IssueRecord => {
+  if (!isRecord(value)) {
+    throw new Error("Linear GraphQL response shape invalid: expected issue response object");
+  }
   const response = value as LinearIssueResponse;
+  if (response.issue !== undefined && response.issue !== null && !isRecord(response.issue)) {
+    throw new Error("Linear GraphQL response shape invalid: expected issue object");
+  }
   return toIssueRecordFromIssue(response.issue, key);
 };
 
 const toIssueRecords = (value: unknown): IssueRecord[] => {
+  if (!isRecord(value)) {
+    throw new Error("Linear GraphQL response shape invalid: expected ready issues response object");
+  }
   const response = value as LinearIssuesResponse;
-  return (response.issues?.nodes ?? []).map((issue) =>
-    toIssueRecordFromIssue(issue as LinearIssueResponse["issue"], "ready issue"),
-  );
+  if (response.issues !== undefined && response.issues !== null && !isRecord(response.issues)) {
+    throw new Error(
+      "Linear GraphQL response shape invalid: expected ready issues container object",
+    );
+  }
+  const nodes = response.issues?.nodes ?? [];
+  if (!Array.isArray(nodes)) {
+    throw new Error("Linear GraphQL response shape invalid: expected ready issue nodes array");
+  }
+  return nodes.map((issue) => {
+    if (!isRecord(issue)) {
+      throw new Error("Linear GraphQL response shape invalid: expected ready issue node object");
+    }
+    return toIssueRecordFromIssue(issue as LinearIssueResponse["issue"], "ready issue");
+  });
 };
 
 const looksLikeUuid = (value: string): boolean =>
