@@ -1301,6 +1301,77 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
   return parsed;
 };
 
+export interface CliErrorSink {
+  write: (chunk: string) => unknown;
+}
+
+export interface RunCliOptions {
+  stderr?: CliErrorSink;
+  setExitCode?: (code: number) => void;
+}
+
+const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim();
+
+const errorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message.length > 0) return oneLine(error.message);
+  if (typeof error === "string" && error.length > 0) return oneLine(error);
+  return "Unknown CLI failure";
+};
+
+const errorCode = (error: unknown): string | undefined => {
+  if (typeof error !== "object" || error === null) return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+};
+
+const cliErrorHint = (error: unknown, message: string): string | undefined => {
+  const missingApiKey = /\brequires ([A-Z0-9_]+) to be set\b/.exec(message);
+  if (missingApiKey) {
+    return `Set ${missingApiKey[1]} or pass --linear-api-key-env <name>.`;
+  }
+  if (
+    errorCode(error) === "ENOENT" ||
+    /product config not found|no such file or directory|runtime config|invalid config/i.test(
+      message,
+    )
+  ) {
+    return "Check the config path or pass --products-config/--runtime-config with an existing file.";
+  }
+  if (/publish preflight|gh auth|gh repo view|github repo|git remote get-url/i.test(message)) {
+    return "Run gh auth status, gh auth login if needed, and verify the GitHub repo and remote.";
+  }
+  if (
+    /requires an issue key|\bissue key\b|invalid issue|bad issue/i.test(message) &&
+    !/artifact/i.test(message)
+  ) {
+    return "Pass an issue key such as LBE-123.";
+  }
+  if (/worktree|workspace|base branch|fast-forward|dirty/i.test(message)) {
+    return "Run status for the issue, clean the worktree, or synchronize the base branch before retrying.";
+  }
+  return undefined;
+};
+
+export const formatCliError = (error: unknown): string => {
+  const message = errorMessage(error);
+  const hint = cliErrorHint(error, message);
+  return hint === undefined ? message : `${message} ${hint}`;
+};
+
+export const runCli = async (
+  runMain: () => Promise<void>,
+  options: RunCliOptions = {},
+): Promise<number> => {
+  try {
+    await runMain();
+    return 0;
+  } catch (error) {
+    options.stderr?.write(`${formatCliError(error)}\n`);
+    options.setExitCode?.(1);
+    return 1;
+  }
+};
+
 const main = async (): Promise<void> => {
   const args = parseCliArgs(process.argv.slice(2));
   const runContext = args.mode === "run" ? resolveProductCliContext(args) : undefined;
@@ -1726,5 +1797,10 @@ const main = async (): Promise<void> => {
 };
 
 if (import.meta.path === Bun.main) {
-  await main();
+  await runCli(main, {
+    stderr: process.stderr,
+    setExitCode: (code) => {
+      process.exitCode = code;
+    },
+  });
 }
