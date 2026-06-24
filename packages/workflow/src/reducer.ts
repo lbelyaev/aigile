@@ -28,6 +28,10 @@ export interface WorkflowSnapshot {
 
 export interface WorkflowPolicy {
   maxDeveloperAttempts?: number;
+  // Deep (high-blast-radius) reviews are intentionally harder to satisfy, so a
+  // change-request from the deep reviewer grants a larger retry budget than the
+  // light checker before escalating.
+  maxDeepReviewDeveloperAttempts?: number;
 }
 
 export interface TransitionResult {
@@ -42,6 +46,7 @@ export interface ReplayResult {
 
 const DEFAULT_POLICY: Required<WorkflowPolicy> = {
   maxDeveloperAttempts: 3,
+  maxDeepReviewDeveloperAttempts: 5,
 };
 
 export const initialWorkflowSnapshot = (issueId: string): WorkflowSnapshot => ({
@@ -92,17 +97,15 @@ const ensureIssueMatches = (snapshot: WorkflowSnapshot, event: WorkflowEvent): v
 const isTerminalState = (state: WorkflowState): boolean =>
   state === "satisfied" || state === "merged" || state === "cancelled" || state === "failed";
 
-const shouldRetryDevelopment = (
-  snapshot: WorkflowSnapshot,
-  policy: Required<WorkflowPolicy>,
-): boolean => snapshot.developerAttempts < policy.maxDeveloperAttempts;
+const shouldRetryDevelopment = (snapshot: WorkflowSnapshot, maxAttempts: number): boolean =>
+  snapshot.developerAttempts < maxAttempts;
 
 const retryDevelopmentOrEscalate = (
   snapshot: WorkflowSnapshot,
   event: WorkflowEvent,
-  policy: Required<WorkflowPolicy>,
+  maxAttempts: number,
 ): TransitionResult => {
-  if (!shouldRetryDevelopment(snapshot, policy)) {
+  if (!shouldRetryDevelopment(snapshot, maxAttempts)) {
     return moveTo(
       snapshot,
       "escalated",
@@ -124,9 +127,9 @@ const retryDevelopmentOrEscalate = (
 const requestChangesOrEscalate = (
   snapshot: WorkflowSnapshot,
   event: WorkflowEvent,
-  policy: Required<WorkflowPolicy>,
+  maxAttempts: number,
 ): TransitionResult => {
-  if (!shouldRetryDevelopment(snapshot, policy)) {
+  if (!shouldRetryDevelopment(snapshot, maxAttempts)) {
     return moveTo(
       snapshot,
       "escalated",
@@ -241,7 +244,7 @@ export const transitionWorkflow = (
         );
       }
       if (event.type === "verification_failed") {
-        return retryDevelopmentOrEscalate(snapshot, event, policy);
+        return retryDevelopmentOrEscalate(snapshot, event, policy.maxDeveloperAttempts);
       }
       return illegalTransition(snapshot.state, event);
 
@@ -263,7 +266,12 @@ export const transitionWorkflow = (
         );
       }
       if (event.type === "checker_requested_changes") {
-        return retryDevelopmentOrEscalate(snapshot, event, policy);
+        return retryDevelopmentOrEscalate(snapshot, event, policy.maxDeveloperAttempts);
+      }
+      // A deep (high-blast-radius) review is harder to satisfy, so it gets the
+      // larger deep-review retry budget before escalating.
+      if (event.type === "review_changes_requested") {
+        return requestChangesOrEscalate(snapshot, event, policy.maxDeepReviewDeveloperAttempts);
       }
       if (event.type === "checker_escalated") {
         return moveTo(
@@ -293,7 +301,7 @@ export const transitionWorkflow = (
         );
       }
       if (event.type === "review_changes_requested") {
-        return requestChangesOrEscalate(snapshot, event, policy);
+        return requestChangesOrEscalate(snapshot, event, policy.maxDeepReviewDeveloperAttempts);
       }
       return illegalTransition(snapshot.state, event);
 
