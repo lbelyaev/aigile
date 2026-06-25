@@ -8,7 +8,11 @@ import {
   type IssueTrackerAdapter,
 } from "@aigile/adapters";
 import { createInMemoryRunStore, runWorkflowEngine } from "@aigile/workflow";
-import { createEngineCommandHandlers, type EngineHandlerDeps } from "./engine-handlers.js";
+import {
+  createEngineCommandHandlers,
+  focusedDeveloperInput,
+  type EngineHandlerDeps,
+} from "./engine-handlers.js";
 
 const makeIssue = (overrides: Partial<IssueRecord> = {}): IssueRecord => ({
   id: "lin-1",
@@ -384,5 +388,45 @@ describe("engine command handlers", () => {
     });
 
     expect(statuses).toEqual(["Todo"]);
+  });
+});
+
+describe("focusedDeveloperInput (anti-drift)", () => {
+  const artifact = (id: string, kind: string): WorkflowArtifact => ({
+    id,
+    kind,
+    source: "system",
+    payload: {},
+  });
+
+  it("collapses iterative kinds to their latest while preserving other context and order", () => {
+    const input: WorkflowArtifact[] = [
+      artifact("issue", "linear.issue"),
+      artifact("plan", "architect.plan"),
+      artifact("policy", "execution.policy"),
+      artifact("attempt-1", "developer.attempt"),
+      artifact("verify-1", "verification.result"),
+      artifact("verdict-1", "checker.verdict"),
+      artifact("attempt-2", "developer.attempt"),
+      artifact("verify-2", "verification.result"),
+      artifact("verdict-2", "checker.verdict"),
+    ];
+
+    expect(focusedDeveloperInput(input).map((a) => a.id)).toEqual([
+      "issue",
+      "plan",
+      "policy",
+      "attempt-2",
+      "verify-2",
+      "verdict-2",
+    ]);
+  });
+
+  it("is a no-op when there are no prior attempts or verdicts", () => {
+    const input: WorkflowArtifact[] = [
+      artifact("issue", "linear.issue"),
+      artifact("plan", "architect.plan"),
+    ];
+    expect(focusedDeveloperInput(input).map((a) => a.id)).toEqual(["issue", "plan"]);
   });
 });
