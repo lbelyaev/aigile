@@ -593,7 +593,7 @@ describe("ACP role runner", () => {
     ).toBe("allow_once");
   });
 
-  it("rejects observed broad-discovery tool starts for agent-write policy", async () => {
+  it("warns on broad-discovery tool starts under agent-write policy without failing the run", async () => {
     const progress: string[] = [];
     let killed = false;
     let eventHandler:
@@ -666,9 +666,10 @@ describe("ACP role runner", () => {
           },
         ],
       }),
-    ).rejects.toThrow(/Policy violation broad_discovery/);
+    ).resolves.toMatchObject({ kind: "developer.attempt" });
+    // Broad discovery is denied per-call and warned, but the run completes.
     expect(progress).toContain("policy_violation");
-    expect(progress).not.toContain("artifact_parsed");
+    expect(progress).toContain("artifact_parsed");
     expect(killed).toBe(true);
   });
 
@@ -871,7 +872,7 @@ describe("ACP role runner", () => {
     });
   });
 
-  it("rejects observed broad-discovery tool starts under execution policy", async () => {
+  it("warns on broad-discovery tool starts under dry-run policy without failing the run", async () => {
     const progress: string[] = [];
     let killed = false;
     let eventHandler:
@@ -944,9 +945,10 @@ describe("ACP role runner", () => {
           },
         ],
       }),
-    ).rejects.toThrow(/Policy violation broad_discovery/);
+    ).resolves.toMatchObject({ kind: "architect.plan" });
+    // Broad discovery is denied per-call and warned, but the run completes.
     expect(progress).toContain("policy_violation");
-    expect(progress).not.toContain("artifact_parsed");
+    expect(progress).toContain("artifact_parsed");
     expect(killed).toBe(true);
   });
 

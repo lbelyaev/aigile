@@ -486,12 +486,16 @@ export const createAcpRoleRunner = (options: AcpRoleRunnerOptions = {}): RoleRun
             const command = toolCommand(event.tool, event.params);
             const mode = executionPolicyMode(input);
             if (mode !== undefined && mode !== "review" && isBroadDiscoveryCommand(command)) {
-              policyViolation = { reason: "broad_discovery", detail: command };
+              // Broad-discovery commands are already denied per-call by the execution
+              // policy (decidePermission -> reject_once). Surface the attempt as a
+              // warning, but do NOT fail the turn: an agent trying a broad command and
+              // being denied is normal exploration, not a fatal violation. (Throwing
+              // here previously aborted the entire run — see LBE-36.)
               options.onProgress?.({
                 type: "policy_violation",
                 ...progressBase(input),
-                reason: policyViolation.reason,
-                detail: policyViolation.detail,
+                reason: "broad_discovery",
+                detail: command,
               });
               return;
             }
