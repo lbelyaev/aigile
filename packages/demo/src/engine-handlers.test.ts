@@ -11,6 +11,7 @@ import { createInMemoryRunStore, runWorkflowEngine } from "@aigile/workflow";
 import {
   createEngineCommandHandlers,
   focusedDeveloperInput,
+  summarizeBestAttempt,
   type EngineHandlerDeps,
 } from "./engine-handlers.js";
 
@@ -428,5 +429,38 @@ describe("focusedDeveloperInput (anti-drift)", () => {
       artifact("plan", "architect.plan"),
     ];
     expect(focusedDeveloperInput(input).map((a) => a.id)).toEqual(["issue", "plan"]);
+  });
+});
+
+describe("summarizeBestAttempt (escalate-the-best)", () => {
+  const verdictWithFindings = (n: number): WorkflowArtifact => ({
+    id: `checker:LIN-1:${n}`,
+    kind: "checker.verdict",
+    source: "agent",
+    producerRoleId: "deep_reviewer",
+    payload:
+      n === 0
+        ? { verdict: "pass", summary: "ok", reasons: [] }
+        : {
+            verdict: "changes_requested",
+            summary: `${n} issue(s)`,
+            reasons: Array.from({ length: n }, (_, i) => `finding-${i + 1}`),
+          },
+  });
+
+  it("flags the lowest-finding attempt and its punch-list when the loop drifted", () => {
+    // LBE-34 shape: 3 -> 1 -> 3 -> 3 -> 4 (escalated with the worst attempt).
+    const summary = summarizeBestAttempt([3, 1, 3, 3, 4].map(verdictWithFindings));
+    expect(summary).toContain("Best attempt was attempt 2 (1 finding(s))");
+    expect(summary).toContain("current worktree reflects attempt 5 (4 finding(s))");
+    expect(summary).toContain("- finding-1");
+  });
+
+  it("returns undefined when the last attempt is already the best", () => {
+    expect(summarizeBestAttempt([3, 2, 1].map(verdictWithFindings))).toBeUndefined();
+  });
+
+  it("returns undefined with fewer than two reviews", () => {
+    expect(summarizeBestAttempt([verdictWithFindings(2)])).toBeUndefined();
   });
 });

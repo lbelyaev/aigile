@@ -82,6 +82,41 @@ export const focusedDeveloperInput = (
   );
 };
 
+const deepReviewFindingCount = (verdict: WorkflowArtifact): number => {
+  if (!isCheckerVerdictPayload(verdict.payload)) return 0;
+  return verdict.payload.verdict === "pass" ? 0 : verdict.payload.reasons.length;
+};
+
+// Escalate-the-best (LBE-45): when a deep-review loop escalates, the worktree holds
+// the LAST attempt, which may not be the best — LBE-34 drifted 3->1->3->3->4 findings
+// and escalated with 4 despite attempt 2 having only 1. Surface the lowest-finding
+// attempt and its punch-list so whoever picks up the escalation knows which attempt
+// to build on. Returns undefined when there is nothing useful to flag (fewer than
+// two reviews, or the last attempt already is the best). NOTE: this reports the best
+// attempt; restoring the worktree to it is a follow-up (needs git snapshot/restore).
+export const summarizeBestAttempt = (
+  artifacts: readonly WorkflowArtifact[],
+): string | undefined => {
+  const verdicts = artifacts.filter((artifact) => artifact.kind === "checker.verdict");
+  if (verdicts.length < 2) return undefined;
+  const scored = verdicts.map((verdict, index) => ({
+    attempt: index + 1,
+    findings: deepReviewFindingCount(verdict),
+    verdict,
+  }));
+  const best = scored.reduce((lowest, current) =>
+    current.findings < lowest.findings ? current : lowest,
+  );
+  const last = scored[scored.length - 1]!;
+  if (best.attempt === last.attempt) return undefined;
+  const reasons = isCheckerVerdictPayload(best.verdict.payload) ? best.verdict.payload.reasons : [];
+  return [
+    `Best attempt was attempt ${best.attempt} (${best.findings} finding(s)); the current worktree reflects attempt ${last.attempt} (${last.findings} finding(s)).`,
+    `Lowest-finding review (attempt ${best.attempt}):`,
+    ...reasons.map((reason) => `- ${reason}`),
+  ].join("\n");
+};
+
 const checkerBaseEvent = (
   verdict: WorkflowArtifact,
 ): "checker_passed" | "checker_requested_changes" | "checker_escalated" => {
@@ -384,6 +419,11 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
       return {};
     },
     request_human_attention: async (ctx) => {
+      const bestAttempt = summarizeBestAttempt(ctx.artifacts);
+      const reason =
+        bestAttempt === undefined
+          ? ctx.command.reason
+          : [ctx.command.reason, bestAttempt].filter(Boolean).join("\n\n");
       await syncIssueStatusForState({
         issueTracker: deps.issueTracker,
         issueKey: issue.key,
@@ -391,7 +431,7 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
         issueStatusLabels: deps.issueStatusLabels,
         originalStatus: issue.status,
         artifacts: ctx.artifacts,
-        reason: ctx.command.reason,
+        ...(reason === undefined ? {} : { reason }),
       });
       return {};
     },
