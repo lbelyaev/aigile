@@ -168,6 +168,40 @@ const assertSuccess = (result: ExecResult, operation: string): void => {
   }
 };
 
+// LBE-45 (Aider-pattern checkpointing): commit the current worktree as a checkpoint
+// so each developer attempt is a restorable point. Aigile performs the commit (the
+// agent never commits); untracked files are included via `git add -A`. Returns the
+// commit SHA, or undefined when the worktree is clean (nothing to checkpoint).
+export const commitWorktreeCheckpoint = async (
+  exec: ExecCommand,
+  worktreePath: string,
+  message: string,
+): Promise<string | undefined> => {
+  assertSuccess(await exec("git", ["add", "-A"], { cwd: worktreePath }), "git add");
+  const staged = await exec("git", ["diff", "--cached", "--quiet"], { cwd: worktreePath });
+  if (staged.exitCode === 0) return undefined; // clean — nothing to checkpoint
+  if (staged.exitCode !== 1) assertSuccess(staged, "git diff --cached --quiet");
+  assertSuccess(
+    await exec("git", ["commit", "--no-verify", "-m", message], { cwd: worktreePath }),
+    "git commit",
+  );
+  const head = await exec("git", ["rev-parse", "HEAD"], { cwd: worktreePath });
+  assertSuccess(head, "git rev-parse HEAD");
+  return head.stdout.trim();
+};
+
+// Restore the worktree (and branch HEAD) exactly to a prior checkpoint commit.
+export const resetWorktreeTo = async (
+  exec: ExecCommand,
+  worktreePath: string,
+  ref: string,
+): Promise<void> => {
+  assertSuccess(
+    await exec("git", ["reset", "--hard", ref], { cwd: worktreePath }),
+    "git reset --hard",
+  );
+};
+
 type WorkspaceTargetState = "available" | "existing_worktree" | "existing_branch";
 
 interface SyncedBaseBranch {

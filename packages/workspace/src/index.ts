@@ -1,4 +1,10 @@
-export { createGitWorkspaceAdapter, defaultExecCommand, issueBranchName } from "./git-workspace.js";
+export {
+  createGitWorkspaceAdapter,
+  commitWorktreeCheckpoint,
+  defaultExecCommand,
+  issueBranchName,
+  resetWorktreeTo,
+} from "./git-workspace.js";
 
 export { createGitPublisher } from "./git-publish.js";
 
