@@ -1,5 +1,6 @@
 {
   "lockfileVersion": 1,
+
   "workspaces": {
     "": {
       "name": "aigile",

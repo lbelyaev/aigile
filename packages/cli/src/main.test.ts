@@ -428,6 +428,11 @@ describe("cli formatting", () => {
     );
   });
 
+  it("requires issue keys for run and status", () => {
+    expect(() => parseCliArgs(["run"])).toThrow(/run requires an issue key/);
+    expect(() => parseCliArgs(["status"])).toThrow(/status requires an issue key/);
+  });
+
   it("selects the ACP-agent demo mode from argv", () => {
     expect(selectDemoMode(["demo:agents"])).toBe("agents");
     expect(selectDemoMode(["demo:workspace"])).toBe("workspace");

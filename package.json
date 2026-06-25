@@ -14,11 +14,11 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun test",
-    "demo": "bun run packages/cli/src/main.ts",
-    "demo:agents": "bun run packages/cli/src/main.ts demo:agents",
-    "demo:workspace": "bun run packages/cli/src/main.ts demo:workspace",
-    "demo:github": "bun run packages/cli/src/main.ts demo:github",
-    "demo:linear": "bun run packages/cli/src/main.ts demo:linear",
+    "demo": "AIGILE_ENABLE_DEMO_CLI=1 bun run packages/cli/src/main.ts",
+    "demo:agents": "AIGILE_ENABLE_DEMO_CLI=1 bun run packages/cli/src/main.ts demo:agents",
+    "demo:workspace": "AIGILE_ENABLE_DEMO_CLI=1 bun run packages/cli/src/main.ts demo:workspace",
+    "demo:github": "AIGILE_ENABLE_DEMO_CLI=1 bun run packages/cli/src/main.ts demo:github",
+    "demo:linear": "AIGILE_ENABLE_DEMO_CLI=1 bun run packages/cli/src/main.ts demo:linear",
     "restate:service": "bun run packages/restate/src/main.ts"
   },
   "devDependencies": {

@@ -64,21 +64,12 @@ import {
 import { createFileRunStore, listResumableRuns } from "@aigile/workflow";
 import { join } from "node:path";
 
-const defaultIssue: IssueRecord = {
-  id: "issue-demo-1",
-  key: "LIN-123",
-  title: "Build hand-testable pipeline",
-  description: "Exercise the local role-collaboration loop.",
-  acceptanceCriteria: [
-    "Architect plan exists",
-    "Developer attempt exists",
-    "Verifier passes",
-    "Checker passes",
-    "Pull request artifact exists",
-  ],
-  status: "todo",
-  priority: 1,
-  comments: [],
+const demoCliEnabled = (): boolean => process.env.AIGILE_ENABLE_DEMO_CLI === "1";
+
+const assertDemoCliEnabled = (): void => {
+  if (!demoCliEnabled()) {
+    throw new Error("demo modes require AIGILE_ENABLE_DEMO_CLI=1");
+  }
 };
 
 const executionPolicyMode = (result: DemoResult): string | undefined => {
@@ -804,10 +795,9 @@ const syncLinearIssueWorkflowResult = async (
 };
 
 export const fetchLinearIssueForRun = async (input: LinearRunIssueInput): Promise<IssueRecord> => {
+  const fetchGraphql = input.fetchGraphql;
   const adapter = createLinearGraphqlIssueTrackerAdapter(
-    input.fetchGraphql === undefined
-      ? { apiKey: input.apiKey }
-      : { apiKey: input.apiKey, fetchGraphql: input.fetchGraphql },
+    fetchGraphql === undefined ? { apiKey: input.apiKey } : { apiKey: input.apiKey, fetchGraphql },
   );
   return adapter.getIssue(input.issueKey);
 };
@@ -815,10 +805,11 @@ export const fetchLinearIssueForRun = async (input: LinearRunIssueInput): Promis
 export const runLinearIssueWorkflowCli = async (
   input: LinearIssueWorkflowCliInput,
 ): Promise<string> => {
+  const fetchGraphql = input.fetchGraphql;
   const issue = await fetchLinearIssueForRun(
-    input.fetchGraphql === undefined
+    fetchGraphql === undefined
       ? { apiKey: input.apiKey, issueKey: input.issueKey }
-      : { apiKey: input.apiKey, issueKey: input.issueKey, fetchGraphql: input.fetchGraphql },
+      : { apiKey: input.apiKey, issueKey: input.issueKey, fetchGraphql },
   );
   const runtimeConfig = loadRuntimeConfigFromJson(readFileSync(input.runtimeConfigPath, "utf8"));
   const runInput: DemoWorkspaceInput = {
@@ -830,14 +821,14 @@ export const runLinearIssueWorkflowCli = async (
   };
   if (input.dryRun !== true) {
     const issueTracker = createLinearGraphqlIssueTrackerAdapter(
-      input.fetchGraphql === undefined
+      fetchGraphql === undefined
         ? {
             apiKey: input.apiKey,
             ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
           }
         : {
             apiKey: input.apiKey,
-            fetchGraphql: input.fetchGraphql,
+            fetchGraphql,
             ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
           },
     );
@@ -886,14 +877,14 @@ export const runLinearIssueWorkflowCli = async (
       return;
     }
     const tracker = createLinearGraphqlIssueTrackerAdapter(
-      input.fetchGraphql === undefined
+      fetchGraphql === undefined
         ? {
             apiKey: input.apiKey,
             ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
           }
         : {
             apiKey: input.apiKey,
-            fetchGraphql: input.fetchGraphql,
+            fetchGraphql,
             ...(input.teamKey === undefined ? {} : { teamKey: input.teamKey }),
           },
     );
@@ -1082,10 +1073,9 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
 export const runLinearWatchPreflightCli = async (
   input: LinearWatchPreflightCliInput,
 ): Promise<string> => {
+  const fetchGraphql = input.fetchGraphql;
   const sharedOptions =
-    input.fetchGraphql === undefined
-      ? { apiKey: input.apiKey }
-      : { apiKey: input.apiKey, fetchGraphql: input.fetchGraphql };
+    fetchGraphql === undefined ? { apiKey: input.apiKey } : { apiKey: input.apiKey, fetchGraphql };
   const teams = await listLinearTeams(sharedOptions);
   const lines = [
     "Aigile watch: preflight",
@@ -1096,9 +1086,9 @@ export const runLinearWatchPreflightCli = async (
 
   if (input.teamKey !== undefined) {
     const workflowStateOptions =
-      input.fetchGraphql === undefined
+      fetchGraphql === undefined
         ? { apiKey: input.apiKey, teamKey: input.teamKey }
-        : { apiKey: input.apiKey, teamKey: input.teamKey, fetchGraphql: input.fetchGraphql };
+        : { apiKey: input.apiKey, teamKey: input.teamKey, fetchGraphql };
     const workflowStateNames = await listLinearWorkflowStateNames(workflowStateOptions);
     lines.push(
       `Workflow states (${input.teamKey}):`,
@@ -1372,8 +1362,140 @@ export const runCli = async (
   }
 };
 
+const isDemoCliMode = (mode: DemoMode): boolean =>
+  mode !== "run" && mode !== "status" && mode !== "watch";
+
+const issueFromRunArgs = (
+  args: CliArgs,
+  issueKey: string,
+  linearIssue: IssueRecord | undefined,
+): IssueRecord => {
+  const baseIssue: IssueRecord = linearIssue ?? {
+    id: issueKey,
+    key: issueKey,
+    title: issueKey,
+    description: "",
+    acceptanceCriteria: [],
+    status: "todo",
+    priority: 0,
+    comments: [],
+  };
+  return {
+    ...baseIssue,
+    key: issueKey,
+    title: args.title ?? baseIssue.title,
+    description: args.description ?? baseIssue.description,
+    acceptanceCriteria: args.acceptanceCriteria ?? baseIssue.acceptanceCriteria,
+  };
+};
+
+const runDevDemoCli = async (args: CliArgs): Promise<DemoResult> => {
+  assertDemoCliEnabled();
+  const demoIssue: IssueRecord = {
+    id: "issue-demo-1",
+    key: "LIN-123",
+    title: "Build hand-testable pipeline",
+    description: "Exercise the local role-collaboration loop.",
+    acceptanceCriteria: [
+      "Architect plan exists",
+      "Developer attempt exists",
+      "Verifier passes",
+      "Checker passes",
+      "Pull request artifact exists",
+    ],
+    status: "todo",
+    priority: 1,
+    comments: [],
+  };
+  if (args.mode === "agents") {
+    if (args.runtimeConfigPath) {
+      const runtimeConfig = loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8"));
+      return runDemoIssueWithRoles({
+        issue: demoIssue,
+        registry: runtimeConfigToRegistry(runtimeConfig),
+        runner: createAcpRoleRunner(),
+        issueStatusLabels: runtimeConfig.issueStatusLabels,
+      });
+    }
+    return runDemoIssueWithAcpRoles({ issue: demoIssue });
+  }
+  if (args.mode === "workspace") {
+    return runDemoIssueWithWorkspace({
+      issue: demoIssue,
+      repoPath: "/tmp/aigile-demo-repo",
+      worktreesPath: "/tmp/aigile-demo-repo/.worktrees",
+      exec: async (command, args, options) => {
+        if (command === "test" && args[0] === "-e") return { stdout: "", stderr: "", exitCode: 1 };
+        if (command === "git" && args[0] === "worktree")
+          return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "diff") {
+          return { stdout: "packages/demo/src/run.ts | 4 ++++", stderr: "", exitCode: 0 };
+        }
+        return {
+          stdout: `${command} ${args.join(" ")} in ${options.cwd}`,
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    });
+  }
+  if (args.mode === "github") {
+    return runDemoIssueWithGitHub({
+      issue: demoIssue,
+      ghExec: async (_command, args) => {
+        if (args[0] === "pr" && args[1] === "create") {
+          return {
+            stdout: "https://github.com/aigile/aigile/pull/1",
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        if (args[0] === "pr" && args[1] === "view" && args.at(-1) === "state,mergedAt") {
+          return { stdout: JSON.stringify({ state: "OPEN" }), stderr: "", exitCode: 0 };
+        }
+        if (
+          args[0] === "pr" &&
+          args[1] === "view" &&
+          args.at(-1) === "mergeable,mergeStateStatus"
+        ) {
+          return {
+            stdout: JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }),
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    });
+  }
+  if (args.mode === "linear") {
+    return runDemoIssueFromLinear({
+      issueKey: "LIN-123",
+      linearApiKey: "demo-key",
+      fetchGraphql: async () => ({
+        issue: {
+          id: "issue-demo-1",
+          identifier: "LIN-123",
+          title: "Build hand-testable pipeline",
+          description:
+            "Acceptance:\n- Architect plan exists\n- Verifier passes\n- Pull request artifact exists",
+          priority: 1,
+          state: { name: "Todo" },
+          comments: { nodes: [] },
+        },
+      }),
+    });
+  }
+  return runDemoIssue({ issue: demoIssue });
+};
+
 const main = async (): Promise<void> => {
   const args = parseCliArgs(process.argv.slice(2));
+  if (isDemoCliMode(args.mode)) {
+    const result = await runDevDemoCli(args);
+    process.stdout.write(`${formatDemoResult(result)}\n`);
+    return;
+  }
   const runContext = args.mode === "run" ? resolveProductCliContext(args) : undefined;
   const linearApiKey = (command: "run" | "watch"): string => {
     const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
@@ -1381,35 +1503,10 @@ const main = async (): Promise<void> => {
     if (!apiKey) throw new Error(`${command} --linear requires ${apiKeyEnv} to be set`);
     return apiKey;
   };
-  const linearIssue =
-    args.mode === "run" &&
-    args.linear &&
-    args.preflightOnly !== true &&
-    args.runtimeConfigPath === undefined
-      ? await (async (): Promise<IssueRecord> => {
-          const issueKey = args.issueKey ?? defaultIssue.key;
-          return fetchLinearIssueForRun({ apiKey: linearApiKey("run"), issueKey });
-        })()
-      : undefined;
-  const runInput: DemoWorkspaceInput = {
-    issue: {
-      ...(linearIssue ?? defaultIssue),
-      key: args.issueKey ?? defaultIssue.key,
-      title: args.title ?? linearIssue?.title ?? defaultIssue.title,
-      description: args.description ?? linearIssue?.description ?? defaultIssue.description,
-      acceptanceCriteria:
-        args.acceptanceCriteria ??
-        linearIssue?.acceptanceCriteria ??
-        defaultIssue.acceptanceCriteria,
-    },
-    repoPath: runContext?.repoPath ?? args.repoPath ?? process.cwd(),
-    worktreesPath: runContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`,
-  };
-  if (runContext !== undefined) runInput.baseBranch = runContext.baseBranch;
-  else if (args.baseBranch !== undefined) runInput.baseBranch = args.baseBranch;
   if (args.mode === "status") {
+    if (args.issueKey === undefined) throw new Error("status requires an issue key");
     const output = await runIssueWorkspaceStatus({
-      issueKey: args.issueKey ?? defaultIssue.key,
+      issueKey: args.issueKey,
       repoPath: args.repoPath ?? process.cwd(),
       worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
       baseBranch: args.baseBranch ?? "main",
@@ -1417,6 +1514,31 @@ const main = async (): Promise<void> => {
     process.stdout.write(`${output}\n`);
     return;
   }
+  let workflowIssueKey = args.issueKey;
+  if (args.mode === "run") {
+    if (workflowIssueKey === undefined) throw new Error("run requires an issue key");
+  } else {
+    workflowIssueKey ??= "LOCAL-WATCH";
+  }
+  const linearIssue =
+    args.mode === "run" &&
+    args.linear &&
+    args.preflightOnly !== true &&
+    args.runtimeConfigPath === undefined
+      ? await (async (): Promise<IssueRecord> => {
+          return fetchLinearIssueForRun({
+            apiKey: linearApiKey("run"),
+            issueKey: workflowIssueKey,
+          });
+        })()
+      : undefined;
+  const runInput: DemoWorkspaceInput = {
+    issue: issueFromRunArgs(args, workflowIssueKey, linearIssue),
+    repoPath: runContext?.repoPath ?? args.repoPath ?? process.cwd(),
+    worktreesPath: runContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`,
+  };
+  if (runContext !== undefined) runInput.baseBranch = runContext.baseBranch;
+  else if (args.baseBranch !== undefined) runInput.baseBranch = args.baseBranch;
   if (args.mode === "watch") {
     const watchContext = resolveProductCliContext(args);
     if (args.preflightOnly) {
@@ -1576,7 +1698,7 @@ const main = async (): Promise<void> => {
   }
   if (args.mode === "run" && args.preflightOnly) {
     const preflightInput: RunModePreflightInput = {
-      issueKey: args.issueKey ?? defaultIssue.key,
+      issueKey: workflowIssueKey,
       repoPath: runContext?.repoPath ?? args.repoPath ?? process.cwd(),
       worktreesPath:
         runContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`,
@@ -1636,7 +1758,7 @@ const main = async (): Promise<void> => {
     }
     const output = await runLinearIssueWorkflowCli({
       apiKey: linearApiKey("run"),
-      issueKey: args.issueKey ?? defaultIssue.key,
+      issueKey: workflowIssueKey,
       ...(runContext?.linearTeam === undefined ? {} : { teamKey: runContext.linearTeam }),
       repoPath: runContext?.repoPath ?? args.repoPath ?? process.cwd(),
       worktreesPath:
@@ -1726,73 +1848,7 @@ const main = async (): Promise<void> => {
     });
   }
   if (args.mode === "run" && args.retryEscalated === true) runInput.retryEscalated = true;
-  const result =
-    args.mode === "run"
-      ? await runWorkspaceIssueWithEngine(runInput)
-      : args.mode === "agents"
-        ? args.runtimeConfigPath
-          ? await (() => {
-              const runtimeConfig = loadRuntimeConfigFromJson(
-                readFileSync(args.runtimeConfigPath!, "utf8"),
-              );
-              return runDemoIssueWithRoles({
-                issue: defaultIssue,
-                registry: runtimeConfigToRegistry(runtimeConfig),
-                runner: createAcpRoleRunner(),
-                issueStatusLabels: runtimeConfig.issueStatusLabels,
-              });
-            })()
-          : await runDemoIssueWithAcpRoles({ issue: defaultIssue })
-        : args.mode === "workspace"
-          ? await runDemoIssueWithWorkspace({
-              issue: defaultIssue,
-              repoPath: "/tmp/aigile-demo-repo",
-              worktreesPath: "/tmp/aigile-demo-repo/.worktrees",
-              exec: async (command, args, options) => {
-                if (command === "git" && args[0] === "worktree")
-                  return { stdout: "", stderr: "", exitCode: 0 };
-                if (command === "git" && args[0] === "diff") {
-                  return { stdout: "packages/demo/src/run.ts | 4 ++++", stderr: "", exitCode: 0 };
-                }
-                return {
-                  stdout: `${command} ${args.join(" ")} in ${options.cwd}`,
-                  stderr: "",
-                  exitCode: 0,
-                };
-              },
-            })
-          : args.mode === "github"
-            ? await runDemoIssueWithGitHub({
-                issue: defaultIssue,
-                ghExec: async (_command, args) => {
-                  if (args[0] === "pr" && args[1] === "create") {
-                    return {
-                      stdout: "https://github.com/aigile/aigile/pull/1",
-                      stderr: "",
-                      exitCode: 0,
-                    };
-                  }
-                  return { stdout: "", stderr: "", exitCode: 0 };
-                },
-              })
-            : args.mode === "linear"
-              ? await runDemoIssueFromLinear({
-                  issueKey: "LIN-123",
-                  linearApiKey: "demo-key",
-                  fetchGraphql: async () => ({
-                    issue: {
-                      id: "issue-demo-1",
-                      identifier: "LIN-123",
-                      title: "Build hand-testable pipeline",
-                      description:
-                        "Acceptance:\n- Architect plan exists\n- Verifier passes\n- Pull request artifact exists",
-                      priority: 1,
-                      state: { name: "Todo" },
-                      comments: { nodes: [] },
-                    },
-                  }),
-                })
-              : await runDemoIssue({ issue: defaultIssue });
+  const result = await runWorkspaceIssueWithEngine(runInput);
   process.stdout.write(`${formatDemoResult(result)}\n`);
 };
 
