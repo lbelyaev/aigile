@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { createGitWorkspaceAdapter } from "./index.js";
-import { createDefaultExecCommand, defaultExecCommand } from "./git-workspace.js";
+import {
+  commitWorktreeCheckpoint,
+  createDefaultExecCommand,
+  defaultExecCommand,
+  resetWorktreeTo,
+} from "./git-workspace.js";
 
 describe("git workspace adapter", () => {
   it("resolves successful spawn output through the default exec command", async () => {
@@ -883,5 +888,50 @@ describe("git workspace adapter", () => {
         baseBranch: "main",
       }),
     ).rejects.toThrow(/git worktree add failed/i);
+  });
+});
+
+describe("worktree checkpoint helpers (real git)", () => {
+  it("commits each attempt as a restorable checkpoint and resets to a prior one", async () => {
+    const { mkdtemp, writeFile, rm, readFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "aigile-ckpt-"));
+    const exec = defaultExecCommand;
+    const git = (...args: string[]) => exec("git", args, { cwd: dir });
+    try {
+      await git("init", "-q");
+      await git("config", "user.email", "t@example.com");
+      await git("config", "user.name", "Test");
+      await writeFile(join(dir, "base.txt"), "base\n");
+      await git("add", "-A");
+      await git("commit", "-q", "--no-verify", "-m", "base");
+
+      // Attempt 1: modify base + add a new (untracked) file.
+      await writeFile(join(dir, "base.txt"), "attempt-1\n");
+      await writeFile(join(dir, "new1.ts"), "export const a = 1;\n");
+      const sha1 = await commitWorktreeCheckpoint(exec, dir, "attempt 1");
+      if (sha1 === undefined) throw new Error("expected a checkpoint sha");
+      expect((await git("status", "--porcelain")).stdout.trim()).toBe(""); // committed
+
+      // Attempt 2: change base again + add another file (a "worse" attempt).
+      await writeFile(join(dir, "base.txt"), "attempt-2\n");
+      await writeFile(join(dir, "new2.ts"), "export const b = 2;\n");
+      const sha2 = await commitWorktreeCheckpoint(exec, dir, "attempt 2");
+      expect(sha2).toBeDefined();
+      expect(sha2).not.toBe(sha1);
+
+      // Restore to attempt 1: new2 gone, base + new1 back to attempt-1 state.
+      await resetWorktreeTo(exec, dir, sha1);
+      expect(await readFile(join(dir, "base.txt"), "utf8")).toBe("attempt-1\n");
+      expect(await readFile(join(dir, "new1.ts"), "utf8")).toBe("export const a = 1;\n");
+      await expect(readFile(join(dir, "new2.ts"), "utf8")).rejects.toThrow();
+      expect((await git("rev-parse", "HEAD")).stdout.trim()).toBe(sha1);
+
+      // A clean worktree yields no checkpoint.
+      expect(await commitWorktreeCheckpoint(exec, dir, "noop")).toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
