@@ -34,6 +34,9 @@ export const WORKFLOW_EVENT_TYPES = [
   "merge_completed",
   "timeout_elapsed",
   "budget_exceeded",
+  // Synthesized by the engine when a command handler throws, so a role/tool
+  // failure escalates gracefully instead of aborting the run.
+  "handler_failed",
 ] as const;
 
 export type WorkflowEventType = (typeof WORKFLOW_EVENT_TYPES)[number];

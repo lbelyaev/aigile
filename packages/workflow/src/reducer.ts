@@ -170,7 +170,11 @@ export const transitionWorkflow = (
     );
   }
 
-  if (event.type === "timeout_elapsed" || event.type === "budget_exceeded") {
+  if (
+    event.type === "timeout_elapsed" ||
+    event.type === "budget_exceeded" ||
+    event.type === "handler_failed"
+  ) {
     return moveTo(
       snapshot,
       "escalated",
