@@ -4,6 +4,7 @@ import { createAcpSession, type AcpSession, type AcpSessionOptions } from "./ses
 import { createRpcClient, type RpcClient } from "./rpc.js";
 
 export interface AcpChildProcess {
+  pid?: number | undefined;
   stdin: Writable | null;
   stdout: Readable | null;
   stderr: Readable | null;
@@ -19,6 +20,7 @@ export type SpawnAcpProcess = (
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     stdio: ["pipe", "pipe", "pipe"];
+    detached?: boolean;
   },
 ) => AcpChildProcess;
 
@@ -91,7 +93,14 @@ export const createAcpProcess = (
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     stdio: ["pipe", "pipe", "pipe"];
-  } = { stdio: ["pipe", "pipe", "pipe"] };
+    detached: boolean;
+  } = {
+    stdio: ["pipe", "pipe", "pipe"],
+    // Own process group so kill() can signal the whole tree (npx -> node ->
+    // codex-acp). Without this, kill() reaps only the npx wrapper and the real
+    // agent binary is orphaned (reparented to init) and leaks.
+    detached: true,
+  };
   if (options.cwd !== undefined) spawnOptions.cwd = options.cwd;
   spawnOptions.env = buildAcpProcessEnv(options);
 
@@ -119,6 +128,22 @@ export const createAcpProcess = (
     rpcOptions,
   );
 
+  // Signal the child's whole process group (negative pid) so descendants spawned
+  // via wrappers (npx -> node -> codex-acp) are reaped, not just the direct child.
+  // Falls back to a direct child signal if the group kill is unavailable.
+  const signalTree = (signal: NodeJS.Signals): void => {
+    const pid = child.pid;
+    if (pid !== undefined) {
+      try {
+        process.kill(-pid, signal);
+        return;
+      } catch {
+        // Group gone or not a group leader; fall through to a direct child signal.
+      }
+    }
+    child.kill(signal);
+  };
+
   const kill = async (): Promise<void> => {
     if (!alive) return;
     await new Promise<void>((resolve) => {
@@ -129,10 +154,10 @@ export const createAcpProcess = (
         resolve();
       };
       child.once("close", settle);
-      child.kill("SIGTERM");
+      signalTree("SIGTERM");
       setTimeout(() => {
         if (!alive || settled) return;
-        child.kill("SIGKILL");
+        signalTree("SIGKILL");
         settle();
       }, options.killGraceMs ?? 2_000);
     });
