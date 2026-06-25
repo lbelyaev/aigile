@@ -53,6 +53,31 @@ describe("workflow engine", () => {
     expect(persisted?.events.at(-1)?.type).toBe("merge_completed");
   });
 
+  it("escalates gracefully when a command handler throws instead of aborting the run", async () => {
+    const store = createInMemoryRunStore();
+    let humanAttention = 0;
+    const handlers: WorkflowCommandHandlers = {
+      ...baseHandlers(async () => ({ event: ev("verification_passed") })),
+      start_developer_attempt: async () => {
+        throw new Error("Policy violation broad_discovery: rg everything");
+      },
+      request_human_attention: async () => {
+        humanAttention += 1;
+        return {};
+      },
+    };
+
+    const result = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+
+    expect(result.outcome).toBe("escalated");
+    expect(result.snapshot.state).toBe("escalated");
+    expect(humanAttention).toBe(1);
+    const persisted = await store.load("LIN-1");
+    expect(persisted?.events.at(-1)?.type).toBe("handler_failed");
+    expect(persisted?.events.at(-1)?.reason).toContain("start_developer_attempt failed");
+    expect(persisted?.events.at(-1)?.reason).toContain("broad_discovery");
+  });
+
   it("dispatches the terminal command once before returning and skips it on terminal resume", async () => {
     const store = createInMemoryRunStore();
     const terminalCommands: string[] = [];
@@ -315,7 +340,7 @@ describe("workflow engine durable resume", () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
-  it("resumes from the persisted log after a crash without redoing completed phases", async () => {
+  it("resumes from the persisted log after an interruption without redoing completed phases", async () => {
     const directory = await mkdtemp(join(tmpdir(), "aigile-engine-"));
     tempDirs.push(directory);
 
@@ -325,18 +350,16 @@ describe("workflow engine durable resume", () => {
       return { event: ev("plan_drafted", "plan"), artifact: art("plan", "architect.plan") };
     };
 
-    // Run 1: the verification handler throws, simulating a crash mid-run.
-    const crashing = baseHandlers(async () => {
-      throw new Error("boom: process crashed during verification");
+    // Run 1: the verification handler pauses (no event), simulating an interruption
+    // mid-run that leaves a resumable persisted log.
+    const interrupted = baseHandlers(async () => ({}));
+    interrupted.start_architect_plan = countingArchitect;
+    const firstRun = await runWorkflowEngine({
+      issueId: "LIN-1",
+      store: createFileRunStore({ directory }),
+      handlers: interrupted,
     });
-    crashing.start_architect_plan = countingArchitect;
-    await expect(
-      runWorkflowEngine({
-        issueId: "LIN-1",
-        store: createFileRunStore({ directory }),
-        handlers: crashing,
-      }),
-    ).rejects.toThrow("boom");
+    expect(firstRun.outcome).toBe("paused");
 
     // The log persisted up to the last completed step; no verification event.
     const afterCrash = await createFileRunStore({ directory }).load("LIN-1");

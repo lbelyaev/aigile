@@ -215,7 +215,33 @@ export const runWorkflowEngine = async (
       return buildResult(snapshot, artifacts, "stalled", command.reason);
     }
 
-    const output = await handler({ command, snapshot, artifacts: [...artifacts] });
+    let output: WorkflowCommandOutput;
+    try {
+      output = await handler({ command, snapshot, artifacts: [...artifacts] });
+    } catch (error) {
+      // A handler/role/tool failure must escalate gracefully, never abort the run.
+      // Persist a handler_failed event so the escalation is durable and replayable,
+      // then let the FSM route to request_human_attention.
+      const detail = error instanceof Error ? error.message : String(error);
+      const failureEvent: WorkflowEvent = {
+        type: "handler_failed",
+        issueId,
+        reason: `${command.type} failed: ${detail}`,
+      };
+      await store.appendEvent(issueId, failureEvent, []);
+      const previousSnapshot = snapshot;
+      const result = transitionWorkflow(snapshot, failureEvent, policy);
+      snapshot = result.snapshot;
+      await notifyStateChange(input, {
+        previousSnapshot,
+        snapshot,
+        event: failureEvent,
+        artifacts: [...artifacts],
+      });
+      pending = result.commands;
+      dispatchStopCommand = isStopState(snapshot.state);
+      continue;
+    }
     if (output.artifact !== undefined) artifacts = mergeArtifact(artifacts, output.artifact);
     if (output.event === undefined) {
       // Handler performed its side effect but produced no transition: pause here.
@@ -246,8 +272,13 @@ export const runWorkflowEngine = async (
     const command = pending[0];
     const handler = command === undefined ? undefined : handlers[command.type];
     if (command !== undefined && handler !== undefined) {
-      const output = await handler({ command, snapshot, artifacts: [...artifacts] });
-      if (output.artifact !== undefined) artifacts = mergeArtifact(artifacts, output.artifact);
+      try {
+        const output = await handler({ command, snapshot, artifacts: [...artifacts] });
+        if (output.artifact !== undefined) artifacts = mergeArtifact(artifacts, output.artifact);
+      } catch {
+        // Best-effort terminal side effect (e.g. status sync on escalation). The run
+        // has already reached a stop state; a failure here must not abort the result.
+      }
     }
   }
 

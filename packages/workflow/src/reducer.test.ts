@@ -48,6 +48,7 @@ const expectedTransitions: Record<
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
     budget_exceeded: { state: "escalated", command: "request_human_attention" },
+    handler_failed: { state: "escalated", command: "request_human_attention" },
   },
   planning: {
     issue_received: "illegal",
@@ -67,6 +68,7 @@ const expectedTransitions: Record<
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
     budget_exceeded: { state: "escalated", command: "request_human_attention" },
+    handler_failed: { state: "escalated", command: "request_human_attention" },
   },
   awaiting_plan_approval: {
     issue_received: "illegal",
@@ -90,6 +92,7 @@ const expectedTransitions: Record<
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
     budget_exceeded: { state: "escalated", command: "request_human_attention" },
+    handler_failed: { state: "escalated", command: "request_human_attention" },
   },
   developing: {
     issue_received: "illegal",
@@ -109,6 +112,7 @@ const expectedTransitions: Record<
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
     budget_exceeded: { state: "escalated", command: "request_human_attention" },
+    handler_failed: { state: "escalated", command: "request_human_attention" },
   },
   verifying: {
     issue_received: "illegal",
@@ -132,6 +136,7 @@ const expectedTransitions: Record<
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
     budget_exceeded: { state: "escalated", command: "request_human_attention" },
+    handler_failed: { state: "escalated", command: "request_human_attention" },
   },
   checking: {
     issue_received: "illegal",
@@ -159,6 +164,7 @@ const expectedTransitions: Record<
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
     budget_exceeded: { state: "escalated", command: "request_human_attention" },
+    handler_failed: { state: "escalated", command: "request_human_attention" },
   },
   changes_requested: {
     issue_received: "illegal",
@@ -178,6 +184,7 @@ const expectedTransitions: Record<
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
     budget_exceeded: { state: "escalated", command: "request_human_attention" },
+    handler_failed: { state: "escalated", command: "request_human_attention" },
   },
   escalated: {
     issue_received: "illegal",
@@ -197,6 +204,7 @@ const expectedTransitions: Record<
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
     budget_exceeded: { state: "escalated", command: "request_human_attention" },
+    handler_failed: { state: "escalated", command: "request_human_attention" },
   },
   merge_ready: {
     issue_received: "illegal",
@@ -220,6 +228,7 @@ const expectedTransitions: Record<
     merge_completed: { state: "merged", command: "sync_sources_of_truth" },
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
     budget_exceeded: { state: "escalated", command: "request_human_attention" },
+    handler_failed: { state: "escalated", command: "request_human_attention" },
   },
   satisfied: {
     issue_received: "illegal",
@@ -239,6 +248,7 @@ const expectedTransitions: Record<
     merge_completed: "illegal",
     timeout_elapsed: "illegal",
     budget_exceeded: "illegal",
+    handler_failed: "illegal",
   },
   merged: {
     issue_received: "illegal",
@@ -258,6 +268,7 @@ const expectedTransitions: Record<
     merge_completed: "illegal",
     timeout_elapsed: "illegal",
     budget_exceeded: "illegal",
+    handler_failed: "illegal",
   },
   cancelled: {
     issue_received: "illegal",
@@ -277,6 +288,7 @@ const expectedTransitions: Record<
     merge_completed: "illegal",
     timeout_elapsed: "illegal",
     budget_exceeded: "illegal",
+    handler_failed: "illegal",
   },
   failed: {
     issue_received: "illegal",
@@ -296,6 +308,7 @@ const expectedTransitions: Record<
     merge_completed: "illegal",
     timeout_elapsed: "illegal",
     budget_exceeded: "illegal",
+    handler_failed: "illegal",
   },
 } satisfies Record<WorkflowState, Record<WorkflowEventType, TransitionExpectation>>;
 
