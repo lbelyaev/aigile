@@ -383,4 +383,42 @@ describe("ACP process connector", () => {
     expect(mock.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
     expect(process.isAlive()).toBe(false);
   });
+
+  it("signals the whole process group (negative pid) so wrapped agent binaries are reaped", async () => {
+    const mock = createStubbornMockSpawn();
+    mock.child.pid = 4242;
+    const groupSignals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+    const realKill = process.kill.bind(process);
+    (process as { kill: unknown }).kill = (pid: number, signal: NodeJS.Signals): boolean => {
+      groupSignals.push({ pid, signal });
+      return true;
+    };
+    try {
+      const handle = createAcpProcess(["agent-acp"], {
+        spawnProcess: mock.spawn,
+        killGraceMs: 1,
+      });
+
+      const result = await Promise.race([
+        handle.kill().then(() => "resolved"),
+        new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 20)),
+      ]);
+
+      expect(result).toBe("resolved");
+      // Group is signalled (negative pid), not just the direct child wrapper.
+      expect(groupSignals).toEqual([
+        { pid: -4242, signal: "SIGTERM" },
+        { pid: -4242, signal: "SIGKILL" },
+      ]);
+      expect(mock.killSignals).toEqual([]);
+    } finally {
+      (process as { kill: unknown }).kill = realKill;
+    }
+  });
+
+  it("spawns the agent in its own process group (detached)", () => {
+    const mock = createMockSpawn();
+    createAcpProcess(["agent-acp"], { spawnProcess: mock.spawn });
+    expect((mock.calls[0]!.options as { detached?: boolean }).detached).toBe(true);
+  });
 });
