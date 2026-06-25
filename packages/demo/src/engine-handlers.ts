@@ -62,6 +62,26 @@ const artifactWithRunSuffix = (artifact: WorkflowArtifact, suffix: string): Work
 const nextArtifactSequence = (artifacts: readonly WorkflowArtifact[], kind: string): number =>
   artifacts.filter((artifact) => artifact.kind === kind).length + 1;
 
+// Anti-drift (LBE-45): on a retry the developer should fix exactly the latest
+// findings against the current worktree, not re-litigate the whole history. Older
+// attempts/verdicts in the input invite rewrites that regress (LBE-34 wandered
+// 3->1->3->3->4 findings). Collapse the iterative kinds to their most recent
+// instance and keep all other context (issue, plan, policy, workspace) intact.
+const ITERATIVE_KINDS = new Set(["developer.attempt", "checker.verdict", "verification.result"]);
+
+export const focusedDeveloperInput = (
+  artifacts: readonly WorkflowArtifact[],
+): readonly WorkflowArtifact[] => {
+  const latestByKind = new Map<string, WorkflowArtifact>();
+  for (const artifact of artifacts) {
+    if (ITERATIVE_KINDS.has(artifact.kind)) latestByKind.set(artifact.kind, artifact);
+  }
+  return artifacts.filter(
+    (artifact) =>
+      !ITERATIVE_KINDS.has(artifact.kind) || latestByKind.get(artifact.kind) === artifact,
+  );
+};
+
 const checkerBaseEvent = (
   verdict: WorkflowArtifact,
 ): "checker_passed" | "checker_requested_changes" | "checker_escalated" => {
@@ -216,7 +236,7 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
     request_plan_approval: async () => ({ event: eventFor("plan_approved", issue.key) }),
     start_developer_attempt: async (ctx) => {
       const artifact = artifactWithRunSuffix(
-        await deps.runRole("developer", ctx.artifacts),
+        await deps.runRole("developer", focusedDeveloperInput(ctx.artifacts)),
         `attempt-${ctx.snapshot.developerAttempts}`,
       );
       return {
