@@ -82,6 +82,7 @@ const buildDeps = (
     runRole: overrides.runRole ?? defaultRunRole,
     verify: overrides.verify ?? (async () => verificationArtifact("passed")),
     publish: overrides.publish ?? (async () => {}),
+    ...(overrides.checkpoint === undefined ? {} : { checkpoint: overrides.checkpoint }),
     ...(overrides.mergePolicy === undefined ? {} : { mergePolicy: overrides.mergePolicy }),
     ...(overrides.issueTracker === undefined ? {} : { issueTracker: overrides.issueTracker }),
     ...(overrides.issueStatusLabels === undefined
@@ -119,6 +120,22 @@ describe("engine command handlers", () => {
     expect(result.outcome).toBe("merged");
     expect(result.snapshot.state).toBe("merged");
     expect(published).toBe(1);
+  });
+
+  it("checkpoints the attempt before review (Aider-pattern restore point)", async () => {
+    const messages: string[] = [];
+    const result = await run(
+      buildDeps({
+        checkpoint: async (message) => {
+          messages.push(message);
+          return `sha-${messages.length}`;
+        },
+      }),
+    );
+
+    expect(result.outcome).toBe("merged");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain("checkpoint");
   });
 
   it("writes merged status through the terminal FSM command exactly once", async () => {

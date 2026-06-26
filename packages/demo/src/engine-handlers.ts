@@ -32,6 +32,10 @@ export interface EngineHandlerDeps {
   ) => Promise<WorkflowArtifact>;
   verify: (inputArtifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact>;
   publish: () => Promise<void>;
+  // LBE-45 (Aider-pattern checkpointing): commit the current worktree as a
+  // restorable checkpoint before review. Returns the commit SHA (undefined if the
+  // tree is clean). Omit to keep the legacy uncommitted-worktree behavior.
+  checkpoint?: (message: string) => Promise<string | undefined>;
   mergePolicy?: MergePolicy;
   issueTracker?: IssueTrackerAdapter;
   issueStatusLabels?: Partial<IssueStatusLabels>;
@@ -289,6 +293,12 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
     },
     start_checker_review: async (ctx) => {
       const attempt = requireByKind(ctx.artifacts, "developer.attempt");
+      // Checkpoint the attempt before review (after verification, so the verifier's
+      // working-tree guard is unaffected). The reviewer then diffs base...HEAD, and
+      // the loop can later reset --hard back to the best attempt.
+      await deps.checkpoint?.(
+        `${issue.key} attempt ${ctx.snapshot.developerAttempts} (checkpoint)`,
+      );
       const reviewRole = reviewRoleForChangedFiles(developerChangedFiles(attempt));
       const verdict = artifactWithRunSuffix(
         reviewRole === "deep_reviewer"

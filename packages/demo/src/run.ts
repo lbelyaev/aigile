@@ -39,8 +39,10 @@ import {
 } from "@aigile/types";
 import { createLocalVerifier } from "@aigile/verifier";
 import {
+  commitWorktreeCheckpoint,
   createGitPublisher,
   createGitWorkspaceAdapter,
+  defaultExecCommand,
   type ExecCommand,
   type GitPublisher,
 } from "@aigile/workspace";
@@ -222,7 +224,10 @@ const executionPolicyToArtifact = (issueKey: string, dryRun: boolean): WorkflowA
       },
 });
 
-const checkerReviewPolicyToArtifact = (issueKey: string): WorkflowArtifact => ({
+// baseRef present (engine path): attempts are committed, so the reviewer diffs the
+// committed range base...HEAD. Absent (legacy path): the worktree is uncommitted, so
+// the reviewer reads the working-tree diff as before.
+const checkerReviewPolicyToArtifact = (issueKey: string, baseRef?: string): WorkflowArtifact => ({
   id: `policy:${issueKey}:review`,
   kind: "execution.policy",
   source: "system",
@@ -233,19 +238,37 @@ const checkerReviewPolicyToArtifact = (issueKey: string): WorkflowArtifact => ({
     pushes: "forbidden",
     pullRequests: "forbidden",
     shellCommands: "review_read_only",
-    instructions: [
-      "Use read-only tooling to review the plan, implementation, diff, and verification artifacts.",
-      "You may run rg/grep, git diff/log/show, and verification or typecheck commands.",
-      "Do not edit files.",
-      "Do not create commits.",
-      "Do not push branches or open pull requests.",
-    ],
+    ...(baseRef === undefined ? {} : { baseRef }),
+    instructions:
+      baseRef === undefined
+        ? [
+            "Use read-only tooling to review the plan, implementation, diff, and verification artifacts.",
+            "You may run rg/grep, git diff/log/show, and verification or typecheck commands.",
+            "Do not edit files.",
+            "Do not create commits.",
+            "Do not push branches or open pull requests.",
+          ]
+        : [
+            "Use read-only tooling to review the plan, implementation, diff, and verification artifacts.",
+            `The change under review is the committed diff on this branch since ${baseRef}.`,
+            `Inspect it with \`git diff ${baseRef}...HEAD\`, \`git log ${baseRef}..HEAD\`, and \`git show\` — the working tree is clean, so a bare \`git diff\` shows nothing.`,
+            "You may also run rg/grep and verification or typecheck commands.",
+            "Do not edit files.",
+            "Do not create commits.",
+            "Do not push branches or open pull requests.",
+          ],
   },
 });
 
-const checkerInputArtifacts = (artifacts: readonly WorkflowArtifact[], issueKey: string) =>
+const checkerInputArtifacts = (
+  artifacts: readonly WorkflowArtifact[],
+  issueKey: string,
+  baseRef?: string,
+) =>
   artifacts.map((artifact) =>
-    artifact.kind === "execution.policy" ? checkerReviewPolicyToArtifact(issueKey) : artifact,
+    artifact.kind === "execution.policy"
+      ? checkerReviewPolicyToArtifact(issueKey, baseRef)
+      : artifact,
   );
 
 const checkerEventForVerdict = (artifact: WorkflowArtifact): WorkflowEvent["type"] => {
@@ -990,6 +1013,9 @@ export const runWorkspaceIssueWithEngine = async (
     input.publisher ?? createGitPublisher(input.exec === undefined ? {} : { exec: input.exec });
   const remote = input.remote ?? "origin";
   const target = input.pullRequestTarget ?? { owner: "aigile", repo: "aigile" };
+  const reviewBaseBranch = target.baseBranch ?? input.baseBranch ?? "main";
+  // The reviewer diffs the committed range against the fetched remote base.
+  const reviewBaseRef = `${remote}/${reviewBaseBranch}`;
   const checks = input.verificationCommands ?? [["bun", "run", "check"]];
   const autofix = input.autofixCommands ?? DEFAULT_AUTOFIX_COMMANDS;
   const issueStatusLabels: IssueStatusLabels = {
@@ -1016,7 +1042,7 @@ export const runWorkspaceIssueWithEngine = async (
         // that actually runs in production gets it.
         inputArtifacts:
           roleId === "checker" || roleId === "deep_reviewer"
-            ? checkerInputArtifacts(inputArtifacts, input.issue.key)
+            ? checkerInputArtifacts(inputArtifacts, input.issue.key, reviewBaseRef)
             : inputArtifacts,
         registry,
         runner,
@@ -1040,6 +1066,18 @@ export const runWorkspaceIssueWithEngine = async (
         commitMessage: `${input.issue.key} ${input.issue.title}`,
       });
     },
+    // Checkpoint each reviewed attempt so the loop can reset --hard to the best one.
+    // Dry-run forbids commits, so no checkpointing there.
+    ...(input.dryRun === true
+      ? {}
+      : {
+          checkpoint: async (message: string) =>
+            commitWorktreeCheckpoint(
+              input.exec ?? defaultExecCommand,
+              workspace.worktreePath,
+              message,
+            ),
+        }),
     ...(input.issueTracker !== undefined && input.dryRun !== true
       ? {
           issueTracker: input.issueTracker,
