@@ -43,6 +43,7 @@ import {
   createGitPublisher,
   createGitWorkspaceAdapter,
   defaultExecCommand,
+  resetWorktreeTo,
   type ExecCommand,
   type GitPublisher,
 } from "@aigile/workspace";
@@ -1016,6 +1017,7 @@ export const runWorkspaceIssueWithEngine = async (
   const reviewBaseBranch = target.baseBranch ?? input.baseBranch ?? "main";
   // The reviewer diffs the committed range against the fetched remote base.
   const reviewBaseRef = `${remote}/${reviewBaseBranch}`;
+  const worktreeExec = input.exec ?? defaultExecCommand;
   const checks = input.verificationCommands ?? [["bun", "run", "check"]];
   const autofix = input.autofixCommands ?? DEFAULT_AUTOFIX_COMMANDS;
   const issueStatusLabels: IssueStatusLabels = {
@@ -1057,6 +1059,15 @@ export const runWorkspaceIssueWithEngine = async (
           : { changedFileGuards: input.changedFileGuards }),
       }),
     publish: async () => {
+      // Collapse the per-attempt checkpoint commits into a single clean commit so
+      // the PR isn't littered with "attempt N (checkpoint)". reset --soft moves HEAD
+      // back to the base while keeping every change staged; the publisher then makes
+      // one commit with the real message and pushes it.
+      if (input.dryRun !== true) {
+        await worktreeExec("git", ["reset", "--soft", reviewBaseRef], {
+          cwd: workspace.worktreePath,
+        });
+      }
       await publisher.publish({
         worktreePath: workspace.worktreePath,
         branchName: workspace.branchName,
@@ -1066,17 +1077,15 @@ export const runWorkspaceIssueWithEngine = async (
         commitMessage: `${input.issue.key} ${input.issue.title}`,
       });
     },
-    // Checkpoint each reviewed attempt so the loop can reset --hard to the best one.
-    // Dry-run forbids commits, so no checkpointing there.
+    // Checkpoint each reviewed attempt (and restore to the best on regression) so the
+    // loop hill-climbs. Dry-run forbids commits, so neither applies there.
     ...(input.dryRun === true
       ? {}
       : {
           checkpoint: async (message: string) =>
-            commitWorktreeCheckpoint(
-              input.exec ?? defaultExecCommand,
-              workspace.worktreePath,
-              message,
-            ),
+            commitWorktreeCheckpoint(worktreeExec, workspace.worktreePath, message),
+          restoreCheckpoint: async (ref: string) =>
+            resetWorktreeTo(worktreeExec, workspace.worktreePath, ref),
         }),
     ...(input.issueTracker !== undefined && input.dryRun !== true
       ? {
