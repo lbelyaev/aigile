@@ -36,6 +36,9 @@ export interface EngineHandlerDeps {
   // restorable checkpoint before review. Returns the commit SHA (undefined if the
   // tree is clean). Omit to keep the legacy uncommitted-worktree behavior.
   checkpoint?: (message: string) => Promise<string | undefined>;
+  // LBE-45: restore the worktree to a prior checkpoint SHA (git reset --hard) so the
+  // loop can revert a regressed attempt to the best one and escalate the best diff.
+  restoreCheckpoint?: (ref: string) => Promise<void>;
   mergePolicy?: MergePolicy;
   issueTracker?: IssueTrackerAdapter;
   issueStatusLabels?: Partial<IssueStatusLabels>;
@@ -96,8 +99,8 @@ const deepReviewFindingCount = (verdict: WorkflowArtifact): number => {
 // and escalated with 4 despite attempt 2 having only 1. Surface the lowest-finding
 // attempt and its punch-list so whoever picks up the escalation knows which attempt
 // to build on. Returns undefined when there is nothing useful to flag (fewer than
-// two reviews, or the last attempt already is the best). NOTE: this reports the best
-// attempt; restoring the worktree to it is a follow-up (needs git snapshot/restore).
+// two reviews, or the last attempt already is the best). The worktree itself is reset
+// to this best attempt by restoreToBestIfRegressed; this is the human-readable report.
 export const summarizeBestAttempt = (
   artifacts: readonly WorkflowArtifact[],
 ): string | undefined => {
@@ -119,6 +122,49 @@ export const summarizeBestAttempt = (
     `Lowest-finding review (attempt ${best.attempt}):`,
     ...reasons.map((reason) => `- ${reason}`),
   ].join("\n");
+};
+
+// LBE-45: among verdicts that recorded a worktree checkpoint, the best is the one
+// with the fewest findings. Returns its ref + findings, or undefined if none.
+const bestCheckpoint = (
+  artifacts: readonly WorkflowArtifact[],
+): { ref: string; findings: number } | undefined => {
+  let best: { ref: string; findings: number } | undefined;
+  for (const artifact of artifacts) {
+    if (artifact.kind !== "checker.verdict") continue;
+    const ref = artifact.provenance?.worktreeCheckpoint;
+    if (ref === undefined) continue;
+    const findings = deepReviewFindingCount(artifact);
+    if (best === undefined || findings < best.findings) best = { ref, findings };
+  }
+  return best;
+};
+
+// Findings of the most recently checkpointed verdict (the attempt just reviewed).
+const latestCheckpointFindings = (artifacts: readonly WorkflowArtifact[]): number | undefined => {
+  for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+    const artifact = artifacts[index];
+    if (
+      artifact?.kind === "checker.verdict" &&
+      artifact.provenance?.worktreeCheckpoint !== undefined
+    )
+      return deepReviewFindingCount(artifact);
+  }
+  return undefined;
+};
+
+// Anti-drift restore: if the attempt just reviewed scored worse than the best
+// checkpoint so far, revert the worktree to the best one. Returns the ref restored
+// to (for logging/escalation), or undefined when no restore was needed.
+const restoreToBestIfRegressed = async (
+  deps: EngineHandlerDeps,
+  artifacts: readonly WorkflowArtifact[],
+): Promise<string | undefined> => {
+  const best = bestCheckpoint(artifacts);
+  const latest = latestCheckpointFindings(artifacts);
+  if (best === undefined || latest === undefined || latest <= best.findings) return undefined;
+  await deps.restoreCheckpoint?.(best.ref);
+  return best.ref;
 };
 
 const checkerBaseEvent = (
@@ -274,6 +320,10 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
     },
     request_plan_approval: async () => ({ event: eventFor("plan_approved", issue.key) }),
     start_developer_attempt: async (ctx) => {
+      // Anti-drift regression gate: if the attempt just reviewed scored worse than
+      // the best checkpoint, revert the worktree to the best one so this attempt
+      // hill-climbs from the best instead of building on a regression.
+      await restoreToBestIfRegressed(deps, ctx.artifacts);
       const artifact = artifactWithRunSuffix(
         await deps.runRole("developer", focusedDeveloperInput(ctx.artifacts)),
         `attempt-${ctx.snapshot.developerAttempts}`,
@@ -296,11 +346,11 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
       // Checkpoint the attempt before review (after verification, so the verifier's
       // working-tree guard is unaffected). The reviewer then diffs base...HEAD, and
       // the loop can later reset --hard back to the best attempt.
-      await deps.checkpoint?.(
+      const checkpointRef = await deps.checkpoint?.(
         `${issue.key} attempt ${ctx.snapshot.developerAttempts} (checkpoint)`,
       );
       const reviewRole = reviewRoleForChangedFiles(developerChangedFiles(attempt));
-      const verdict = artifactWithRunSuffix(
+      const reviewed = artifactWithRunSuffix(
         reviewRole === "deep_reviewer"
           ? await runAssignedDeepReview({
               issueId: issue.key,
@@ -310,6 +360,15 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
           : await deps.runRole(reviewRole, ctx.artifacts),
         `attempt-${ctx.snapshot.developerAttempts}`,
       );
+      // Tag the verdict with the checkpoint it reviewed so the loop can find and
+      // restore the best-scoring attempt later (regression gate / escalate-best).
+      const verdict: WorkflowArtifact =
+        checkpointRef === undefined
+          ? reviewed
+          : {
+              ...reviewed,
+              provenance: { ...reviewed.provenance, worktreeCheckpoint: checkpointRef },
+            };
       const base = checkerBaseEvent(verdict);
       const baseType =
         base === "checker_passed" && !developerHasChanges(attempt) ? "work_satisfied" : base;
@@ -429,6 +488,8 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
       return {};
     },
     request_human_attention: async (ctx) => {
+      // Escalate-the-best: leave the worktree at the best attempt, not the last.
+      await restoreToBestIfRegressed(deps, ctx.artifacts);
       const bestAttempt = summarizeBestAttempt(ctx.artifacts);
       const reason =
         bestAttempt === undefined

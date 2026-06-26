@@ -96,6 +96,9 @@ export interface RuntimeArtifactProvenance {
 
 export interface ArtifactProvenance {
   runtime?: RuntimeArtifactProvenance;
+  // LBE-45: the worktree checkpoint (commit SHA) the reviewer's verdict applies to,
+  // so the loop can `git reset --hard` back to the best-scoring attempt.
+  worktreeCheckpoint?: string;
 }
 
 export interface WorkflowArtifact<TPayload = unknown> {

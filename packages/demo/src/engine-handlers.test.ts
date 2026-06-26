@@ -83,6 +83,9 @@ const buildDeps = (
     verify: overrides.verify ?? (async () => verificationArtifact("passed")),
     publish: overrides.publish ?? (async () => {}),
     ...(overrides.checkpoint === undefined ? {} : { checkpoint: overrides.checkpoint }),
+    ...(overrides.restoreCheckpoint === undefined
+      ? {}
+      : { restoreCheckpoint: overrides.restoreCheckpoint }),
     ...(overrides.mergePolicy === undefined ? {} : { mergePolicy: overrides.mergePolicy }),
     ...(overrides.issueTracker === undefined ? {} : { issueTracker: overrides.issueTracker }),
     ...(overrides.issueStatusLabels === undefined
@@ -136,6 +139,46 @@ describe("engine command handlers", () => {
     expect(result.outcome).toBe("merged");
     expect(messages).toHaveLength(1);
     expect(messages[0]).toContain("checkpoint");
+  });
+
+  it("restores the worktree to the best checkpoint when an attempt regresses", async () => {
+    const restored: string[] = [];
+    let checkpointN = 0;
+    let checkerN = 0;
+    const findingsByReview = [1, 3, 2]; // attempt 1 is best; attempt 2 regresses
+    const result = await run(
+      buildDeps({
+        checkpoint: async () => `sha-${(checkpointN += 1)}`,
+        restoreCheckpoint: async (ref) => {
+          restored.push(ref);
+        },
+        runRole: async (roleId, artifacts) => {
+          if (roleId === "architect") return planArtifact();
+          if (roleId === "developer") return attemptArtifact(`dev-${artifacts.length}`);
+          if (roleId === "checker") {
+            const findings = findingsByReview[checkerN] ?? 1;
+            checkerN += 1;
+            return {
+              id: `checker:LIN-1:r${checkerN}`,
+              kind: "checker.verdict",
+              source: "agent",
+              payload: {
+                verdict: "changes_requested",
+                summary: `${findings} issue(s)`,
+                reasons: Array.from({ length: findings }, (_, i) => `f${i}`),
+              },
+            };
+          }
+          throw new Error(`unexpected role ${roleId}`);
+        },
+      }),
+    );
+
+    expect(result.outcome).toBe("escalated");
+    // Attempt 3 (after the regressed attempt 2) and the escalation both reset to the
+    // best checkpoint — attempt 1's sha-1.
+    expect(restored).toContain("sha-1");
+    expect(restored.every((ref) => ref === "sha-1")).toBe(true);
   });
 
   it("writes merged status through the terminal FSM command exactly once", async () => {
