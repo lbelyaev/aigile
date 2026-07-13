@@ -298,6 +298,7 @@ export type DemoMode =
   | "run"
   | "status"
   | "watch"
+  | "daemon"
   | "reconcile"
   | "init";
 
@@ -1228,6 +1229,60 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
   return lines.join("\n");
 };
 
+const daemonValue = (value: string | undefined): string => value ?? "(unset)";
+
+const daemonRunMode = (context: ResolvedProductCliContext): string => {
+  if (context.agentWrite) return "agent_write";
+  if (context.dryRun) return "dry_run";
+  return "none";
+};
+
+export const formatDaemonStartupSummary = (
+  contexts: readonly ResolvedProductCliContext[],
+  input: { pollIntervalMs: number },
+): string =>
+  [
+    "Aigile daemon: supervisor",
+    "Products:",
+    ...contexts.map(
+      (context) =>
+        `- ${daemonValue(context.productId)} linear-team=${daemonValue(context.linearTeam)} linear-project=${daemonValue(context.linearProject)} github-repo=${daemonValue(context.githubRepo)}`,
+    ),
+    `Poll interval: ${input.pollIntervalMs}ms`,
+    "Run defaults:",
+    ...contexts.map(
+      (context) =>
+        `- ${daemonValue(context.productId)} mode=${daemonRunMode(context)} publish=${context.publish} start-run=${context.startRun}`,
+    ),
+  ].join("\n");
+
+export interface LinearDaemonSupervisorCliInput {
+  contexts: readonly ResolvedProductCliContext[];
+  loopInput: LinearWatchLoopCliInput;
+  onLine?: (line: string) => void;
+  runLoop?: (input: LinearWatchLoopCliInput) => Promise<string>;
+}
+
+export const runLinearDaemonSupervisorCli = async (
+  input: LinearDaemonSupervisorCliInput,
+): Promise<string> => {
+  const lines: string[] = [];
+  const emit = (line: string): void => {
+    lines.push(line);
+    input.onLine?.(line);
+  };
+  for (const line of formatDaemonStartupSummary(input.contexts, {
+    pollIntervalMs: input.loopInput.pollIntervalMs,
+  }).split("\n")) {
+    emit(line);
+  }
+  await (input.runLoop ?? runLinearWatchLoopCli)({
+    ...input.loopInput,
+    onLine: emit,
+  });
+  return lines.join("\n");
+};
+
 export interface ReconcileProductsCliInput {
   productConfig: RuntimeProductConfig;
   apiKey: string;
@@ -1420,15 +1475,24 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (args.includes("--force")) parsed.force = true;
     return parsed;
   }
-  if (args[0] === "watch") {
+  if (args[0] === "watch" || args[0] === "daemon") {
+    const command = args[0];
     const preflightOnly = args.includes("--preflight");
     const pollInterval = optionValue(args, "--poll-interval");
-    if (!args.includes("--once") && !preflightOnly && pollInterval === undefined) {
+    if (command === "daemon" && pollInterval === undefined) {
+      throw new Error("daemon requires --poll-interval");
+    }
+    if (
+      command === "watch" &&
+      !args.includes("--once") &&
+      !preflightOnly &&
+      pollInterval === undefined
+    ) {
       throw new Error("watch currently requires --once or --poll-interval");
     }
-    const parsed: CliArgs = { mode: "watch" };
-    if (args.includes("--once")) parsed.once = true;
-    if (preflightOnly) parsed.preflightOnly = true;
+    const parsed: CliArgs = { mode: command };
+    if (command === "watch" && args.includes("--once")) parsed.once = true;
+    if (command === "watch" && preflightOnly) parsed.preflightOnly = true;
     if (pollInterval !== undefined) parsed.pollIntervalMs = parseDurationMs(pollInterval);
     const issueKey = optionValue(args, "--issue");
     const title = optionValue(args, "--title");
@@ -1476,7 +1540,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     }
     if (parsed.startRun) {
       if (parsed.pollIntervalMs === undefined)
-        throw new Error("watch --start-run requires --poll-interval");
+        throw new Error(`${command} --start-run requires --poll-interval`);
     }
     if (progressLevel !== undefined) parsed.progressLevel = progressLevel;
     return parsed;
@@ -1628,6 +1692,7 @@ const isDemoCliMode = (mode: DemoMode): boolean =>
   mode !== "run" &&
   mode !== "status" &&
   mode !== "watch" &&
+  mode !== "daemon" &&
   mode !== "reconcile" &&
   mode !== "init";
 
@@ -1818,7 +1883,7 @@ const main = async (): Promise<void> => {
     return;
   }
   const runContext = args.mode === "run" ? await resolveProductCliContext(args) : undefined;
-  const linearApiKey = (command: "run" | "watch" | "reconcile"): string => {
+  const linearApiKey = (command: "run" | "watch" | "daemon" | "reconcile"): string => {
     const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
     const apiKey = process.env[apiKeyEnv];
     if (!apiKey) throw new Error(`${command} --linear requires ${apiKeyEnv} to be set`);
@@ -1874,10 +1939,12 @@ const main = async (): Promise<void> => {
   };
   if (runContext !== undefined) runInput.baseBranch = runContext.baseBranch;
   else if (args.baseBranch !== undefined) runInput.baseBranch = args.baseBranch;
-  if (args.mode === "watch") {
+  if (args.mode === "watch" || args.mode === "daemon") {
+    const command = args.mode;
     const watchContexts = await resolveProductCliContexts(args);
     const watchContext = watchContexts[0];
-    if (watchContext === undefined) throw new Error("watch requires at least one product route");
+    if (watchContext === undefined)
+      throw new Error(`${command} requires at least one product route`);
     const watchProductRoutes = watchContexts
       .filter(
         (
@@ -1912,12 +1979,17 @@ const main = async (): Promise<void> => {
       process.stdout.write(`${output}\n`);
       return;
     }
-    if (args.linear) {
+    if (args.linear || command === "daemon") {
       if (watchTeamKeys.length === 0)
-        throw new Error("watch --linear requires --linear-team, --product, or --products-config");
+        throw new Error(
+          `${command} ${command === "watch" ? "--linear " : ""}requires --linear-team, --product, or --products-config`,
+        );
       const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
       const apiKey = process.env[apiKeyEnv];
-      if (!apiKey) throw new Error(`watch --linear requires ${apiKeyEnv} to be set`);
+      if (!apiKey)
+        throw new Error(
+          `${command}${command === "watch" ? " --linear" : ""} requires ${apiKeyEnv} to be set`,
+        );
       if (args.pollIntervalMs !== undefined) {
         const controller = new AbortController();
         process.once("SIGINT", () => controller.abort());
@@ -1942,14 +2014,14 @@ const main = async (): Promise<void> => {
         if (args.maxPolls !== undefined) loopInput.maxPolls = args.maxPolls;
         if (watchContexts.some((context) => context.startRun)) {
           if (runtimeConfigPath === undefined)
-            throw new Error("watch --start-run requires --runtime-config");
+            throw new Error(`${command} --start-run requires --runtime-config`);
           if (
             watchContexts.some(
               (context) =>
                 context.startRun && context.dryRun !== true && context.agentWrite !== true,
             )
           ) {
-            throw new Error("watch --start-run requires --dry-run or --agent-write");
+            throw new Error(`${command} --start-run requires --dry-run or --agent-write`);
           }
           const publishRunInputs = new Map<
             string,
@@ -2069,9 +2141,18 @@ const main = async (): Promise<void> => {
             };
           }
         }
-        await runLinearWatchLoopCli(loopInput);
+        if (command === "daemon") {
+          await runLinearDaemonSupervisorCli({
+            contexts: watchContexts,
+            loopInput,
+            onLine: (line) => process.stdout.write(`${line}\n`),
+          });
+        } else {
+          await runLinearWatchLoopCli(loopInput);
+        }
         return;
       }
+      if (command === "daemon") throw new Error("daemon requires --poll-interval");
       const linearInput: LinearWatchOnceCliInput = {
         apiKey,
         teamKey: watchTeamKeys[0]!,
