@@ -16,6 +16,7 @@ import {
   createDryRunExec,
   formatAcpRoleProgress,
   formatArchitectPlanComment,
+  formatDaemonStartupSummary,
   formatDemoResult,
   formatDuration,
   runCli,
@@ -25,6 +26,7 @@ import {
   resolveRuntimeConfigPath,
   fetchLinearIssueForRun,
   runLinearIssueWorkflowCli,
+  runLinearDaemonSupervisorCli,
   runLinearWatchLoopCli,
   runLinearWatchPreflightCli,
   runLinearWatchOnceCli,
@@ -906,6 +908,37 @@ describe("cli formatting", () => {
     });
   });
 
+  it("parses daemon product config arguments", () => {
+    expect(
+      parseCliArgs([
+        "daemon",
+        "--product",
+        "aigile",
+        "--products-config",
+        "config/aigile.products.example.json",
+        "--runtime-config",
+        "config/aigile.runtimes.example.json",
+        "--poll-interval",
+        "30s",
+        "--agent-write",
+        "--publish",
+        "--start-run",
+        "--linear-api-key-env",
+        "AIGILE_LINEAR_API_KEY",
+      ]),
+    ).toEqual({
+      mode: "daemon",
+      product: "aigile",
+      productsConfigPath: "config/aigile.products.example.json",
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+      pollIntervalMs: 30_000,
+      agentWrite: true,
+      publish: true,
+      startRun: true,
+      linearApiKeyEnv: "AIGILE_LINEAR_API_KEY",
+    });
+  });
+
   it("resolves product defaults for Linear watch runs", async () => {
     const config = loadProductConfigFromJson(
       JSON.stringify({
@@ -1019,6 +1052,67 @@ describe("cli formatting", () => {
         dryRun: true,
         startRun: true,
         verification: { checks: [["bun", "test", "packages/api"]] },
+      },
+    ]);
+  });
+
+  it("resolves every product from products config for daemon", async () => {
+    const config = loadProductConfigFromJson(
+      JSON.stringify({
+        products: [
+          {
+            id: "web",
+            linear: { team: "LBE", project: "Web" },
+            github: { repo: "lbelyaev/web", baseBranch: "main" },
+            repoPath: "/repo/web",
+            worktreesPath: "/worktrees/web",
+            defaultRun: { startRun: true, mode: "agent_write", publish: true },
+          },
+          {
+            id: "api",
+            linear: { team: "API", project: "API" },
+            github: { repo: "lbelyaev/api", baseBranch: "develop" },
+            repoPath: "/repo/api",
+            worktreesPath: "/worktrees/api",
+            defaultRun: { startRun: false, mode: "dry_run", publish: false },
+          },
+        ],
+      }),
+    );
+
+    expect(
+      await resolveProductCliContexts(
+        parseCliArgs([
+          "daemon",
+          "--products-config",
+          "config/aigile.products.json",
+          "--runtime-config",
+          "config/aigile.runtimes.example.json",
+          "--poll-interval",
+          "30s",
+        ]),
+        config,
+      ),
+    ).toMatchObject([
+      {
+        productId: "web",
+        linearTeam: "LBE",
+        linearProject: "Web",
+        githubRepo: "lbelyaev/web",
+        agentWrite: true,
+        dryRun: false,
+        publish: true,
+        startRun: true,
+      },
+      {
+        productId: "api",
+        linearTeam: "API",
+        linearProject: "API",
+        githubRepo: "lbelyaev/api",
+        agentWrite: false,
+        dryRun: true,
+        publish: false,
+        startRun: false,
       },
     ]);
   });
@@ -1408,6 +1502,10 @@ describe("cli formatting", () => {
     expect(() => parseCliArgs(["watch"])).toThrow(/requires --once or --poll-interval/i);
   });
 
+  it("rejects daemon without a poll interval", () => {
+    expect(() => parseCliArgs(["daemon"])).toThrow(/daemon requires --poll-interval/i);
+  });
+
   it("rejects invalid watch loop bounds", () => {
     expect(() =>
       parseCliArgs([
@@ -1689,6 +1787,107 @@ describe("cli formatting", () => {
     expect(output).toContain("Agents: not started");
     expect(calls.filter((call) => call.query.includes("issueUpdate"))).toHaveLength(1);
     expect(calls.filter((call) => call.query.includes("commentCreate"))).toHaveLength(1);
+  });
+
+  it("formats daemon startup output for configured products", () => {
+    expect(
+      formatDaemonStartupSummary(
+        [
+          {
+            productId: "web",
+            linearTeam: "LBE",
+            linearProject: "Web",
+            githubRepo: "lbelyaev/web",
+            githubOwner: "lbelyaev",
+            githubRepository: "web",
+            remote: "origin",
+            baseBranch: "main",
+            repoPath: "/repo/web",
+            worktreesPath: "/worktrees/web",
+            dryRun: false,
+            agentWrite: true,
+            publish: true,
+            startRun: true,
+          },
+          {
+            productId: "api",
+            linearTeam: "API",
+            linearProject: "API",
+            githubRepo: "lbelyaev/api",
+            githubOwner: "lbelyaev",
+            githubRepository: "api",
+            remote: "origin",
+            baseBranch: "main",
+            repoPath: "/repo/api",
+            worktreesPath: "/worktrees/api",
+            dryRun: true,
+            agentWrite: false,
+            publish: false,
+            startRun: false,
+          },
+        ],
+        { pollIntervalMs: 30_000 },
+      ),
+    ).toBe(
+      [
+        "Aigile daemon: supervisor",
+        "Products:",
+        "- web linear-team=LBE linear-project=Web github-repo=lbelyaev/web",
+        "- api linear-team=API linear-project=API github-repo=lbelyaev/api",
+        "Poll interval: 30000ms",
+        "Run defaults:",
+        "- web mode=agent_write publish=true start-run=true",
+        "- api mode=dry_run publish=false start-run=false",
+      ].join("\n"),
+    );
+  });
+
+  it("stops the daemon supervisor cleanly when aborted between polls", async () => {
+    const controller = new AbortController();
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+
+    const output = await runLinearDaemonSupervisorCli({
+      contexts: [
+        {
+          productId: "aigile",
+          linearTeam: "LBE",
+          linearProject: "Aigile",
+          githubRepo: "lbelyaev/aigile",
+          githubOwner: "lbelyaev",
+          githubRepository: "aigile",
+          remote: "origin",
+          baseBranch: "main",
+          repoPath: "/repo/aigile",
+          worktreesPath: "/worktrees/aigile",
+          dryRun: false,
+          agentWrite: true,
+          publish: false,
+          startRun: true,
+        },
+      ],
+      loopInput: {
+        apiKey: "test-key",
+        teamKey: "LBE",
+        teamKeys: ["LBE"],
+        pollIntervalMs: 1,
+        signal: controller.signal,
+        sleep: async (_durationMs, signal) => {
+          expect(signal).toBe(controller.signal);
+          controller.abort();
+        },
+        fetchGraphql: async (query, variables) => {
+          calls.push({ query, variables });
+          if (query.includes("ReadyIssues")) return { issues: { nodes: [] } };
+          return {};
+        },
+      },
+    });
+
+    expect(output).toContain("Aigile daemon: supervisor");
+    expect(output).toContain("Aigile watch: loop");
+    expect(output).toContain("Stopped: aborted after 1 polls");
+    expect(calls.filter((call) => call.query.includes("issueUpdate"))).toHaveLength(0);
+    expect(calls.filter((call) => call.query.includes("commentCreate"))).toHaveLength(0);
   });
 
   it("resumes an interrupted run during the watch loop", async () => {
