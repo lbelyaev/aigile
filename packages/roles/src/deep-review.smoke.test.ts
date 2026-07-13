@@ -23,13 +23,15 @@ describe("deep review real smoke (opt-in)", () => {
   const registry = createRoleRuntimeRegistry({
     runtimes: [
       {
-        id: "codex-acp",
+        id: "claude-acp",
         transport: "stdio",
-        command: ["npx", "-y", "@zed-industries/codex-acp"],
+        command: ["npx", "-y", "@agentclientprotocol/claude-agent-acp"],
+        defaultModel: "claude-4.8",
         envPassthrough: [
-          "OPENAI_API_KEY",
-          "OPENAI_BASE_URL",
-          "CODEX_HOME",
+          "ANTHROPIC_API_KEY",
+          "ANTHROPIC_AUTH_TOKEN",
+          "CLAUDE_CODE_OAUTH_TOKEN",
+          "CLAUDE_CONFIG_DIR",
           "XDG_CONFIG_HOME",
           "XDG_DATA_HOME",
           "XDG_CACHE_HOME",
@@ -37,7 +39,7 @@ describe("deep review real smoke (opt-in)", () => {
         ],
       },
     ],
-    assignments: [{ roleId: "deep_reviewer", runtimeProfileId: "codex-acp" }],
+    assignments: [{ roleId: "deep_reviewer", runtimeProfileId: "claude-acp" }],
   });
   const runner = createAcpRoleRunner();
   const runRole = (
