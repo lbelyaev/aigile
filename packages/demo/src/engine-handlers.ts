@@ -11,6 +11,7 @@ import {
   type CodeHostAdapter,
   type IssueRecord,
   type IssueTrackerAdapter,
+  type PullRequestChecksSummary,
   type PullRequestRecord,
   type PullRequestReviewInput,
 } from "@aigile/adapters";
@@ -226,6 +227,19 @@ const publishCheckerFeedback = async (
       ["## Aigile checker review", "", review.body].join("\n"),
     );
   }
+};
+
+const formatCheckDetails = (checks: PullRequestChecksSummary): string => {
+  const actionable = checks.checks.filter(
+    (check) => check.state === "failing" || check.state === "unknown",
+  );
+  const selected = actionable.length > 0 ? actionable : checks.checks;
+  if (selected.length === 0) return "no check details available";
+  return selected
+    .map((check) =>
+      check.detailsUrl === undefined ? check.name : `${check.name} (${check.detailsUrl})`,
+    )
+    .join(", ");
 };
 
 // Honest verification gate: only an explicit "passed" status passes (AIG-5).
@@ -457,16 +471,43 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
           return { event: eventFor("merge_completed", issue.key), artifact: prArtifact };
         }
         const mergeability = await codeHost.getPullRequestMergeability(prId);
+        if (mergeability.status === "conflicting") {
+          return {
+            event: eventFor("publish_failed", issue.key, {
+              reason: "pull request has merge conflicts",
+            }),
+            artifact: prArtifact,
+          };
+        }
+        const checks = await codeHost.getPullRequestChecks(prId);
+        if (checks.status === "pending") {
+          await syncIssueStatusForState({
+            issueTracker: deps.issueTracker,
+            issueKey: issue.key,
+            state: ctx.snapshot.state,
+            issueStatusLabels: deps.issueStatusLabels,
+            originalStatus: issue.status,
+            artifacts: [...ctx.artifacts, prArtifact],
+          });
+          return { artifact: prArtifact };
+        }
+        if (checks.status === "failing" || checks.status === "unknown") {
+          const reason =
+            checks.status === "failing"
+              ? `pull request checks failed: ${formatCheckDetails(checks)}`
+              : `pull request check status is unknown: ${formatCheckDetails(checks)}`;
+          return { event: eventFor("publish_failed", issue.key, { reason }), artifact: prArtifact };
+        }
+        if (mergeability.status === "blocked" || mergeability.status === "unknown") {
+          const reason =
+            mergeability.status === "blocked"
+              ? "pull request is blocked by branch protection or missing reviews"
+              : "pull request mergeability is unknown";
+          return { event: eventFor("publish_failed", issue.key, { reason }), artifact: prArtifact };
+        }
         if (mergeability.status === "mergeable") {
           await codeHost.mergePullRequest(prId);
           return { event: eventFor("merge_completed", issue.key), artifact: prArtifact };
-        }
-        if (mergeability.status === "conflicting" || mergeability.status === "unknown") {
-          const reason =
-            mergeability.status === "conflicting"
-              ? "pull request has merge conflicts"
-              : "pull request mergeability is unknown";
-          return { event: eventFor("publish_failed", issue.key, { reason }), artifact: prArtifact };
         }
         await syncIssueStatusForState({
           issueTracker: deps.issueTracker,

@@ -126,6 +126,61 @@ describe("engine command handlers", () => {
     expect(published).toBe(1);
   });
 
+  it("auto-merges only after checks are passing or absent", async () => {
+    const pendingHost = createFakeCodeHostAdapter({
+      mergeability: "mergeable",
+      merged: false,
+      checks: { "o/r#1": { status: "pending", checks: [{ name: "ci", state: "pending" }] } },
+    });
+    const pending = await run(buildDeps({ codeHost: pendingHost }));
+
+    expect(pending.outcome).toBe("paused");
+    expect((await pendingHost.getPullRequestMergeState("o/r#1")).status).toBe("unmerged");
+
+    const passingHost = createFakeCodeHostAdapter({
+      mergeability: "mergeable",
+      merged: false,
+      checks: { "o/r#1": { status: "passing", checks: [{ name: "ci", state: "passing" }] } },
+    });
+    const passing = await run(buildDeps({ codeHost: passingHost }));
+
+    expect(passing.outcome).toBe("merged");
+    expect((await passingHost.getPullRequestMergeState("o/r#1")).status).toBe("merged");
+  });
+
+  it("keeps a green PR in review when merge policy is manual", async () => {
+    const codeHost = createFakeCodeHostAdapter({
+      mergeability: "mergeable",
+      merged: false,
+      checks: { "o/r#1": { status: "passing", checks: [{ name: "ci", state: "passing" }] } },
+    });
+    const result = await run(
+      buildDeps({
+        issue: makeIssue({ description: "aigile-merge: manual" }),
+        codeHost,
+      }),
+    );
+
+    expect(result.outcome).toBe("paused");
+    expect(result.snapshot.state).toBe("merge_ready");
+    expect((await codeHost.getPullRequestMergeState("o/r#1")).status).toBe("unmerged");
+  });
+
+  it("does not merge when checks pass but required reviews are missing", async () => {
+    const codeHost = createFakeCodeHostAdapter({
+      mergeability: {
+        "o/r#1": { status: "blocked", mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED" },
+      },
+      merged: false,
+      checks: { "o/r#1": { status: "passing", checks: [{ name: "ci", state: "passing" }] } },
+    });
+    const result = await run(buildDeps({ codeHost }));
+
+    expect(result.outcome).toBe("escalated");
+    expect(result.reason).toContain("missing reviews");
+    expect((await codeHost.getPullRequestMergeState("o/r#1")).status).toBe("unmerged");
+  });
+
   it("checkpoints the attempt before review (Aider-pattern restore point)", async () => {
     const messages: string[] = [];
     const result = await run(

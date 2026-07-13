@@ -4,6 +4,8 @@ import type {
   IssueRecord,
   IssueTrackerAdapter,
   PullRequestInput,
+  PullRequestMergeability,
+  PullRequestChecksSummary,
   PullRequestMergeabilityStatus,
   PullRequestMergeStateStatus,
   PullRequestRecord,
@@ -38,6 +40,12 @@ const requirePullRequest = (
   if (!pullRequest) throw new Error(`Pull request not found: ${id}`);
   return pullRequest;
 };
+
+const isPullRequestMergeability = (value: unknown): value is PullRequestMergeability =>
+  typeof value === "object" &&
+  value !== null &&
+  !Array.isArray(value) &&
+  typeof (value as { status?: unknown }).status === "string";
 
 export interface FakeIssueTrackerAdapterOptions {
   validStatusLabels?: readonly string[];
@@ -82,8 +90,12 @@ export const createFakeReadyIssueSource = (
 };
 
 export interface FakeCodeHostAdapterOptions {
-  mergeability?: PullRequestMergeabilityStatus | Record<string, PullRequestMergeabilityStatus>;
+  mergeability?:
+    | PullRequestMergeabilityStatus
+    | PullRequestMergeability
+    | Record<string, PullRequestMergeabilityStatus | PullRequestMergeability>;
   merged?: boolean | Record<string, boolean>;
+  checks?: PullRequestChecksSummary | Record<string, PullRequestChecksSummary>;
 }
 
 export const createFakeCodeHostAdapter = (
@@ -93,11 +105,15 @@ export const createFakeCodeHostAdapter = (
   const mergedIds = new Set<string>();
   let nextNumber = 1;
 
-  const mergeabilityFor = (id: string): PullRequestMergeabilityStatus => {
-    if (mergeStateFor(id) === "merged") return "unknown";
-    if (options.mergeability === undefined) return "unknown";
-    if (typeof options.mergeability === "string") return options.mergeability;
-    return options.mergeability[id] ?? "unknown";
+  const mergeabilityFor = (id: string): PullRequestMergeability => {
+    if (mergeStateFor(id) === "merged") return { status: "unknown" };
+    if (options.mergeability === undefined) return { status: "unknown" };
+    if (typeof options.mergeability === "string") return { status: options.mergeability };
+    if (isPullRequestMergeability(options.mergeability)) {
+      return structuredClone(options.mergeability);
+    }
+    const configured = options.mergeability[id] ?? "unknown";
+    return typeof configured === "string" ? { status: configured } : structuredClone(configured);
   };
 
   const mergeStateFor = (id: string): PullRequestMergeStateStatus => {
@@ -106,6 +122,38 @@ export const createFakeCodeHostAdapter = (
     if (typeof options.merged === "boolean") return options.merged ? "merged" : "unmerged";
     if (options.merged[id] === undefined) return "unknown";
     return options.merged[id] ? "merged" : "unmerged";
+  };
+
+  const checksFor = (id: string): PullRequestChecksSummary => {
+    if (options.checks !== undefined) {
+      const configured = options.checks as Partial<PullRequestChecksSummary>;
+      if (typeof configured.status === "string" && Array.isArray(configured.checks)) {
+        return structuredClone(configured as PullRequestChecksSummary);
+      }
+      return structuredClone(
+        (options.checks as Record<string, PullRequestChecksSummary>)[id] ?? {
+          status: "none",
+          checks: [],
+        },
+      );
+    }
+    const pullRequest = requirePullRequest(pullRequests, id);
+    if (pullRequest.checks.length === 0) return { status: "none", checks: [] };
+    const checks = pullRequest.checks.map((check) => ({
+      name: check.name,
+      state:
+        check.status === "passed"
+          ? ("passing" as const)
+          : check.status === "failed" || check.status === "cancelled"
+            ? ("failing" as const)
+            : ("unknown" as const),
+    }));
+    const status = checks.some((check) => check.state === "failing")
+      ? "failing"
+      : checks.some((check) => check.state === "unknown")
+        ? "unknown"
+        : "passing";
+    return { status, checks };
   };
 
   return {
@@ -129,11 +177,15 @@ export const createFakeCodeHostAdapter = (
     getPullRequest: async (id) => clonePullRequest(requirePullRequest(pullRequests, id)),
     getPullRequestMergeability: async (id) => {
       requirePullRequest(pullRequests, id);
-      return { status: mergeabilityFor(id) };
+      return mergeabilityFor(id);
     },
     getPullRequestMergeState: async (id) => {
       requirePullRequest(pullRequests, id);
       return { status: mergeStateFor(id) };
+    },
+    getPullRequestChecks: async (id) => {
+      requirePullRequest(pullRequests, id);
+      return checksFor(id);
     },
     appendPullRequestComment: async (id, comment) => {
       const pullRequest = requirePullRequest(pullRequests, id);

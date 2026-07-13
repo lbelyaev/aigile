@@ -67,7 +67,7 @@ export interface PullRequestReview {
   comments: PullRequestReviewComment[];
 }
 
-export type PullRequestMergeabilityStatus = "mergeable" | "conflicting" | "unknown";
+export type PullRequestMergeabilityStatus = "mergeable" | "conflicting" | "blocked" | "unknown";
 
 export interface PullRequestMergeability {
   status: PullRequestMergeabilityStatus;
@@ -82,6 +82,19 @@ export interface PullRequestMergeState {
   state?: string;
   merged?: boolean;
   mergedAt?: string;
+}
+
+export type PullRequestCheckState = "pending" | "passing" | "failing" | "unknown";
+
+export interface PullRequestCheckEntry {
+  name: string;
+  state: PullRequestCheckState;
+  detailsUrl?: string;
+}
+
+export interface PullRequestChecksSummary {
+  status: PullRequestCheckState | "none";
+  checks: PullRequestCheckEntry[];
 }
 
 export interface PullRequestRecord extends PullRequestInput {
@@ -110,6 +123,7 @@ export interface CodeHostAdapter {
   getPullRequest: (id: string) => Promise<PullRequestRecord>;
   getPullRequestMergeability: (id: string) => Promise<PullRequestMergeability>;
   getPullRequestMergeState: (id: string) => Promise<PullRequestMergeState>;
+  getPullRequestChecks: (id: string) => Promise<PullRequestChecksSummary>;
   appendPullRequestComment: (id: string, comment: string) => Promise<void>;
   submitPullRequestReview: (id: string, review: PullRequestReviewInput) => Promise<void>;
   listPullRequestReviews?: (id: string) => Promise<PullRequestReview[]>;
