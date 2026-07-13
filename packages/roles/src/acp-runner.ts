@@ -102,6 +102,28 @@ const resolvePromptTimeoutMs = (timeoutMs: number | undefined): number => {
   return resolved;
 };
 
+const substituteRuntimeValue = (value: string, runtime: RoleRunInput["runtime"]): string =>
+  value.replace(/\$\{defaultModel\}/g, () => {
+    if (runtime.defaultModel === undefined) {
+      throw new Error(
+        `Runtime command references \${defaultModel} without defaultModel: ${runtime.id}`,
+      );
+    }
+    return runtime.defaultModel;
+  });
+
+const resolveRuntimeCommand = (
+  runtime: RoleRunInput["runtime"],
+): readonly [string, ...string[]] => {
+  if (runtime.command === undefined) {
+    throw new Error(`ACP runtime profile is missing command: ${runtime.id}`);
+  }
+  return runtime.command.map((part) => substituteRuntimeValue(part, runtime)) as [
+    string,
+    ...string[],
+  ];
+};
+
 export const buildAcpRuntimeConnectInput = (
   input: RoleRunInput,
   options: BuildAcpRuntimeConnectInputOptions = {},
@@ -113,7 +135,7 @@ export const buildAcpRuntimeConnectInput = (
   }
 
   const connectInput: ConnectAcpRuntimeInput = {
-    command: input.runtime.command,
+    command: resolveRuntimeCommand(input.runtime),
     sessionId: `${input.issueId}:${input.roleId}`,
     promptTimeoutMs: resolvePromptTimeoutMs(options.promptTimeoutMs),
     initializeParams: {
@@ -152,7 +174,8 @@ const runtimeProvenance = (
   };
   if (input.runtime.displayName !== undefined)
     provenance.runtimeDisplayName = input.runtime.displayName;
-  if (input.runtime.command !== undefined) provenance.command = [...input.runtime.command];
+  if (input.runtime.command !== undefined)
+    provenance.command = [...resolveRuntimeCommand(input.runtime)];
   if (tokenUsage !== undefined) provenance.tokenUsage = tokenUsage;
   return provenance;
 };
