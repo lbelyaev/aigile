@@ -24,6 +24,7 @@ import {
   runPublishPreflight,
   runIssueWorkspaceStatus,
   resolveProductCliContext,
+  resolveProductCliContexts,
   selectDemoMode,
 } from "./main.js";
 
@@ -888,6 +889,74 @@ describe("cli formatting", () => {
     });
   });
 
+  it("resolves every product from products config when watch omits --product", () => {
+    const config = loadProductConfigFromJson(
+      JSON.stringify({
+        products: [
+          {
+            id: "web",
+            linear: { team: "LBE", project: "Web" },
+            github: { repo: "lbelyaev/web", baseBranch: "main" },
+            repoPath: "/repo/web",
+            worktreesPath: "/worktrees/web",
+            defaultRun: { startRun: true, mode: "agent_write", publish: false },
+          },
+          {
+            id: "api",
+            linear: { team: "LBE", project: "API" },
+            github: { repo: "lbelyaev/api", baseBranch: "develop" },
+            repoPath: "/repo/api",
+            worktreesPath: "/worktrees/api",
+            defaultRun: { startRun: true, mode: "dry_run", publish: false },
+            verification: { checks: [["bun", "test", "packages/api"]] },
+          },
+        ],
+      }),
+    );
+
+    expect(
+      resolveProductCliContexts(
+        parseCliArgs([
+          "watch",
+          "--linear",
+          "--products-config",
+          "config/aigile.products.json",
+          "--runtime-config",
+          "config/aigile.runtimes.example.json",
+          "--poll-interval",
+          "30s",
+        ]),
+        config,
+      ),
+    ).toMatchObject([
+      {
+        productId: "web",
+        linearTeam: "LBE",
+        linearProject: "Web",
+        githubRepo: "lbelyaev/web",
+        baseBranch: "main",
+        repoPath: "/repo/web",
+        worktreesPath: "/worktrees/web",
+        agentWrite: true,
+        dryRun: false,
+        startRun: true,
+      },
+      {
+        productId: "api",
+        linearTeam: "LBE",
+        linearProject: "API",
+        githubRepo: "lbelyaev/api",
+        baseBranch: "develop",
+        repoPath: "/repo/api",
+        worktreesPath: "/worktrees/api",
+        agentWrite: false,
+        dryRun: true,
+        startRun: true,
+        verification: { checks: [["bun", "test", "packages/api"]] },
+      },
+    ]);
+  });
+
   it("resolves product defaults and verification policy for direct runs", () => {
     const config = loadProductConfigFromJson(
       JSON.stringify({
@@ -1561,6 +1630,91 @@ describe("cli formatting", () => {
     expect(output).toContain("Project: Aigile");
     expect(output).toContain("GitHub repo: lbelyaev/aigile");
     expect(output).toContain("Run LBE-13: starting");
+    expect(output).toContain("Agents: handled claimed issues");
+  });
+
+  it("routes Linear watch runs across two products sharing a team", async () => {
+    const started: Array<{
+      issueKey: string;
+      productId: string | undefined;
+      repo: string | undefined;
+    }> = [];
+
+    const output = await runLinearWatchLoopCli({
+      apiKey: "test-key",
+      teamKey: "LBE",
+      productRoutes: [
+        { productId: "web", linearProject: "Web", githubRepo: "lbelyaev/web" },
+        { productId: "api", linearProject: "API", githubRepo: "lbelyaev/api" },
+      ],
+      readyStatus: "Todo",
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 3,
+      sleep: async () => {},
+      startRun: async (issue, route) => {
+        started.push({ issueKey: issue.key, productId: route?.productId, repo: route?.githubRepo });
+        return [`Aigile demo run: ${issue.key}`, "Final state: merge_ready"].join("\n");
+      },
+      fetchGraphql: async (query) => {
+        if (query.includes("ReadyIssues")) {
+          return {
+            issues: {
+              nodes: [
+                {
+                  id: "issue-web",
+                  identifier: "LBE-41",
+                  title: "Web issue",
+                  description: "",
+                  state: { name: "Todo" },
+                  project: { id: "project-web", name: "Web" },
+                  comments: { nodes: [] },
+                },
+                {
+                  id: "issue-api",
+                  identifier: "LBE-42",
+                  title: "API issue",
+                  description: "",
+                  state: { name: "Todo" },
+                  project: { id: "project-api", name: "API" },
+                  comments: { nodes: [] },
+                },
+                {
+                  id: "issue-other",
+                  identifier: "LBE-43",
+                  title: "Other issue",
+                  description: "",
+                  state: { name: "Todo" },
+                  project: { id: "project-other", name: "Other" },
+                  comments: { nodes: [] },
+                },
+              ],
+            },
+          };
+        }
+        if (query.includes("WorkflowStateByName")) {
+          return { workflowStates: { nodes: [{ id: "state-in-progress", name: "In Progress" }] } };
+        }
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("issueUpdate")) return {};
+        if (query.includes("commentCreate")) return {};
+        return {};
+      },
+    });
+
+    expect(started).toEqual([
+      { issueKey: "LBE-41", productId: "web", repo: "lbelyaev/web" },
+      { issueKey: "LBE-42", productId: "api", repo: "lbelyaev/api" },
+    ]);
+    expect(output).toContain(
+      "Poll 1: claimed LBE-41 (ready issues: 2) product: web repo: lbelyaev/web",
+    );
+    expect(output).toContain(
+      "Poll 2: claimed LBE-42 (ready issues: 1) product: api repo: lbelyaev/api",
+    );
+    expect(output).toContain("Poll 1: skipped LBE-43 (project_mismatch)");
+    expect(output).toContain("Run LBE-41: starting product: web repo: lbelyaev/web");
+    expect(output).toContain("Run LBE-42: completed product: api repo: lbelyaev/api");
     expect(output).toContain("Agents: handled claimed issues");
   });
 

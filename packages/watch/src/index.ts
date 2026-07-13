@@ -55,7 +55,7 @@ export interface WatchLoopInput extends WatchOnceInput {
   signal?: AbortSignal;
   sleep?: (durationMs: number, signal?: AbortSignal) => Promise<void>;
   onEvent?: (event: WatchLoopEvent) => void;
-  onClaimedIssue?: (issue: IssueRecord) => Promise<void>;
+  onClaimedIssue?: (issue: IssueRecord, route?: WatchProductRoute) => Promise<void>;
   reconcile?: {
     listIssues: () => Promise<IssueRecord[]>;
     reconcileIssue: (issue: IssueRecord) => Promise<ReconcileOutcome>;
@@ -74,7 +74,7 @@ export interface WatchProductRoute {
   githubRepo: string;
 }
 
-export type WatchSkipReason = "no_project" | "project_mismatch";
+export type WatchSkipReason = "no_project" | "project_mismatch" | "project_ambiguous";
 
 export interface WatchSkippedIssue {
   issueKey: string;
@@ -148,8 +148,10 @@ export const routeReadyIssuesForProducts = (
       skippedIssues.push({ issueKey: issue.key, reason: "no_project", configuredProjects });
       continue;
     }
-    const route = productRoutes.find((candidate) => projectMatchesRoute(issue.project!, candidate));
-    if (route === undefined) {
+    const matchingRoutes = productRoutes.filter((candidate) =>
+      projectMatchesRoute(issue.project!, candidate),
+    );
+    if (matchingRoutes.length === 0) {
       skippedIssues.push({
         issueKey: issue.key,
         reason: "project_mismatch",
@@ -158,6 +160,16 @@ export const routeReadyIssuesForProducts = (
       });
       continue;
     }
+    if (matchingRoutes.length > 1) {
+      skippedIssues.push({
+        issueKey: issue.key,
+        reason: "project_ambiguous",
+        configuredProjects,
+        actualProject: describeProject(issue.project),
+      });
+      continue;
+    }
+    const route = matchingRoutes[0]!;
     readyIssues.push({ issue, route });
   }
   return { readyIssues, skippedIssues };
@@ -298,7 +310,7 @@ export const watchLoop = async (input: WatchLoopInput): Promise<void> => {
         ...(result.selectedRoute === undefined ? {} : { selectedRoute: result.selectedRoute }),
       });
       try {
-        await input.onClaimedIssue?.(result.claimedIssue);
+        await input.onClaimedIssue?.(result.claimedIssue, result.selectedRoute);
       } catch (error) {
         await input.tracker.updateIssueStatus(result.claimedIssue.key, result.claimedIssue.status);
         input.onEvent?.({
