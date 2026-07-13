@@ -6,13 +6,22 @@ import type {
   PullRequestReview,
   PullRequestReviewComment,
 } from "@aigile/adapters";
+import {
+  resolveProductPaths,
+  splitGithubRepo,
+  type ProductPathResolutionOptions,
+  type RuntimeProduct,
+  type RuntimeProductConfig,
+} from "@aigile/config";
 import type { WorkflowArtifact } from "@aigile/types";
 import {
+  createFileRunStore,
   initialWorkflowSnapshot,
   replayWorkflow,
   transitionWorkflow,
   type RunStore,
 } from "@aigile/workflow";
+import { join } from "node:path";
 
 export interface ReconcileStatusLabels {
   inReview: string; // PR open, not merged
@@ -40,6 +49,61 @@ export type ReconcileOutcome =
   | { kind: "unchanged"; status: string }
   | { kind: "updated"; from: string; to: string };
 
+export type ReconcileProductOutcome =
+  | {
+      kind: "no_pull_request";
+      productId: string;
+      issueKey: string;
+      branchName: string;
+      target: { owner: string; repo: string };
+    }
+  | {
+      kind: "unchanged";
+      productId: string;
+      issueKey: string;
+      status: string;
+      branchName: string;
+      target: { owner: string; repo: string };
+    }
+  | {
+      kind: "updated";
+      productId: string;
+      issueKey: string;
+      from: string;
+      to: string;
+      branchName: string;
+      target: { owner: string; repo: string };
+    }
+  | {
+      kind: "blocked" | "blocked_unchanged";
+      productId: string;
+      issueKey: string;
+      status: string;
+      state: "closed" | "conflicting" | "unknown";
+      note: string;
+      branchName: string;
+      target: { owner: string; repo: string };
+    }
+  | {
+      kind: "failed";
+      productId: string;
+      issueKey?: string;
+      error: string;
+    };
+
+export interface ReconcileProductsInput {
+  productConfig: RuntimeProductConfig;
+  createRunStore?: (product: RuntimeProduct, runStatePath: string) => RunStore;
+  createTracker: (product: RuntimeProduct) => IssueTrackerAdapter | Promise<IssueTrackerAdapter>;
+  createCodeHost: (product: RuntimeProduct) => CodeHostAdapter | Promise<CodeHostAdapter>;
+  labels?: ReconcileStatusLabels;
+  pathOptions?: ProductPathResolutionOptions;
+}
+
+export interface ReconcileProductsResult {
+  outcomes: ReconcileProductOutcome[];
+}
+
 export interface IngestExternalReviewFeedbackInput {
   issueKey: string;
   branchName: string;
@@ -65,6 +129,11 @@ const desiredStatus = (pullRequest: BranchPullRequest, labels: ReconcileStatusLa
   return labels.ready; // closed without merging: return it to the ready queue
 };
 
+export const runStatePathForProduct = (
+  product: RuntimeProduct,
+  options: ProductPathResolutionOptions = {},
+): string => join(resolveProductPaths(product, options).worktreesPath, "..", "runs");
+
 /**
  * Derive an issue's Linear status from its pull request state and apply it
  * idempotently (only when it differs). Decoupled from any run: given the
@@ -87,6 +156,8 @@ export const reconcileIssueStatus = async (
 
 const safeIdPart = (value: string): string => value.replace(/[^A-Za-z0-9._-]+/g, "_");
 
+const issueBranch = (issueKey: string): string => `aigile/${issueKey}`;
+
 const processedReviewFeedback = (
   artifacts: readonly WorkflowArtifact[],
 ): Map<string, WorkflowArtifact> => {
@@ -99,6 +170,189 @@ const processedReviewFeedback = (
     if (typeof signalId === "string" && signalId.length > 0) processed.set(signalId, artifact);
   }
   return processed;
+};
+
+type BlockedPrState = "closed" | "conflicting" | "unknown";
+
+type ProductPrStatus =
+  | { kind: "status"; status: string }
+  | { kind: "blocked"; state: BlockedPrState; reason: string };
+
+const prStatusForProduct = async (
+  codeHost: CodeHostAdapter,
+  pullRequest: BranchPullRequest,
+  labels: ReconcileStatusLabels,
+): Promise<ProductPrStatus> => {
+  if (pullRequest.mergeState === "merged") return { kind: "status", status: labels.done };
+  if (!pullRequest.open) {
+    return {
+      kind: "blocked",
+      state: "closed",
+      reason: `pull request is closed without merge: ${pullRequest.url}`,
+    };
+  }
+
+  try {
+    const mergeability = await codeHost.getPullRequestMergeability(pullRequest.id);
+    if (mergeability.status === "conflicting") {
+      return {
+        kind: "blocked",
+        state: "conflicting",
+        reason: `pull request is conflicting: ${pullRequest.url}`,
+      };
+    }
+    if (mergeability.status === "unknown") {
+      return {
+        kind: "blocked",
+        state: "unknown",
+        reason: `pull request mergeability is unknown: ${pullRequest.url}`,
+      };
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      kind: "blocked",
+      state: "unknown",
+      reason: `pull request mergeability could not be resolved for ${pullRequest.url}: ${detail}`,
+    };
+  }
+
+  return { kind: "status", status: labels.inReview };
+};
+
+const reconcileBlockedSignalId = (
+  productId: string,
+  issueKey: string,
+  pullRequest: BranchPullRequest,
+  state: BlockedPrState,
+): string =>
+  `aigile:reconcile:${safeIdPart(productId)}:${safeIdPart(issueKey)}:pr-${pullRequest.number}:${state}`;
+
+const blockedProductNote = (
+  product: RuntimeProduct,
+  issueKey: string,
+  pullRequest: BranchPullRequest,
+  state: BlockedPrState,
+  reason: string,
+): string => {
+  const signalId = reconcileBlockedSignalId(product.id, issueKey, pullRequest, state);
+  return [
+    `Aigile reconcile blocked/escalated ${issueKey}.`,
+    `Signal: ${signalId}`,
+    `Product: ${product.id}`,
+    `Reason: ${reason}`,
+  ].join("\n");
+};
+
+const reconcileProductRun = async (input: {
+  product: RuntimeProduct;
+  issueKey: string;
+  tracker: IssueTrackerAdapter;
+  codeHost: CodeHostAdapter;
+  labels: ReconcileStatusLabels;
+}): Promise<ReconcileProductOutcome> => {
+  const target = splitGithubRepo(input.product.github.repo);
+  const branchName = issueBranch(input.issueKey);
+  const base = {
+    productId: input.product.id,
+    issueKey: input.issueKey,
+    branchName,
+    target,
+  };
+  const issue = await input.tracker.getIssue(input.issueKey);
+  const pullRequest = await input.codeHost.findPullRequestForBranch(branchName, target);
+  if (pullRequest === undefined) return { kind: "no_pull_request", ...base };
+
+  const prStatus = await prStatusForProduct(input.codeHost, pullRequest, input.labels);
+  if (prStatus.kind === "blocked") {
+    const note = blockedProductNote(
+      input.product,
+      input.issueKey,
+      pullRequest,
+      prStatus.state,
+      prStatus.reason,
+    );
+    const signalId = reconcileBlockedSignalId(
+      input.product.id,
+      input.issueKey,
+      pullRequest,
+      prStatus.state,
+    );
+    const alreadyRecorded = issue.comments.some((comment) => comment.includes(signalId));
+    if (!alreadyRecorded) await input.tracker.appendIssueComment(input.issueKey, note);
+    return {
+      kind: alreadyRecorded ? "blocked_unchanged" : "blocked",
+      ...base,
+      status: issue.status,
+      state: prStatus.state,
+      note,
+    };
+  }
+
+  if (prStatus.status === issue.status) {
+    return { kind: "unchanged", ...base, status: prStatus.status };
+  }
+
+  await input.tracker.updateIssueStatus(input.issueKey, prStatus.status);
+  return { kind: "updated", ...base, from: issue.status, to: prStatus.status };
+};
+
+export const reconcileProducts = async (
+  input: ReconcileProductsInput,
+): Promise<ReconcileProductsResult> => {
+  const labels = input.labels ?? {
+    inReview: "In Review",
+    done: "Done",
+    ready: "Todo",
+  };
+  const outcomes: ReconcileProductOutcome[] = [];
+
+  for (const product of input.productConfig.products) {
+    try {
+      const runStatePath = runStatePathForProduct(product, input.pathOptions);
+      const store =
+        input.createRunStore?.(product, runStatePath) ??
+        createFileRunStore({ directory: runStatePath });
+      const tracker = await input.createTracker(product);
+      const codeHost = await input.createCodeHost(product);
+      let issueKeys: string[];
+      try {
+        issueKeys = await store.list();
+      } catch (error) {
+        outcomes.push({
+          kind: "failed",
+          productId: product.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
+
+      for (const listedIssueKey of issueKeys) {
+        try {
+          const run = await store.load(listedIssueKey);
+          const issueKey = run?.issueId ?? listedIssueKey;
+          outcomes.push(
+            await reconcileProductRun({ product, issueKey, tracker, codeHost, labels }),
+          );
+        } catch (error) {
+          outcomes.push({
+            kind: "failed",
+            productId: product.id,
+            issueKey: listedIssueKey,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    } catch (error) {
+      outcomes.push({
+        kind: "failed",
+        productId: product.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return { outcomes };
 };
 
 const submittedAtMs = (review: PullRequestReview): number => {

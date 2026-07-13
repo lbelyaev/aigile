@@ -7,6 +7,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@aigile/adapters": "workspace:*"
+    "@aigile/adapters": "workspace:*",
+    "@aigile/config": "workspace:*",
+    "@aigile/workflow": "workspace:*"
   }
 }

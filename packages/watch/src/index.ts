@@ -335,7 +335,12 @@ export const watchLoop = async (input: WatchLoopInput): Promise<void> => {
 
 export { defaultClaimComment, defaultClaimStatus };
 
-export { ingestExternalReviewFeedback, reconcileIssueStatus } from "./reconcile.js";
+export {
+  ingestExternalReviewFeedback,
+  reconcileIssueStatus,
+  reconcileProducts,
+  runStatePathForProduct,
+} from "./reconcile.js";
 
 export type {
   FindPullRequestForBranch,
@@ -343,5 +348,8 @@ export type {
   IngestExternalReviewFeedbackOutcome,
   ReconcileIssueStatusInput,
   ReconcileOutcome,
+  ReconcileProductOutcome,
+  ReconcileProductsInput,
+  ReconcileProductsResult,
   ReconcileStatusLabels,
 } from "./reconcile.js";

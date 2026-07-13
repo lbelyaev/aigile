@@ -1,7 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import type { CodeHostAdapter } from "@aigile/adapters";
+import {
+  createFakeCodeHostAdapter,
+  createFakeIssueTrackerAdapter,
+  type CodeHostAdapter,
+} from "@aigile/adapters";
 import type { DemoWorkspaceInput } from "@aigile/demo";
 import type { WorkflowArtifact } from "@aigile/types";
+import { createInMemoryRunStore } from "@aigile/workflow";
 import { loadProductConfigFromJson } from "@aigile/config";
 import {
   createAcpRoleProgressFormatter,
@@ -19,6 +24,7 @@ import {
   runLinearWatchLoopCli,
   runLinearWatchPreflightCli,
   runLinearWatchOnceCli,
+  runReconcileProductsCli,
   runWatchOnceCli,
   runRunModePreflight,
   runPublishPreflight,
@@ -432,6 +438,22 @@ describe("cli formatting", () => {
   it("requires issue keys for run and status", () => {
     expect(() => parseCliArgs(["run"])).toThrow(/run requires an issue key/);
     expect(() => parseCliArgs(["status"])).toThrow(/status requires an issue key/);
+  });
+
+  it("parses the standalone reconcile subcommand", () => {
+    expect(
+      parseCliArgs([
+        "reconcile",
+        "--products-config",
+        "config/aigile.products.json",
+        "--linear-api-key-env",
+        "LINEAR_TOKEN",
+      ]),
+    ).toEqual({
+      mode: "reconcile",
+      productsConfigPath: "config/aigile.products.json",
+      linearApiKeyEnv: "LINEAR_TOKEN",
+    });
   });
 
   it("selects the ACP-agent demo mode from argv", () => {
@@ -2860,5 +2882,52 @@ describe("cli formatting", () => {
         },
       }),
     ).rejects.toThrow(/publish preflight gh auth status failed \(1\): not logged in/i);
+  });
+
+  it("runs standalone product reconciliation without watch or start-run", async () => {
+    const store = createInMemoryRunStore();
+    await store.appendEvent("LIN-321", { type: "issue_received", issueId: "LIN-321" });
+    const tracker = createFakeIssueTrackerAdapter([
+      {
+        id: "LIN-321",
+        key: "LIN-321",
+        title: "Done issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "In Review",
+        comments: [],
+      },
+    ]);
+    const codeHost = createFakeCodeHostAdapter();
+    const pr = await codeHost.createPullRequest({
+      owner: "org",
+      repo: "repo",
+      branch: "aigile/LIN-321",
+      baseBranch: "main",
+      title: "LIN-321",
+      body: "LIN-321",
+    });
+    await codeHost.mergePullRequest(pr.id);
+
+    const output = await runReconcileProductsCli({
+      apiKey: "linear-key",
+      productConfig: {
+        products: [
+          {
+            id: "product",
+            linear: { team: "ENG", project: "Project" },
+            github: { repo: "org/repo", baseBranch: "main" },
+            defaultRun: { startRun: true, mode: "agent_write", publish: true },
+          },
+        ],
+      },
+      createRunStore: () => store,
+      createTracker: () => tracker,
+      createCodeHost: () => codeHost,
+    });
+
+    expect(output).toContain("Aigile reconcile: products");
+    expect(output).toContain("product/LIN-321: updated In Review -> Done");
+    expect(await tracker.getIssue("LIN-321")).toMatchObject({ status: "Done" });
   });
 });

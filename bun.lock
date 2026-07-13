@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-
   "workspaces": {
     "": {
       "name": "aigile",
@@ -102,6 +101,8 @@
       "version": "0.0.0",
       "dependencies": {
         "@aigile/adapters": "workspace:*",
+        "@aigile/config": "workspace:*",
+        "@aigile/workflow": "workspace:*",
       },
     },
     "packages/workflow": {
