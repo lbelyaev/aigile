@@ -129,6 +129,27 @@ describe("ACP role runner", () => {
     expect(connectInput.promptTimeoutMs).toBe(30 * 60 * 1_000);
   });
 
+  it("substitutes defaultModel in runtime command arguments", () => {
+    const connectInput = buildAcpRuntimeConnectInput({
+      roleId: "developer",
+      issueId: "LIN-123",
+      runtime: {
+        id: "codex-acp",
+        transport: "stdio",
+        command: ["codex-acp", "-c", 'model="${defaultModel}"'],
+        defaultModel: "gpt-5.5",
+      },
+      assignment: {
+        roleId: "developer",
+        runtimeProfileId: "codex-acp",
+      },
+      inputArtifacts: [],
+    });
+
+    expect(connectInput.command).toEqual(["codex-acp", "-c", 'model="gpt-5.5"']);
+    expect(connectInput.sessionParams.model).toBe("gpt-5.5");
+  });
+
   it("allows the ACP prompt timeout to be configured for runtime connects", () => {
     const connectInput = buildAcpRuntimeConnectInput(
       {
