@@ -11,6 +11,29 @@ bun install
 bun run check
 ```
 
+## Configuration
+
+Run `aigile init` to scaffold `.aigile.json`, `config/aigile.products.json`,
+and `config/aigile.runtimes.json` from the examples. Re-run with `--force` only
+when replacing existing config is intended.
+
+Aigile discovers repo-local operational config by walking up from the current
+directory to the current git repo root and reading the nearest `.aigile.json`.
+That file may define the repo id, package manager, Linear team/project,
+GitHub repo/base branch, default run behavior, and verification commands. If
+`github.repo` is omitted, Aigile derives `owner/repo` from the git `origin`
+remote when possible.
+
+Precedence is: CLI flags, then a matching central
+`config/aigile.products.json` entry, then repo-local `.aigile.json`, then
+built-in defaults. Runtime config is discovered at
+`config/aigile.runtimes.json` unless `--runtime-config` is supplied;
+`--products-config` likewise overrides the default central products path.
+
+Security note: verification commands from `.aigile.json` are executed. Treat
+repo-local config as safe only for first-party repos until sandboxing for
+untrusted repositories is added.
+
 ## Hand-Test Commands
 
 ```bash

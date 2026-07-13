@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "id": "aigile",
+  "packageManager": "bun",
+  "linear": {
+    "team": "LBE",
+    "project": "Aigile"
+  },
+  "github": {
+    "repo": "lbelyaev/aigile",
+    "baseBranch": "main"
+  },
+  "defaultRun": {
+    "startRun": true,
+    "mode": "agent_write",
+    "publish": true
+  },
+  "verification": {
+    "install": [["bun", "install", "--frozen-lockfile"]],
+    "checks": [["bun", "run", "check"]],
+    "changedFileGuards": [
+      {
+        "whenAnyChanged": ["package.json", "packages/*/package.json"],
+        "mustAlsoChange": ["bun.lock"],
+        "message": "Package manifests changed; update bun.lock."
+      }
+    ]
+  }
+}
