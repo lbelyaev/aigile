@@ -48,8 +48,11 @@ import {
   defaultClaimComment,
   ingestExternalReviewFeedback,
   reconcileIssueStatus,
+  reconcileProducts,
+  runStatePathForProduct,
   watchLoop,
   watchOnce,
+  type ReconcileProductOutcome,
   type ReconcileStatusLabels,
   type WatchLoopEvent,
   type WatchProductRoute,
@@ -290,7 +293,8 @@ export type DemoMode =
   | "linear"
   | "run"
   | "status"
-  | "watch";
+  | "watch"
+  | "reconcile";
 
 export const selectDemoMode = (args: readonly string[]): DemoMode =>
   args.includes("demo:agents") || args.includes("--agents")
@@ -1133,6 +1137,89 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
   return lines.join("\n");
 };
 
+export interface ReconcileProductsCliInput {
+  productConfig: RuntimeProductConfig;
+  apiKey: string;
+  labels?: ReconcileStatusLabels;
+  createRunStore?: Parameters<typeof reconcileProducts>[0]["createRunStore"];
+  createTracker?: (product: RuntimeProduct) => IssueTrackerAdapter | Promise<IssueTrackerAdapter>;
+  createCodeHost?: (product: RuntimeProduct) => CodeHostAdapter | Promise<CodeHostAdapter>;
+  cwd?: string;
+  homeDir?: string;
+}
+
+const formatReconcileOutcome = (outcome: ReconcileProductOutcome): string => {
+  const prefix =
+    "issueKey" in outcome && outcome.issueKey !== undefined
+      ? `${outcome.productId}/${outcome.issueKey}`
+      : outcome.productId;
+  switch (outcome.kind) {
+    case "updated":
+      return `- ${prefix}: updated ${outcome.from} -> ${outcome.to}`;
+    case "unchanged":
+      return `- ${prefix}: unchanged ${outcome.status}`;
+    case "no_pull_request":
+      return `- ${prefix}: no pull request`;
+    case "blocked":
+    case "blocked_unchanged":
+      return `- ${prefix}: ${outcome.kind} ${outcome.state}`;
+    case "failed":
+      return `- ${prefix}: failed ${outcome.error}`;
+  }
+};
+
+export const formatReconcileProductsResult = (
+  outcomes: readonly ReconcileProductOutcome[],
+): string =>
+  [
+    "Aigile reconcile: products",
+    `Outcomes: ${outcomes.length}`,
+    ...outcomes.map(formatReconcileOutcome),
+  ].join("\n");
+
+export const runReconcileProductsCli = async (
+  input: ReconcileProductsCliInput,
+): Promise<string> => {
+  const result = await reconcileProducts({
+    productConfig: input.productConfig,
+    createTracker:
+      input.createTracker ??
+      ((product) =>
+        createLinearGraphqlIssueTrackerAdapter({
+          apiKey: input.apiKey,
+          teamKey: product.linear.team,
+        })),
+    createCodeHost:
+      input.createCodeHost ??
+      ((product) => {
+        const paths = resolveProductPaths(product, {
+          cwd: input.cwd ?? process.cwd(),
+          ...(input.homeDir === undefined ? {} : { homeDir: input.homeDir }),
+        });
+        return createGitHubCliCodeHostAdapter({
+          cwd: paths.repoPath,
+          exec: async (command, commandArgs, options) =>
+            defaultExecCommand(command, commandArgs, { cwd: options.cwd ?? paths.repoPath }),
+        });
+      }),
+    createRunStore:
+      input.createRunStore ??
+      ((product) =>
+        createFileRunStore({
+          directory: runStatePathForProduct(product, {
+            cwd: input.cwd ?? process.cwd(),
+            ...(input.homeDir === undefined ? {} : { homeDir: input.homeDir }),
+          }),
+        })),
+    ...(input.labels === undefined ? {} : { labels: input.labels }),
+    pathOptions: {
+      cwd: input.cwd ?? process.cwd(),
+      ...(input.homeDir === undefined ? {} : { homeDir: input.homeDir }),
+    },
+  });
+  return formatReconcileProductsResult(result.outcomes);
+};
+
 export const runLinearWatchPreflightCli = async (
   input: LinearWatchPreflightCliInput,
 ): Promise<string> => {
@@ -1305,6 +1392,16 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (baseBranch !== undefined) parsed.baseBranch = baseBranch;
     return parsed;
   }
+  if (args[0] === "reconcile") {
+    const parsed: CliArgs = { mode: "reconcile" };
+    const productsConfigPath = optionValue(args, "--products-config");
+    const product = optionValue(args, "--product");
+    const linearApiKeyEnv = optionValue(args, "--linear-api-key-env");
+    if (productsConfigPath !== undefined) parsed.productsConfigPath = productsConfigPath;
+    if (product !== undefined) parsed.product = product;
+    if (linearApiKeyEnv !== undefined) parsed.linearApiKeyEnv = linearApiKeyEnv;
+    return parsed;
+  }
   if (args[0] === "run") {
     const issueKey = args[1];
     if (!issueKey) throw new Error("run requires an issue key");
@@ -1426,7 +1523,7 @@ export const runCli = async (
 };
 
 const isDemoCliMode = (mode: DemoMode): boolean =>
-  mode !== "run" && mode !== "status" && mode !== "watch";
+  mode !== "run" && mode !== "status" && mode !== "watch" && mode !== "reconcile";
 
 const issueFromRunArgs = (
   args: CliArgs,
@@ -1560,7 +1657,7 @@ const main = async (): Promise<void> => {
     return;
   }
   const runContext = args.mode === "run" ? resolveProductCliContext(args) : undefined;
-  const linearApiKey = (command: "run" | "watch"): string => {
+  const linearApiKey = (command: "run" | "watch" | "reconcile"): string => {
     const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
     const apiKey = process.env[apiKeyEnv];
     if (!apiKey) throw new Error(`${command} --linear requires ${apiKeyEnv} to be set`);
@@ -1573,6 +1670,20 @@ const main = async (): Promise<void> => {
       repoPath: args.repoPath ?? process.cwd(),
       worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
       baseBranch: args.baseBranch ?? "main",
+    });
+    process.stdout.write(`${output}\n`);
+    return;
+  }
+  if (args.mode === "reconcile") {
+    const productsConfigPath = args.productsConfigPath ?? "config/aigile.products.json";
+    const loadedProductConfig = loadProductConfigFromFile(productsConfigPath);
+    const productConfig =
+      args.product === undefined
+        ? loadedProductConfig
+        : { products: [findProductConfig(loadedProductConfig, args.product)] };
+    const output = await runReconcileProductsCli({
+      productConfig,
+      apiKey: linearApiKey("reconcile"),
     });
     process.stdout.write(`${output}\n`);
     return;
