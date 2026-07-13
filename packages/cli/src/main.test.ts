@@ -1842,6 +1842,115 @@ describe("cli formatting", () => {
     );
   });
 
+  it("runs startup reconciliation before the daemon watch loop can claim work", async () => {
+    const sequence: string[] = [];
+    const output = await runLinearDaemonSupervisorCli({
+      contexts: [
+        {
+          productId: "aigile",
+          linearTeam: "LBE",
+          linearProject: "Aigile",
+          githubRepo: "lbelyaev/aigile",
+          githubOwner: "lbelyaev",
+          githubRepository: "aigile",
+          remote: "origin",
+          baseBranch: "main",
+          repoPath: "/repo/aigile",
+          worktreesPath: "/worktrees/aigile",
+          dryRun: false,
+          agentWrite: true,
+          publish: true,
+          startRun: true,
+        },
+      ],
+      loopInput: {
+        apiKey: "test-key",
+        teamKey: "LBE",
+        pollIntervalMs: 1,
+      },
+      startupReconcile: async () => {
+        sequence.push("reconcile:start");
+        await Promise.resolve();
+        sequence.push("reconcile:end");
+        return {
+          outcomes: [
+            {
+              kind: "updated",
+              productId: "aigile",
+              issueKey: "LBE-53",
+              from: "In Review",
+              to: "Done",
+              branchName: "aigile/LBE-53",
+              target: { owner: "lbelyaev", repo: "aigile" },
+            },
+          ],
+        };
+      },
+      runLoop: async () => {
+        sequence.push("runLoop");
+        return "";
+      },
+    });
+
+    expect(sequence).toEqual(["reconcile:start", "reconcile:end", "runLoop"]);
+    expect(output).toContain("Startup reconciliation: scanning persisted runs");
+    expect(output).toContain("Startup reconciliation: - aigile/LBE-53: updated In Review -> Done");
+  });
+
+  it("resumes startup runs before entering the daemon watch loop", async () => {
+    const sequence: string[] = [];
+    const resumed: string[] = [];
+    const loopResumable: string[][] = [];
+
+    const output = await runLinearDaemonSupervisorCli({
+      contexts: [
+        {
+          productId: "aigile",
+          linearTeam: "LBE",
+          linearProject: "Aigile",
+          githubRepo: "lbelyaev/aigile",
+          githubOwner: "lbelyaev",
+          githubRepository: "aigile",
+          remote: "origin",
+          baseBranch: "main",
+          repoPath: "/repo/aigile",
+          worktreesPath: "/worktrees/aigile",
+          dryRun: false,
+          agentWrite: true,
+          publish: true,
+          startRun: true,
+        },
+      ],
+      loopInput: {
+        apiKey: "test-key",
+        teamKey: "LBE",
+        pollIntervalMs: 1,
+        resume: {
+          listResumable: async () => ["LBE-30"],
+          resumeRun: async (issueId) => {
+            sequence.push(`resume:${issueId}`);
+            resumed.push(issueId);
+            return { outcome: "Workflow state: merged" };
+          },
+        },
+      },
+      startupReconcile: async () => {
+        sequence.push("reconcile");
+        return { outcomes: [] };
+      },
+      runLoop: async (loopInput) => {
+        sequence.push("runLoop");
+        loopResumable.push((await loopInput.resume?.listResumable()) ?? []);
+        return "";
+      },
+    });
+
+    expect(sequence).toEqual(["reconcile", "resume:LBE-30", "runLoop"]);
+    expect(resumed).toEqual(["LBE-30"]);
+    expect(loopResumable).toEqual([[]]);
+    expect(output).toContain("Startup reconciliation: resumed LBE-30 (Workflow state: merged)");
+  });
+
   it("stops the daemon supervisor cleanly when aborted between polls", async () => {
     const controller = new AbortController();
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
