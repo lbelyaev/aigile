@@ -1062,6 +1062,10 @@ describe("durable engine-backed workspace run", () => {
       });
 
       expect(first.finalState).toBe("escalated");
+      expect(first.publicationFailure).toEqual({
+        operation: "publish_pull_request",
+        message: "gh pr create transient failure",
+      });
       expect(resetSoftCount).toBe(1);
       expect(publishCommitCount).toBe(1);
       expect(pushCount).toBe(1);
