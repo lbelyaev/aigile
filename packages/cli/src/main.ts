@@ -1290,7 +1290,124 @@ export interface LinearDaemonSupervisorCliInput {
   loopInput: LinearWatchLoopCliInput;
   onLine?: (line: string) => void;
   runLoop?: (input: LinearWatchLoopCliInput) => Promise<string>;
+  startupReconcile?: (input: {
+    contexts: readonly ResolvedProductCliContext[];
+    loopInput: LinearWatchLoopCliInput;
+  }) => ReturnType<typeof reconcileProducts>;
 }
+
+const productConfigForDaemonStartup = (
+  contexts: readonly ResolvedProductCliContext[],
+): RuntimeProductConfig => ({
+  products: contexts.flatMap((context): RuntimeProduct[] => {
+    if (
+      context.publish !== true ||
+      context.productId === undefined ||
+      context.linearTeam === undefined ||
+      context.linearProject === undefined ||
+      context.githubRepo === undefined
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: context.productId,
+        linear: { team: context.linearTeam, project: context.linearProject },
+        github: { repo: context.githubRepo, baseBranch: context.baseBranch },
+        repoPath: context.repoPath,
+        worktreesPath: context.worktreesPath,
+        defaultRun: {
+          startRun: context.startRun,
+          mode: context.agentWrite ? "agent_write" : "dry_run",
+          publish: context.publish,
+        },
+        ...(context.packageManager === undefined ? {} : { packageManager: context.packageManager }),
+        ...(context.verification === undefined ? {} : { verification: context.verification }),
+      },
+    ];
+  }),
+});
+
+const runDefaultDaemonStartupReconcile = async (input: {
+  contexts: readonly ResolvedProductCliContext[];
+  loopInput: LinearWatchLoopCliInput;
+}): ReturnType<typeof reconcileProducts> => {
+  const productConfig = productConfigForDaemonStartup(input.contexts);
+  if (productConfig.products.length === 0) return { outcomes: [] };
+  return reconcileProducts({
+    productConfig,
+    createTracker: (product) =>
+      createLinearGraphqlIssueTrackerAdapter({
+        apiKey: input.loopInput.apiKey,
+        teamKey: product.linear.team,
+        ...(input.loopInput.fetchGraphql === undefined
+          ? {}
+          : { fetchGraphql: input.loopInput.fetchGraphql }),
+      }),
+    createCodeHost: (product) => {
+      const paths = resolveProductPaths(product);
+      return createGitHubCliCodeHostAdapter({
+        cwd: paths.repoPath,
+        exec: async (command, commandArgs, options) =>
+          defaultExecCommand(command, commandArgs, { cwd: options.cwd ?? paths.repoPath }),
+      });
+    },
+    createRunStore: (product) =>
+      createFileRunStore({
+        directory: runStatePathForProduct(product),
+      }),
+    labels: {
+      inReview: DEFAULT_ISSUE_STATUS_LABELS.inReview,
+      done: DEFAULT_ISSUE_STATUS_LABELS.done,
+      ready: input.loopInput.readyStatus ?? "Todo",
+    },
+  });
+};
+
+const runDaemonStartupResume = async (
+  input: LinearWatchLoopCliInput,
+  emit: (line: string) => void,
+): Promise<Set<string>> => {
+  const resumed = new Set<string>();
+  if (input.resume === undefined) return resumed;
+
+  let issueIds: string[];
+  try {
+    issueIds = await input.resume.listResumable();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    emit(`Startup reconciliation: failed listing resumable runs: ${message}`);
+    return resumed;
+  }
+
+  for (const issueId of issueIds) {
+    try {
+      const { outcome } = await input.resume.resumeRun(issueId);
+      resumed.add(issueId);
+      emit(`Startup reconciliation: resumed ${issueId} (${outcome})`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emit(`Startup reconciliation: blocked ${issueId} (resume failed: ${message})`);
+    }
+  }
+  return resumed;
+};
+
+const filterAlreadyResumedRuns = (
+  input: LinearWatchLoopCliInput,
+  alreadyResumed: ReadonlySet<string>,
+): LinearWatchLoopCliInput => {
+  if (input.resume === undefined || alreadyResumed.size === 0) return input;
+  const resume = input.resume;
+  return {
+    ...input,
+    resume: {
+      listResumable: async () =>
+        (await resume.listResumable()).filter((issueId) => !alreadyResumed.has(issueId)),
+      resumeRun: resume.resumeRun,
+    },
+  };
+};
 
 export const runLinearDaemonSupervisorCli = async (
   input: LinearDaemonSupervisorCliInput,
@@ -1305,8 +1422,19 @@ export const runLinearDaemonSupervisorCli = async (
   }).split("\n")) {
     emit(line);
   }
+  emit("Startup reconciliation: scanning persisted runs");
+  const reconcileResult = await (input.startupReconcile ?? runDefaultDaemonStartupReconcile)({
+    contexts: input.contexts,
+    loopInput: input.loopInput,
+  });
+  for (const outcome of reconcileResult.outcomes) {
+    emit(`Startup reconciliation: ${formatReconcileOutcome(outcome)}`);
+  }
+  const alreadyResumed = await runDaemonStartupResume(input.loopInput, emit);
+  emit("Startup reconciliation: complete");
+
   await (input.runLoop ?? runLinearWatchLoopCli)({
-    ...input.loopInput,
+    ...filterAlreadyResumedRuns(input.loopInput, alreadyResumed),
     onLine: emit,
   });
   return lines.join("\n");
@@ -2162,6 +2290,22 @@ const main = async (): Promise<void> => {
             join(context.worktreesPath, "..", "runs");
           const primaryRunStatePath = runStatePathForContext(watchContext);
           loopInput.runStatePath = primaryRunStatePath;
+          const routeForContext = (
+            context: ResolvedProductCliContext,
+          ): WatchProductRoute | undefined => {
+            if (
+              context.productId === undefined ||
+              context.linearProject === undefined ||
+              context.githubRepo === undefined
+            ) {
+              return undefined;
+            }
+            return {
+              productId: context.productId,
+              linearProject: context.linearProject,
+              githubRepo: context.githubRepo,
+            };
+          };
           const contextForRoute = (route?: WatchProductRoute): ResolvedProductCliContext => {
             if (route === undefined) return watchContext;
             return (
@@ -2200,11 +2344,33 @@ const main = async (): Promise<void> => {
           loopInput.startRun = async (issue, route) =>
             runIssueByKey(issue.key, route, { retryEscalated: true });
           // Resume interrupted/paused runs from the persisted run log each poll.
-          const runStore = createFileRunStore({ directory: primaryRunStatePath });
+          const runStoresByProduct = new Map(
+            watchContexts.map((context) => [
+              context.productId ?? "",
+              createFileRunStore({ directory: runStatePathForContext(context) }),
+            ]),
+          );
+          const resumableRoutes = new Map<string, WatchProductRoute | undefined>();
           loopInput.resume = {
-            listResumable: () => listResumableRuns(runStore),
+            listResumable: async () => {
+              resumableRoutes.clear();
+              const issueIds: string[] = [];
+              for (const context of watchContexts) {
+                const runStore = runStoresByProduct.get(context.productId ?? "");
+                if (runStore === undefined) continue;
+                const route = routeForContext(context);
+                for (const issueId of await listResumableRuns(runStore)) {
+                  if (resumableRoutes.has(issueId)) continue;
+                  resumableRoutes.set(issueId, route);
+                  issueIds.push(issueId);
+                }
+              }
+              return issueIds;
+            },
             resumeRun: async (issueId) => {
-              const output = await runIssueByKey(issueId, undefined, { resumePublish: true });
+              const output = await runIssueByKey(issueId, resumableRoutes.get(issueId), {
+                resumePublish: true,
+              });
               return { outcome: runResultStateLine(output) ?? "resumed" };
             },
           };

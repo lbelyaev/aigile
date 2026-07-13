@@ -352,6 +352,52 @@ describe("reconcileProducts", () => {
     expect(result.outcomes.map((outcome) => outcome.kind)).toEqual(["no_pull_request", "updated"]);
     expect(await tracker.getIssue("LIN-2")).toMatchObject({ status: "In Review" });
   });
+
+  it("reports corrupt run-store records and continues reconciling later records", async () => {
+    const store = createInMemoryRunStore();
+    await appendRun(store, "LIN-2");
+    const tracker = createFakeIssueTrackerAdapter([issue("LIN-2", "In Progress")]);
+    const codeHost = createFakeCodeHostAdapter({ mergeability: "mergeable" });
+    await codeHost.createPullRequest({
+      owner: "org",
+      repo: "repo",
+      branch: "aigile/LIN-2",
+      baseBranch: "main",
+      title: "open",
+      body: "open",
+    });
+    const corruptStore = {
+      ...store,
+      list: async () => ["LIN-1", "LIN-2"],
+      load: async (issueKey: string) => {
+        if (issueKey === "LIN-1") throw new Error("run record was corrupt");
+        return store.load(issueKey);
+      },
+    };
+
+    const result = await reconcileProducts({
+      productConfig: {
+        products: [
+          {
+            id: "product",
+            linear: { team: "ENG", project: "Project" },
+            github: { repo: "org/repo", baseBranch: "main" },
+            defaultRun: { startRun: true, mode: "agent_write", publish: true },
+          },
+        ],
+      },
+      createRunStore: () => corruptStore,
+      createTracker: () => tracker,
+      createCodeHost: () => codeHost,
+      labels,
+    });
+
+    expect(result.outcomes).toEqual([
+      { kind: "failed", productId: "product", issueKey: "LIN-1", error: "run record was corrupt" },
+      expect.objectContaining({ kind: "updated", productId: "product", issueKey: "LIN-2" }),
+    ]);
+    expect(await tracker.getIssue("LIN-2")).toMatchObject({ status: "In Review" });
+  });
 });
 
 const seedMergeReadyRun = async (issueKey: string) => {
