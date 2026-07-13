@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createGitHubCliCodeHostAdapter } from "./index.js";
+import type { PullRequestChecksSummary } from "./contracts.js";
 
 describe("GitHub CLI code host adapter", () => {
   it("creates a draft pull request with gh", async () => {
@@ -410,6 +411,105 @@ describe("GitHub CLI code host adapter", () => {
     ]);
   });
 
+  it("reads pending, passing, failing, none, and unknown pull request checks with gh", async () => {
+    const cases: Array<{ payload: unknown; expected: PullRequestChecksSummary }> = [
+      {
+        payload: {
+          statusCheckRollup: [
+            { __typename: "CheckRun", name: "build", status: "IN_PROGRESS", conclusion: "" },
+          ],
+        },
+        expected: {
+          status: "pending",
+          checks: [{ name: "build", state: "pending" }],
+        },
+      },
+      {
+        payload: {
+          statusCheckRollup: [
+            { __typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS" },
+            { __typename: "StatusContext", context: "lint", state: "SUCCESS" },
+          ],
+        },
+        expected: {
+          status: "passing",
+          checks: [
+            { name: "test", state: "passing" },
+            { name: "lint", state: "passing" },
+          ],
+        },
+      },
+      {
+        payload: {
+          statusCheckRollup: [
+            {
+              __typename: "CheckRun",
+              name: "test",
+              status: "COMPLETED",
+              conclusion: "FAILURE",
+              detailsUrl: "https://github.local/checks/1",
+            },
+            {
+              __typename: "StatusContext",
+              context: "deploy",
+              state: "ERROR",
+              targetUrl: "https://github.local/status/2",
+            },
+          ],
+        },
+        expected: {
+          status: "failing",
+          checks: [
+            { name: "test", state: "failing", detailsUrl: "https://github.local/checks/1" },
+            { name: "deploy", state: "failing", detailsUrl: "https://github.local/status/2" },
+          ],
+        },
+      },
+      { payload: { statusCheckRollup: [] }, expected: { status: "none", checks: [] } },
+      {
+        payload: { statusCheckRollup: [{ name: "mystery", status: "WAITING_ON_PROVIDER" }] },
+        expected: {
+          status: "unknown",
+          checks: [{ name: "mystery", state: "unknown" }],
+        },
+      },
+    ];
+
+    for (const { payload, expected } of cases) {
+      const calls: string[][] = [];
+      const adapter = createGitHubCliCodeHostAdapter({
+        exec: async (_command, args) => {
+          calls.push([...args]);
+          return { stdout: JSON.stringify(payload), stderr: "", exitCode: 0 };
+        },
+      });
+
+      await expect(adapter.getPullRequestChecks("aigile/aigile#9")).resolves.toEqual(expected);
+      expect(calls).toContainEqual([
+        "pr",
+        "view",
+        "9",
+        "--repo",
+        "aigile/aigile",
+        "--json",
+        "statusCheckRollup",
+      ]);
+    }
+  });
+
+  it("treats empty or malformed pull request check output as unknown", async () => {
+    for (const stdout of ["", "not json", JSON.stringify({ statusCheckRollup: {} })]) {
+      const adapter = createGitHubCliCodeHostAdapter({
+        exec: async () => ({ stdout, stderr: "", exitCode: 0 }),
+      });
+
+      await expect(adapter.getPullRequestChecks("aigile/aigile#9")).resolves.toEqual({
+        status: "unknown",
+        checks: [],
+      });
+    }
+  });
+
   it("merges a pull request with gh pr merge --squash", async () => {
     const calls: string[][] = [];
     const adapter = createGitHubCliCodeHostAdapter({
@@ -562,6 +662,35 @@ describe("GitHub CLI code host adapter", () => {
         status: "conflicting",
       });
     }
+  });
+
+  it("maps blocked branch-protection pull request state separately from unknown", async () => {
+    const adapter = createGitHubCliCodeHostAdapter({
+      exec: async (_command, args) => {
+        if (args[0] === "pr" && args[1] === "create") {
+          return { stdout: "https://github.com/aigile/aigile/pull/10", stderr: "", exitCode: 0 };
+        }
+        return {
+          stdout: JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED" }),
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    });
+    const pr = await adapter.createPullRequest({
+      owner: "aigile",
+      repo: "aigile",
+      branch: "aigile/LIN-123",
+      baseBranch: "main",
+      title: "LIN-123 Build workflow",
+      body: "PR body",
+    });
+
+    await expect(adapter.getPullRequestMergeability(pr.id)).resolves.toEqual({
+      status: "blocked",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "BLOCKED",
+    });
   });
 
   it("maps unknown or empty pull request states to unknown", async () => {

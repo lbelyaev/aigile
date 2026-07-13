@@ -314,6 +314,351 @@ describe("reconcileProducts", () => {
     expect(unknown.id).toBe("org/repo#3");
   });
 
+  it("keeps pending checks in review without blocked comments", async () => {
+    const store = createInMemoryRunStore();
+    await appendRun(store, "LIN-1");
+    const tracker = createFakeIssueTrackerAdapter([issue("LIN-1", "In Progress")]);
+    let comments = 0;
+    const codeHost = createFakeCodeHostAdapter({
+      mergeability: "unknown",
+      checks: { "org/repo#1": { status: "pending", checks: [{ name: "ci", state: "pending" }] } },
+    });
+    await codeHost.createPullRequest({
+      owner: "org",
+      repo: "repo",
+      branch: "aigile/LIN-1",
+      baseBranch: "main",
+      title: "open",
+      body: "open",
+    });
+
+    const result = await reconcileProducts({
+      productConfig: {
+        products: [
+          {
+            id: "product",
+            linear: { team: "ENG", project: "Project" },
+            github: { repo: "org/repo", baseBranch: "main" },
+            defaultRun: { startRun: true, mode: "agent_write", publish: true },
+          },
+        ],
+      },
+      createRunStore: () => store,
+      createTracker: () => ({
+        ...tracker,
+        appendIssueComment: async (key, comment) => {
+          comments += 1;
+          await tracker.appendIssueComment(key, comment);
+        },
+      }),
+      createCodeHost: () => codeHost,
+      labels,
+    });
+
+    expect(result.outcomes).toEqual([
+      expect.objectContaining({ kind: "updated", to: "In Review" }),
+    ]);
+    expect((await tracker.getIssue("LIN-1")).status).toBe("In Review");
+    expect((await tracker.getIssue("LIN-1")).comments).toEqual([]);
+    expect(comments).toBe(0);
+  });
+
+  it("blocks failed checks with failing names and links using a distinct dedup signal", async () => {
+    const store = createInMemoryRunStore();
+    await appendRun(store, "LIN-1");
+    const tracker = createFakeIssueTrackerAdapter([issue("LIN-1")]);
+    const codeHost = createFakeCodeHostAdapter({
+      mergeability: "mergeable",
+      checks: {
+        "org/repo#1": {
+          status: "failing",
+          checks: [
+            { name: "unit", state: "failing", detailsUrl: "https://github.local/checks/unit" },
+            { name: "lint", state: "passing" },
+          ],
+        },
+      },
+    });
+    await codeHost.createPullRequest({
+      owner: "org",
+      repo: "repo",
+      branch: "aigile/LIN-1",
+      baseBranch: "main",
+      title: "open",
+      body: "open",
+    });
+    const input = {
+      productConfig: {
+        products: [
+          {
+            id: "product",
+            linear: { team: "ENG", project: "Project" },
+            github: { repo: "org/repo", baseBranch: "main" },
+            defaultRun: { startRun: true, mode: "agent_write" as const, publish: true },
+          },
+        ],
+      },
+      createRunStore: () => store,
+      createTracker: () => tracker,
+      createCodeHost: () => codeHost,
+      labels,
+    };
+
+    const first = await reconcileProducts(input);
+    const second = await reconcileProducts(input);
+
+    expect(first.outcomes).toEqual([
+      expect.objectContaining({ kind: "blocked", state: "checks_failed" }),
+    ]);
+    expect(second.outcomes).toEqual([
+      expect.objectContaining({ kind: "blocked_unchanged", state: "checks_failed" }),
+    ]);
+    const comments = (await tracker.getIssue("LIN-1")).comments;
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toContain("pull request checks failed");
+    expect(comments[0]).toContain("unit");
+    expect(comments[0]).toContain("https://github.local/checks/unit");
+    expect(comments[0]).toContain(":checks_failed");
+  });
+
+  it("blocks unknown checks distinctly from pending and failed checks", async () => {
+    const store = createInMemoryRunStore();
+    await appendRun(store, "LIN-1");
+    const tracker = createFakeIssueTrackerAdapter([issue("LIN-1")]);
+    const codeHost = createFakeCodeHostAdapter({
+      mergeability: "mergeable",
+      checks: {
+        "org/repo#1": {
+          status: "unknown",
+          checks: [{ name: "provider", state: "unknown" }],
+        },
+      },
+    });
+    await codeHost.createPullRequest({
+      owner: "org",
+      repo: "repo",
+      branch: "aigile/LIN-1",
+      baseBranch: "main",
+      title: "open",
+      body: "open",
+    });
+
+    const result = await reconcileProducts({
+      productConfig: {
+        products: [
+          {
+            id: "product",
+            linear: { team: "ENG", project: "Project" },
+            github: { repo: "org/repo", baseBranch: "main" },
+            defaultRun: { startRun: true, mode: "agent_write", publish: true },
+          },
+        ],
+      },
+      createRunStore: () => store,
+      createTracker: () => tracker,
+      createCodeHost: () => codeHost,
+      labels,
+    });
+
+    expect(result.outcomes).toEqual([
+      expect.objectContaining({ kind: "blocked", state: "unknown" }),
+    ]);
+    expect((await tracker.getIssue("LIN-1")).comments.at(-1)).toContain(
+      "pull request check status is unknown",
+    );
+  });
+
+  it("blocks missing reviews distinctly after checks pass", async () => {
+    const store = createInMemoryRunStore();
+    await appendRun(store, "LIN-1");
+    const tracker = createFakeIssueTrackerAdapter([issue("LIN-1")]);
+    const codeHost = createFakeCodeHostAdapter({
+      mergeability: {
+        "org/repo#1": { status: "blocked", mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED" },
+      },
+      checks: {
+        "org/repo#1": {
+          status: "passing",
+          checks: [{ name: "ci", state: "passing" }],
+        },
+      },
+    });
+    await codeHost.createPullRequest({
+      owner: "org",
+      repo: "repo",
+      branch: "aigile/LIN-1",
+      baseBranch: "main",
+      title: "open",
+      body: "open",
+    });
+    const input = {
+      productConfig: {
+        products: [
+          {
+            id: "product",
+            linear: { team: "ENG", project: "Project" },
+            github: { repo: "org/repo", baseBranch: "main" },
+            defaultRun: { startRun: true, mode: "agent_write" as const, publish: true },
+          },
+        ],
+      },
+      createRunStore: () => store,
+      createTracker: () => tracker,
+      createCodeHost: () => codeHost,
+      labels,
+    };
+
+    const first = await reconcileProducts(input);
+    const second = await reconcileProducts(input);
+
+    expect(first.outcomes).toEqual([
+      expect.objectContaining({ kind: "blocked", state: "missing_review" }),
+    ]);
+    expect(second.outcomes).toEqual([
+      expect.objectContaining({ kind: "blocked_unchanged", state: "missing_review" }),
+    ]);
+    const comments = (await tracker.getIssue("LIN-1")).comments;
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toContain("missing reviews");
+    expect(comments[0]).toContain(":missing_review");
+  });
+
+  it("auto-merges a passing checked PR when merge policy is auto", async () => {
+    const store = createInMemoryRunStore();
+    await appendRun(store, "LIN-1");
+    const tracker = createFakeIssueTrackerAdapter([issue("LIN-1", "In Review")]);
+    const codeHost = createFakeCodeHostAdapter({
+      mergeability: "mergeable",
+      checks: {
+        "org/repo#1": {
+          status: "passing",
+          checks: [{ name: "ci", state: "passing" }],
+        },
+      },
+    });
+    const pr = await codeHost.createPullRequest({
+      owner: "org",
+      repo: "repo",
+      branch: "aigile/LIN-1",
+      baseBranch: "main",
+      title: "open",
+      body: "open",
+    });
+
+    const result = await reconcileProducts({
+      productConfig: {
+        products: [
+          {
+            id: "product",
+            linear: { team: "ENG", project: "Project" },
+            github: { repo: "org/repo", baseBranch: "main" },
+            defaultRun: { startRun: true, mode: "agent_write", publish: true },
+          },
+        ],
+      },
+      createRunStore: () => store,
+      createTracker: () => tracker,
+      createCodeHost: () => codeHost,
+      labels,
+    });
+
+    expect(result.outcomes).toEqual([expect.objectContaining({ kind: "updated", to: "Done" })]);
+    expect((await codeHost.getPullRequestMergeState(pr.id)).status).toBe("merged");
+    expect((await tracker.getIssue("LIN-1")).status).toBe("Done");
+  });
+
+  it("keeps a passing checked PR in review when merge policy is manual", async () => {
+    const store = createInMemoryRunStore();
+    await appendRun(store, "LIN-1");
+    const tracker = createFakeIssueTrackerAdapter([
+      { ...issue("LIN-1", "In Progress"), description: "aigile-merge: manual" },
+    ]);
+    const codeHost = createFakeCodeHostAdapter({
+      mergeability: "mergeable",
+      checks: {
+        "org/repo#1": {
+          status: "passing",
+          checks: [{ name: "ci", state: "passing" }],
+        },
+      },
+    });
+    const pr = await codeHost.createPullRequest({
+      owner: "org",
+      repo: "repo",
+      branch: "aigile/LIN-1",
+      baseBranch: "main",
+      title: "open",
+      body: "open",
+    });
+
+    const result = await reconcileProducts({
+      productConfig: {
+        products: [
+          {
+            id: "product",
+            linear: { team: "ENG", project: "Project" },
+            github: { repo: "org/repo", baseBranch: "main" },
+            defaultRun: { startRun: true, mode: "agent_write", publish: true },
+          },
+        ],
+      },
+      createRunStore: () => store,
+      createTracker: () => tracker,
+      createCodeHost: () => codeHost,
+      labels,
+    });
+
+    expect(result.outcomes).toEqual([
+      expect.objectContaining({ kind: "updated", to: "In Review" }),
+    ]);
+    expect((await codeHost.getPullRequestMergeState(pr.id)).status).toBe("unknown");
+    expect((await tracker.getIssue("LIN-1")).status).toBe("In Review");
+  });
+
+  it("moves from pending checks in review to done after the PR merges", async () => {
+    const store = createInMemoryRunStore();
+    await appendRun(store, "LIN-1");
+    const tracker = createFakeIssueTrackerAdapter([issue("LIN-1", "In Progress")]);
+    const codeHost = createFakeCodeHostAdapter({
+      mergeability: "unknown",
+      checks: { "org/repo#1": { status: "pending", checks: [{ name: "ci", state: "pending" }] } },
+    });
+    const pr = await codeHost.createPullRequest({
+      owner: "org",
+      repo: "repo",
+      branch: "aigile/LIN-1",
+      baseBranch: "main",
+      title: "open",
+      body: "open",
+    });
+    const input = {
+      productConfig: {
+        products: [
+          {
+            id: "product",
+            linear: { team: "ENG", project: "Project" },
+            github: { repo: "org/repo", baseBranch: "main" },
+            defaultRun: { startRun: true, mode: "agent_write" as const, publish: true },
+          },
+        ],
+      },
+      createRunStore: () => store,
+      createTracker: () => tracker,
+      createCodeHost: () => codeHost,
+      labels,
+    };
+
+    const pending = await reconcileProducts(input);
+    await codeHost.mergePullRequest(pr.id);
+    const merged = await reconcileProducts(input);
+
+    expect(pending.outcomes).toEqual([
+      expect.objectContaining({ kind: "updated", to: "In Review" }),
+    ]);
+    expect(merged.outcomes).toEqual([expect.objectContaining({ kind: "updated", to: "Done" })]);
+    expect((await tracker.getIssue("LIN-1")).status).toBe("Done");
+  });
+
   it("reports a missing pull request without aborting later runs", async () => {
     const store = createInMemoryRunStore();
     await appendRun(store, "LIN-1");

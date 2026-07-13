@@ -3,6 +3,7 @@ import type {
   CodeHostAdapter,
   IssueRecord,
   IssueTrackerAdapter,
+  PullRequestChecksSummary,
   PullRequestReview,
   PullRequestReviewComment,
 } from "@aigile/adapters";
@@ -79,7 +80,7 @@ export type ReconcileProductOutcome =
       productId: string;
       issueKey: string;
       status: string;
-      state: "closed" | "conflicting" | "unknown";
+      state: "closed" | "conflicting" | "checks_failed" | "missing_review" | "unknown";
       note: string;
       branchName: string;
       target: { owner: string; repo: string };
@@ -158,6 +159,20 @@ const safeIdPart = (value: string): string => value.replace(/[^A-Za-z0-9._-]+/g,
 
 const issueBranch = (issueKey: string): string => `aigile/${issueKey}`;
 
+type MergePolicy = "auto" | "manual";
+
+const EXPLICIT_MERGE_DIRECTIVE = /aigile-merge:\s*(auto|manual)\b/i;
+const MANUAL_MERGE_SHORTHAND = /\bno[-\s]?automerge\b|\bautomerge:\s*off\b/i;
+
+const resolveMergePolicy = (description: string | undefined): MergePolicy => {
+  if (!description) return "auto";
+  const explicit = EXPLICIT_MERGE_DIRECTIVE.exec(description);
+  if (explicit?.[1] !== undefined)
+    return explicit[1].toLowerCase() === "manual" ? "manual" : "auto";
+  if (MANUAL_MERGE_SHORTHAND.test(description)) return "manual";
+  return "auto";
+};
+
 const processedReviewFeedback = (
   artifacts: readonly WorkflowArtifact[],
 ): Map<string, WorkflowArtifact> => {
@@ -172,16 +187,18 @@ const processedReviewFeedback = (
   return processed;
 };
 
-type BlockedPrState = "closed" | "conflicting" | "unknown";
+type BlockedPrState = "closed" | "conflicting" | "checks_failed" | "missing_review" | "unknown";
 
 type ProductPrStatus =
   | { kind: "status"; status: string }
+  | { kind: "merge"; status: string }
   | { kind: "blocked"; state: BlockedPrState; reason: string };
 
 const prStatusForProduct = async (
   codeHost: CodeHostAdapter,
   pullRequest: BranchPullRequest,
   labels: ReconcileStatusLabels,
+  mergePolicy: MergePolicy,
 ): Promise<ProductPrStatus> => {
   if (pullRequest.mergeState === "merged") return { kind: "status", status: labels.done };
   if (!pullRequest.open) {
@@ -201,6 +218,31 @@ const prStatusForProduct = async (
         reason: `pull request is conflicting: ${pullRequest.url}`,
       };
     }
+    const checks = await codeHost.getPullRequestChecks(pullRequest.id);
+    if (checks.status === "pending") {
+      return { kind: "status", status: labels.inReview };
+    }
+    if (checks.status === "failing") {
+      return {
+        kind: "blocked",
+        state: "checks_failed",
+        reason: `pull request checks failed: ${formatCheckDetails(checks)}`,
+      };
+    }
+    if (checks.status === "unknown") {
+      return {
+        kind: "blocked",
+        state: "unknown",
+        reason: `pull request check status is unknown: ${pullRequest.url}`,
+      };
+    }
+    if (mergeability.status === "blocked") {
+      return {
+        kind: "blocked",
+        state: "missing_review",
+        reason: `pull request is blocked by branch protection or missing reviews: ${pullRequest.url}`,
+      };
+    }
     if (mergeability.status === "unknown") {
       return {
         kind: "blocked",
@@ -208,16 +250,34 @@ const prStatusForProduct = async (
         reason: `pull request mergeability is unknown: ${pullRequest.url}`,
       };
     }
+    if (
+      checks.status === "passing" &&
+      mergeability.status === "mergeable" &&
+      mergePolicy === "auto"
+    ) {
+      return { kind: "merge", status: labels.done };
+    }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return {
       kind: "blocked",
       state: "unknown",
-      reason: `pull request mergeability could not be resolved for ${pullRequest.url}: ${detail}`,
+      reason: `pull request status could not be resolved for ${pullRequest.url}: ${detail}`,
     };
   }
 
   return { kind: "status", status: labels.inReview };
+};
+
+const formatCheckDetails = (checks: PullRequestChecksSummary): string => {
+  const failing = checks.checks.filter((check) => check.state === "failing");
+  const selected = failing.length > 0 ? failing : checks.checks;
+  if (selected.length === 0) return "no failing check details available";
+  return selected
+    .map((check) =>
+      check.detailsUrl === undefined ? check.name : `${check.name} (${check.detailsUrl})`,
+    )
+    .join(", ");
 };
 
 const reconcileBlockedSignalId = (
@@ -263,7 +323,12 @@ const reconcileProductRun = async (input: {
   const pullRequest = await input.codeHost.findPullRequestForBranch(branchName, target);
   if (pullRequest === undefined) return { kind: "no_pull_request", ...base };
 
-  const prStatus = await prStatusForProduct(input.codeHost, pullRequest, input.labels);
+  const prStatus = await prStatusForProduct(
+    input.codeHost,
+    pullRequest,
+    input.labels,
+    resolveMergePolicy(issue.description),
+  );
   if (prStatus.kind === "blocked") {
     const note = blockedProductNote(
       input.product,
@@ -287,6 +352,34 @@ const reconcileProductRun = async (input: {
       state: prStatus.state,
       note,
     };
+  }
+
+  if (prStatus.kind === "merge") {
+    try {
+      await input.codeHost.mergePullRequest(pullRequest.id);
+    } catch (error) {
+      const reason =
+        error instanceof Error
+          ? `pull request merge failed for ${pullRequest.url}: ${error.message}`
+          : `pull request merge failed for ${pullRequest.url}: ${String(error)}`;
+      const state: BlockedPrState = "unknown";
+      const note = blockedProductNote(input.product, input.issueKey, pullRequest, state, reason);
+      const signalId = reconcileBlockedSignalId(
+        input.product.id,
+        input.issueKey,
+        pullRequest,
+        state,
+      );
+      const alreadyRecorded = issue.comments.some((comment) => comment.includes(signalId));
+      if (!alreadyRecorded) await input.tracker.appendIssueComment(input.issueKey, note);
+      return {
+        kind: alreadyRecorded ? "blocked_unchanged" : "blocked",
+        ...base,
+        status: issue.status,
+        state,
+        note,
+      };
+    }
   }
 
   if (prStatus.status === issue.status) {

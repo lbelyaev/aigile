@@ -358,6 +358,7 @@ describe("demo orchestration", () => {
       },
       getPullRequestMergeability: async () => ({ status: "mergeable" }),
       getPullRequestMergeState: async () => ({ status: "unmerged" }),
+      getPullRequestChecks: async () => ({ status: "none", checks: [] }),
       appendPullRequestComment: async (_id, comment) => {
         if (pullRequest === undefined) throw new Error("pull request missing");
         pullRequest.comments.push(comment);
@@ -460,6 +461,7 @@ describe("demo orchestration", () => {
         recordCheckResult: async () => undefined,
         getPullRequestMergeability: async () => ({ status: "mergeable" }),
         getPullRequestMergeState: async () => ({ status: "unmerged" }),
+        getPullRequestChecks: async () => ({ status: "none", checks: [] }),
         mergePullRequest: async () => undefined,
         findPullRequestForBranch: async () => undefined,
       },

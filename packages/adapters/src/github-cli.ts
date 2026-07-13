@@ -2,6 +2,9 @@ import type {
   CheckResult,
   CodeHostAdapter,
   PullRequestInput,
+  PullRequestCheckEntry,
+  PullRequestCheckState,
+  PullRequestChecksSummary,
   PullRequestMergeability,
   PullRequestMergeabilityStatus,
   PullRequestMergeState,
@@ -74,6 +77,8 @@ const parseMergeabilityPayload = (stdout: string): PullRequestMergeability => {
   let status: PullRequestMergeabilityStatus = "unknown";
   if (mergeableValue === "CONFLICTING" || mergeStateStatusValue === "DIRTY") {
     status = "conflicting";
+  } else if (mergeStateStatusValue === "BLOCKED") {
+    status = "blocked";
   } else if (mergeableValue === "MERGEABLE") {
     status = "mergeable";
   }
@@ -115,6 +120,96 @@ const parseMergeStatePayload = (stdout: string): PullRequestMergeState => {
     ...(merged === undefined ? {} : { merged }),
     ...(mergedAt === undefined ? {} : { mergedAt }),
   };
+};
+
+const checkStateFromRollupEntry = (entry: Record<string, unknown>): PullRequestCheckState => {
+  const state = optionalString(entry.state)?.toUpperCase();
+  const status = optionalString(entry.status)?.toUpperCase();
+  const conclusion = optionalString(entry.conclusion)?.toUpperCase();
+  const terminal = conclusion ?? state;
+
+  if (
+    terminal === "SUCCESS" ||
+    terminal === "NEUTRAL" ||
+    terminal === "SKIPPED" ||
+    terminal === "PASSED"
+  ) {
+    return "passing";
+  }
+  if (
+    terminal === "FAILURE" ||
+    terminal === "FAILED" ||
+    terminal === "ERROR" ||
+    terminal === "TIMED_OUT" ||
+    terminal === "ACTION_REQUIRED" ||
+    terminal === "CANCELLED"
+  ) {
+    return "failing";
+  }
+  if (
+    state === "PENDING" ||
+    state === "EXPECTED" ||
+    status === "PENDING" ||
+    status === "QUEUED" ||
+    status === "IN_PROGRESS" ||
+    status === "EXPECTED" ||
+    status === "WAITING" ||
+    status === "REQUESTED"
+  ) {
+    return "pending";
+  }
+  if (status === "COMPLETED" && conclusion === undefined) return "unknown";
+  return "unknown";
+};
+
+const checkNameFromRollupEntry = (entry: Record<string, unknown>, index: number): string =>
+  stringValue(entry.name) ??
+  stringValue(entry.context) ??
+  stringValue(entry.workflowName) ??
+  `check-${index + 1}`;
+
+const checkDetailsUrlFromRollupEntry = (entry: Record<string, unknown>): string | undefined =>
+  stringValue(entry.detailsUrl) ?? stringValue(entry.targetUrl) ?? stringValue(entry.url);
+
+const parseChecksPayload = (stdout: string): PullRequestChecksSummary => {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(stdout) as unknown;
+  } catch {
+    return { status: "unknown", checks: [] };
+  }
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return { status: "unknown", checks: [] };
+  }
+  const rollup = (payload as { statusCheckRollup?: unknown }).statusCheckRollup;
+  if (!Array.isArray(rollup)) {
+    return { status: "unknown", checks: [] };
+  }
+  if (rollup.length === 0) return { status: "none", checks: [] };
+
+  const checks: PullRequestCheckEntry[] = rollup.flatMap((entry, index) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return [{ name: `check-${index + 1}`, state: "unknown" as const }];
+    }
+    const value = entry as Record<string, unknown>;
+    const detailsUrl = checkDetailsUrlFromRollupEntry(value);
+    return [
+      {
+        name: checkNameFromRollupEntry(value, index),
+        state: checkStateFromRollupEntry(value),
+        ...(detailsUrl === undefined ? {} : { detailsUrl }),
+      },
+    ];
+  });
+
+  const status = checks.some((check) => check.state === "failing")
+    ? "failing"
+    : checks.some((check) => check.state === "pending")
+      ? "pending"
+      : checks.some((check) => check.state === "unknown")
+        ? "unknown"
+        : "passing";
+  return { status, checks };
 };
 
 const parseJsonArray = (stdout: string, operation: string): unknown[] => {
@@ -336,6 +431,15 @@ export const createGitHubCliCodeHostAdapter = (
       );
       assertSuccess(result, "gh pr view");
       return parseMergeStatePayload(result.stdout);
+    },
+    getPullRequestChecks: async (id) => {
+      const result = await options.exec(
+        "gh",
+        ["pr", "view", prNumberFromId(id), "--repo", repoFromId(id), "--json", "statusCheckRollup"],
+        execOptions(options.cwd),
+      );
+      assertSuccess(result, "gh pr view");
+      return parseChecksPayload(result.stdout);
     },
     appendPullRequestComment: async (id, comment) => {
       const result = await options.exec(
