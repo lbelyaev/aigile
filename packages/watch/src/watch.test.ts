@@ -210,6 +210,40 @@ describe("watchOnce", () => {
     expect(claimedIssueKeys).toEqual(["LIN-900"]);
   });
 
+  it("passes the selected product route to the claim callback", async () => {
+    const seedIssues = [
+      {
+        id: "issue-1",
+        key: "LIN-901",
+        title: "Product route",
+        description: "Start work with route context.",
+        acceptanceCriteria: [],
+        status: "ready",
+        project: { id: "project-api", name: "API" },
+        comments: [],
+      },
+    ];
+    const claimedRoutes: unknown[] = [];
+
+    await watchLoop({
+      source: createFakeReadyIssueSource(seedIssues),
+      tracker: createFakeIssueTrackerAdapter(seedIssues),
+      pollIntervalMs: 1,
+      maxPolls: 1,
+      productRoutes: [
+        { productId: "web", linearProject: "Web", githubRepo: "lbelyaev/web" },
+        { productId: "api", linearProject: "API", githubRepo: "lbelyaev/api" },
+      ],
+      onClaimedIssue: async (_issue, route) => {
+        claimedRoutes.push(route);
+      },
+    });
+
+    expect(claimedRoutes).toEqual([
+      { productId: "api", linearProject: "API", githubRepo: "lbelyaev/api" },
+    ]);
+  });
+
   it("restores the prior status and keeps the loop alive when claimed issue handling fails", async () => {
     const seedIssues = [
       {
@@ -381,6 +415,32 @@ describe("watchOnce", () => {
       },
     ]);
     expect(routed.skippedIssues).toEqual([]);
+  });
+
+  it("skips an issue whose Linear project matches more than one product route", () => {
+    const routed = routeReadyIssuesForProducts(
+      [
+        {
+          id: "issue-1",
+          key: "LIN-901",
+          title: "Ambiguous product issue",
+          description: "",
+          acceptanceCriteria: [],
+          status: "ready",
+          project: { id: "shared-project", name: "Shared" },
+          comments: [],
+        },
+      ],
+      [
+        { productId: "one", linearProject: "Shared", githubRepo: "lbelyaev/one" },
+        { productId: "two", linearProject: "Shared", githubRepo: "lbelyaev/two" },
+      ],
+    );
+
+    expect(routed.readyIssues).toEqual([]);
+    expect(routed.skippedIssues).toMatchObject([
+      { issueKey: "LIN-901", reason: "project_ambiguous" },
+    ]);
   });
 
   it("reconciles in-flight issue status each poll and emits an event", async () => {
