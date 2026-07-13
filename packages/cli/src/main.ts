@@ -152,6 +152,171 @@ export const formatDemoResult = (result: DemoResult): string => {
   ].join("\n");
 };
 
+export type DisplaySeverity = "info" | "success" | "warn" | "error";
+
+export type DisplaySourceLabel =
+  | "architect"
+  | "developer"
+  | "verifier"
+  | "checker"
+  | "deep_reviewer"
+  | "daemon"
+  | "workspace"
+  | "linear"
+  | "github";
+
+export interface DisplayRowEvent {
+  type: "row";
+  issueKey?: string | undefined;
+  productId?: string | undefined;
+  source: DisplaySourceLabel;
+  action: string;
+  detail?: string | undefined;
+  severity: DisplaySeverity;
+}
+
+export interface DisplayDaemonStartupEvent {
+  type: "daemon_startup";
+  productId?: string | undefined;
+  source: "daemon";
+  action: "started";
+  detail?: string | undefined;
+  severity: DisplaySeverity;
+  products: readonly string[];
+  globalMaxConcurrentRuns?: number | undefined;
+}
+
+export type DisplayEvent = DisplayRowEvent | DisplayDaemonStartupEvent;
+
+export interface DisplayFormatterOptions {
+  isTty?: boolean | undefined;
+  noColor?: boolean | undefined;
+  env?: Record<string, string | undefined> | undefined;
+}
+
+const DISPLAY_COLUMNS = {
+  issueKey: 7,
+  productId: 7,
+  source: 13,
+  action: 16,
+} as const;
+
+const ANSI_BY_SEVERITY: Record<DisplaySeverity, string> = {
+  info: "\x1b[36m",
+  success: "\x1b[32m",
+  warn: "\x1b[33m",
+  error: "\x1b[31m",
+};
+
+const ANSI_RESET = "\x1b[0m";
+
+const shouldUseColor = (options: DisplayFormatterOptions): boolean =>
+  options.noColor !== true && options.isTty === true && options.env?.NO_COLOR === undefined;
+
+const colorizeDisplay = (
+  line: string,
+  severity: DisplaySeverity,
+  options: DisplayFormatterOptions,
+): string => (shouldUseColor(options) ? `${ANSI_BY_SEVERITY[severity]}${line}${ANSI_RESET}` : line);
+
+const padDisplay = (value: string | undefined, width: number): string =>
+  (value ?? "").padEnd(width);
+
+const ANSI_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+
+export const stripAnsi = (value: string): string => value.replace(ANSI_PATTERN, "");
+
+export const formatDisplayEvent = (
+  event: DisplayEvent,
+  options: DisplayFormatterOptions = {},
+): string => {
+  if (event.type === "daemon_startup") {
+    const header = colorizeDisplay("aigile  daemon started", event.severity, options);
+    const detailLines = [
+      `       products: ${event.products.length === 0 ? "none" : event.products.join(", ")}`,
+      ...(event.globalMaxConcurrentRuns === undefined
+        ? []
+        : [`       concurrency: global=${event.globalMaxConcurrentRuns}`]),
+      ...(event.detail === undefined ? [] : [`       ${event.detail}`]),
+    ];
+    return [header, ...detailLines].join("\n");
+  }
+
+  const base = `${padDisplay(event.issueKey, DISPLAY_COLUMNS.issueKey)}  ${padDisplay(
+    event.productId,
+    DISPLAY_COLUMNS.productId,
+  )}  ${padDisplay(event.source, DISPLAY_COLUMNS.source)}  ${padDisplay(
+    event.action,
+    DISPLAY_COLUMNS.action,
+  )}${event.detail === undefined ? "" : ` ${event.detail}`}`.trimEnd();
+  return colorizeDisplay(base, event.severity, options);
+};
+
+const formatDisplayLine = (event: DisplayEvent, options: DisplayFormatterOptions = {}): string =>
+  formatDisplayEvent(event, options);
+
+const roleProgressDisplayEvent = (event: AcpRoleProgressEvent): DisplayRowEvent => {
+  const source = event.roleId as DisplaySourceLabel;
+  if (event.type === "role_started") {
+    return {
+      type: "row",
+      issueKey: event.issueId,
+      source,
+      action: "starting",
+      detail: event.runtimeId,
+      severity: "info",
+    };
+  }
+  if (event.type === "runtime_connected") {
+    return {
+      type: "row",
+      issueKey: event.issueId,
+      source,
+      action: "connected",
+      detail: `${event.runtimeId} model ${event.model} session ${event.acpSessionId}`,
+      severity: "success",
+    };
+  }
+  if (event.type === "policy_violation") {
+    return {
+      type: "row",
+      issueKey: event.issueId,
+      source,
+      action: "policy violation",
+      detail: `${event.reason}: ${event.detail}`,
+      severity: "error",
+    };
+  }
+  if (event.type === "approval_request") {
+    return {
+      type: "row",
+      issueKey: event.issueId,
+      source,
+      action: "approval",
+      detail: event.tool,
+      severity: "warn",
+    };
+  }
+  if (event.type === "artifact_parsed") {
+    return {
+      type: "row",
+      issueKey: event.issueId,
+      source,
+      action: "artifact parsed",
+      detail: event.artifactKind,
+      severity: "success",
+    };
+  }
+  return {
+    type: "row",
+    issueKey: event.issueId,
+    source,
+    action: "stopped",
+    detail: event.runtimeId,
+    severity: "info",
+  };
+};
+
 export const formatAcpRoleProgress = (event: AcpRoleProgressEvent): string => {
   const prefix = `[${event.issueId} ${event.roleId}]`;
   if (event.type === "role_started") return `${prefix} starting ${event.runtimeId}`;
@@ -183,9 +348,9 @@ export interface AcpRoleProgressFormatter {
 }
 
 // Progress verbosity. "quiet" = lifecycle milestones + things needing attention
-// only; "normal" (default) adds the agent's text output, tool starts, and
-// permission decisions; "verbose" adds raw streams (thinking, subprocess stderr,
-// connection chatter, tool ends) for debugging.
+// only; "normal" (default) keeps structured lifecycle milestones and suppresses
+// raw streams; "verbose" adds raw streams (thinking, subprocess stderr,
+// connection chatter, tool events, text) for debugging.
 export type ProgressLevel = "quiet" | "normal" | "verbose";
 
 const LEVEL_RANK: Record<ProgressLevel, number> = { quiet: 0, normal: 1, verbose: 2 };
@@ -197,9 +362,9 @@ const EVENT_MIN_LEVEL: Record<AcpRoleProgressEvent["type"], ProgressLevel> = {
   policy_violation: "quiet",
   approval_request: "quiet",
   artifact_parsed: "quiet",
-  text_delta: "normal",
-  tool_start: "normal",
-  permission_decision: "normal",
+  text_delta: "verbose",
+  tool_start: "verbose",
+  permission_decision: "verbose",
   runtime_stopped: "normal",
   runtime_connecting: "verbose",
   prompt_started: "verbose",
@@ -215,6 +380,7 @@ const isEventVisible = (level: ProgressLevel, type: AcpRoleProgressEvent["type"]
 export interface AcpRoleProgressFormatterOptions {
   textFlushThreshold?: number;
   level?: ProgressLevel;
+  display?: DisplayFormatterOptions | undefined;
 }
 
 const progressKey = (
@@ -235,6 +401,7 @@ export const createAcpRoleProgressFormatter = (
 ): AcpRoleProgressFormatter => {
   const textFlushThreshold = options.textFlushThreshold ?? 160;
   const level = options.level ?? "normal";
+  const displayOptions = options.display ?? {};
   const buffers = new Map<string, { issueId: string; roleId: string; text: string }>();
 
   const flushKey = (key: string): string[] => {
@@ -252,6 +419,12 @@ export const createAcpRoleProgressFormatter = (
       // we already committed to showing so it is not lost behind a suppressed event.
       if (!isEventVisible(level, event.type)) {
         return flushKey(key);
+      }
+      if (level !== "verbose") {
+        return [
+          ...flushKey(key),
+          formatDisplayLine(roleProgressDisplayEvent(event), displayOptions),
+        ].filter((line) => line.trim().length > 0);
       }
       if (event.type !== "text_delta") {
         return [...flushKey(key), formatAcpRoleProgress(event)].filter(
@@ -345,6 +518,7 @@ export interface CliArgs {
   retryEscalated?: boolean;
   resumePublish?: boolean;
   progressLevel?: ProgressLevel;
+  noColor?: boolean | undefined;
   force?: boolean;
 }
 
@@ -851,6 +1025,7 @@ export interface LinearWatchLoopCliInput extends LinearWatchOnceCliInput {
     listResumable: () => Promise<string[]>;
     resumeRun: (issueId: string) => Promise<{ outcome: string }>;
   };
+  display?: DisplayFormatterOptions | undefined;
 }
 
 export interface LinearWatchPreflightCliInput {
@@ -887,6 +1062,7 @@ export interface LinearIssueWorkflowCliInput {
   retryEscalated?: boolean;
   resumePublish?: boolean;
   progressLevel?: ProgressLevel;
+  display?: DisplayFormatterOptions | undefined;
 }
 
 const formatListSection = (items: readonly string[]): string[] =>
@@ -999,7 +1175,17 @@ export const runLinearIssueWorkflowCli = async (
     runInput.onIssueStatusUpdateError = (error, state, status) => {
       const message = error instanceof Error ? error.message : String(error);
       input.onProgressLine?.(
-        `Linear status sync failed for ${input.issueKey} (${state} -> ${status}): ${message}`,
+        formatDisplayLine(
+          {
+            type: "row",
+            issueKey: input.issueKey,
+            source: "linear",
+            action: "status failed",
+            detail: `Linear status sync failed for ${input.issueKey} (${state} -> ${status}): ${message}`,
+            severity: "error",
+          },
+          input.display,
+        ),
       );
     };
   }
@@ -1051,7 +1237,9 @@ export const runLinearIssueWorkflowCli = async (
     await tracker.appendIssueComment(input.issueKey, body);
   };
   const progressFormatter = createAcpRoleProgressFormatter(
-    input.progressLevel === undefined ? {} : { level: input.progressLevel },
+    input.progressLevel === undefined
+      ? { display: input.display }
+      : { level: input.progressLevel, display: input.display },
   );
   runInput.runner = createAcpRoleRunner({
     onProgress: (event) => {
@@ -1129,34 +1317,101 @@ const createLinearReadyIssueSourceForTeams = (input: LinearWatchLoopCliInput): R
 const routeSuffix = (route?: WatchProductRoute): string =>
   route === undefined ? "" : ` product: ${route.productId} repo: ${route.githubRepo}`;
 
-const formatWatchLoopEvent = (event: WatchLoopEvent): string | undefined => {
-  if (event.type === "poll_started") return undefined;
+const watchRouteDetail = (route?: WatchProductRoute): string =>
+  route === undefined ? "" : ` product: ${route.productId} repo: ${route.githubRepo}`;
+
+const displayEventFromWatchLoopEvent = (event: WatchLoopEvent): DisplayRowEvent | undefined => {
+  if (event.type === "poll_started" || event.type === "poll_idle") return undefined;
   if (event.type === "issue_skipped") {
-    return `Poll ${event.poll}: skipped ${event.issueKey} (${event.reason})`;
-  }
-  if (event.type === "poll_idle") {
-    return `Poll ${event.poll}: idle heartbeat; ready issues: ${event.readyCount}`;
+    return {
+      type: "row",
+      issueKey: event.issueKey,
+      source: "linear",
+      action: "skipped",
+      detail: `Poll ${event.poll}: skipped ${event.issueKey} (${event.reason})`,
+      severity: "warn",
+    };
   }
   if (event.type === "issue_claimed") {
-    return `Poll ${event.poll}: claimed ${event.issueKey} (ready issues: ${event.readyCount})${routeSuffix(event.selectedRoute)}`;
+    return {
+      type: "row",
+      issueKey: event.issueKey,
+      productId: event.selectedRoute?.productId,
+      source: "linear",
+      action: "claimed",
+      detail: `Poll ${event.poll}: claimed ${event.issueKey} (ready issues: ${event.readyCount})${watchRouteDetail(event.selectedRoute)}`,
+      severity: "success",
+    };
   }
   if (event.type === "claimed_issue_run_failed") {
     const product = event.productId.trim().length === 0 ? "unrouted" : event.productId;
-    return `Poll ${event.poll}: run failed for ${event.issueKey} product: ${product} phase: ${event.phase}; restored status to ${event.restoredStatus}: ${event.message}`;
+    const source: DisplaySourceLabel =
+      event.phase === "publish" ? "github" : event.phase === "workspace" ? "workspace" : "daemon";
+    return {
+      type: "row",
+      issueKey: event.issueKey,
+      productId: event.productId.trim().length === 0 ? undefined : event.productId,
+      source,
+      action: "failed",
+      detail: `Poll ${event.poll}: run failed for ${event.issueKey} product: ${product} phase: ${event.phase}; restored status to ${event.restoredStatus}: ${event.message}`,
+      severity: "error",
+    };
   }
   if (event.type === "issue_status_reconciled") {
-    return `Poll ${event.poll}: reconciled ${event.issueKey} (${event.from} -> ${event.to})`;
+    return {
+      type: "row",
+      issueKey: event.issueKey,
+      source: "linear",
+      action: "status",
+      detail: `Poll ${event.poll}: reconciled ${event.issueKey} (${event.from} -> ${event.to})`,
+      severity: "success",
+    };
   }
   if (event.type === "external_feedback_ingested") {
-    return `Poll ${event.poll}: ingested ${event.source} feedback for ${event.issueKey} (${event.outcome})`;
+    return {
+      type: "row",
+      issueKey: event.issueKey,
+      source: event.source === "github" ? "github" : "daemon",
+      action: "feedback",
+      detail: `Poll ${event.poll}: ingested ${event.source} feedback for ${event.issueKey} (${event.outcome})`,
+      severity: "info",
+    };
   }
   if (event.type === "run_resumed") {
-    return `Poll ${event.poll}: resumed ${event.issueId} (${event.outcome})`;
+    return {
+      type: "row",
+      issueKey: event.issueId,
+      source: "daemon",
+      action: "resumed",
+      detail: `Poll ${event.poll}: resumed ${event.issueId} (${event.outcome})`,
+      severity: "success",
+    };
   }
   if (event.type === "run_resume_failed") {
-    return `Poll ${event.poll}: resume failed for ${event.issueId}: ${event.error}`;
+    return {
+      type: "row",
+      issueKey: event.issueId,
+      source: "daemon",
+      action: "resume failed",
+      detail: `Poll ${event.poll}: resume failed for ${event.issueId}: ${event.error}`,
+      severity: "error",
+    };
   }
-  return `Stopped: ${event.reason} after ${event.polls} polls`;
+  return {
+    type: "row",
+    source: "daemon",
+    action: "stopped",
+    detail: `Stopped: ${event.reason} after ${event.polls} polls`,
+    severity: event.reason === "aborted" ? "warn" : "info",
+  };
+};
+
+const formatWatchLoopEvent = (
+  event: WatchLoopEvent,
+  options: DisplayFormatterOptions = {},
+): string | undefined => {
+  const displayEvent = displayEventFromWatchLoopEvent(event);
+  return displayEvent === undefined ? undefined : formatDisplayLine(displayEvent, options);
 };
 
 const runResultStateLine = (output: string): string | undefined =>
@@ -1269,21 +1524,60 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
     ...(input.signal === undefined ? {} : { signal: input.signal }),
     ...(input.sleep === undefined ? {} : { sleep: input.sleep }),
     onEvent: (event) => {
-      const line = formatWatchLoopEvent(event);
+      const line = formatWatchLoopEvent(event, input.display);
       if (line !== undefined) emit(line);
     },
     ...(input.startRun === undefined
       ? {}
       : {
           onClaimedIssue: async (issue: IssueRecord, route?: WatchProductRoute) => {
-            emit(`Run ${issue.key}: starting${routeSuffix(route)}`);
+            emit(
+              formatDisplayLine(
+                {
+                  type: "row",
+                  issueKey: issue.key,
+                  productId: route?.productId,
+                  source: "daemon",
+                  action: "starting",
+                  detail: `Run ${issue.key}: starting${routeSuffix(route)}`,
+                  severity: "info",
+                },
+                input.display,
+              ),
+            );
             const output = await input.startRun!(issue, route);
             const stateLine = runResultStateLine(output);
             if (stateLine !== undefined)
-              emit(`Run ${issue.key}: ${stateLine}${routeSuffix(route)}`);
+              emit(
+                formatDisplayLine(
+                  {
+                    type: "row",
+                    issueKey: issue.key,
+                    productId: route?.productId,
+                    source: "daemon",
+                    action: stateLine.includes("escalated") ? "escalated" : "state",
+                    detail: `Run ${issue.key}: ${stateLine}${routeSuffix(route)}`,
+                    severity: stateLine.includes("escalated") ? "error" : "success",
+                  },
+                  input.display,
+                ),
+              );
             const failure = runFailureFromOutput(output);
             if (failure !== undefined) throw failure;
-            emit(`Run ${issue.key}: completed${routeSuffix(route)}`);
+            emit(
+              formatDisplayLine(
+                {
+                  type: "row",
+                  issueKey: issue.key,
+                  productId: route?.productId,
+                  source: "daemon",
+                  action: "completed",
+                  detail: `Run ${issue.key}: completed${routeSuffix(route)}`,
+                  severity: "success",
+                },
+                input.display,
+              ),
+            );
           },
         }),
   });
@@ -1294,33 +1588,22 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
 
 const daemonValue = (value: string | undefined): string => value ?? "(unset)";
 
-const daemonRunMode = (context: ResolvedProductCliContext): string => {
-  if (context.agentWrite) return "agent_write";
-  if (context.dryRun) return "dry_run";
-  return "none";
-};
-
 export const formatDaemonStartupSummary = (
   contexts: readonly ResolvedProductCliContext[],
-  input: { pollIntervalMs: number },
+  input: { pollIntervalMs: number; display?: DisplayFormatterOptions | undefined },
 ): string =>
-  [
-    "Aigile daemon: supervisor",
-    "Products:",
-    ...contexts.map(
-      (context) =>
-        `- ${daemonValue(context.productId)} linear-team=${daemonValue(context.linearTeam)} linear-project=${daemonValue(context.linearProject)} github-repo=${daemonValue(context.githubRepo)}`,
-    ),
-    `Poll interval: ${input.pollIntervalMs}ms`,
-    ...(contexts.some((context) => context.globalMaxConcurrentRuns !== undefined)
-      ? [`Max concurrent runs: ${contexts[0]?.globalMaxConcurrentRuns}`]
-      : []),
-    "Run defaults:",
-    ...contexts.map(
-      (context) =>
-        `- ${daemonValue(context.productId)} mode=${daemonRunMode(context)} publish=${context.publish} start-run=${context.startRun}${context.maxConcurrentRuns === undefined ? "" : ` max-concurrent-runs=${context.maxConcurrentRuns}`}`,
-    ),
-  ].join("\n");
+  formatDisplayLine(
+    {
+      type: "daemon_startup",
+      source: "daemon",
+      action: "started",
+      severity: "success",
+      products: contexts.map((context) => daemonValue(context.productId)),
+      globalMaxConcurrentRuns: contexts[0]?.globalMaxConcurrentRuns,
+      detail: `poll interval: ${input.pollIntervalMs}ms`,
+    },
+    input.display,
+  );
 
 export interface LinearDaemonSupervisorCliInput {
   contexts: readonly ResolvedProductCliContext[];
@@ -1331,6 +1614,7 @@ export interface LinearDaemonSupervisorCliInput {
     contexts: readonly ResolvedProductCliContext[];
     loopInput: LinearWatchLoopCliInput;
   }) => ReturnType<typeof reconcileProducts>;
+  display?: DisplayFormatterOptions | undefined;
 }
 
 const productConfigForDaemonStartup = (
@@ -1460,6 +1744,7 @@ export const runLinearDaemonSupervisorCli = async (
   };
   for (const line of formatDaemonStartupSummary(input.contexts, {
     pollIntervalMs: input.loopInput.pollIntervalMs,
+    display: input.display ?? input.loopInput.display,
   }).split("\n")) {
     emit(line);
   }
@@ -1476,6 +1761,7 @@ export const runLinearDaemonSupervisorCli = async (
 
   await (input.runLoop ?? runLinearWatchLoopCli)({
     ...filterAlreadyResumedRuns(input.loopInput, alreadyResumed),
+    display: input.display ?? input.loopInput.display,
     onLine: emit,
   });
   return lines.join("\n");
@@ -1668,9 +1954,11 @@ export const resolveRuntimeConfigPath = (
 
 export const parseCliArgs = (args: readonly string[]): CliArgs => {
   const progressLevel = resolveProgressLevel(args);
+  const noColor = args.includes("--no-color");
   if (args[0] === "init") {
     const parsed: CliArgs = { mode: "init" };
     if (args.includes("--force")) parsed.force = true;
+    if (noColor) parsed.noColor = true;
     return parsed;
   }
   if (args[0] === "watch" || args[0] === "daemon") {
@@ -1741,6 +2029,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
         throw new Error(`${command} --start-run requires --poll-interval`);
     }
     if (progressLevel !== undefined) parsed.progressLevel = progressLevel;
+    if (noColor) parsed.noColor = true;
     return parsed;
   }
   if (args[0] === "status") {
@@ -1753,6 +2042,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (repoPath !== undefined) parsed.repoPath = repoPath;
     if (worktreesPath !== undefined) parsed.worktreesPath = worktreesPath;
     if (baseBranch !== undefined) parsed.baseBranch = baseBranch;
+    if (noColor) parsed.noColor = true;
     return parsed;
   }
   if (args[0] === "reconcile") {
@@ -1763,6 +2053,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (productsConfigPath !== undefined) parsed.productsConfigPath = productsConfigPath;
     if (product !== undefined) parsed.product = product;
     if (linearApiKeyEnv !== undefined) parsed.linearApiKeyEnv = linearApiKeyEnv;
+    if (noColor) parsed.noColor = true;
     return parsed;
   }
   if (args[0] === "run") {
@@ -1806,12 +2097,14 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     }
     if (args.includes("--preflight-only")) parsed.preflightOnly = true;
     if (progressLevel !== undefined) parsed.progressLevel = progressLevel;
+    if (noColor) parsed.noColor = true;
     return parsed;
   }
   const parsed: CliArgs = { mode: selectDemoMode(args) };
   const runtimeConfigPath = optionValue(args, "--runtime-config");
   if (runtimeConfigPath !== undefined) parsed.runtimeConfigPath = runtimeConfigPath;
   if (progressLevel !== undefined) parsed.progressLevel = progressLevel;
+  if (noColor) parsed.noColor = true;
   return parsed;
 };
 
@@ -2069,6 +2362,16 @@ export const runInitCli = async (input: InitCliInput = {}): Promise<string> => {
 
 const main = async (): Promise<void> => {
   const args = parseCliArgs(process.argv.slice(2));
+  const stdoutDisplay: DisplayFormatterOptions = {
+    noColor: args.noColor,
+    isTty: process.stdout.isTTY,
+    env: process.env,
+  };
+  const stderrDisplay: DisplayFormatterOptions = {
+    noColor: args.noColor,
+    isTty: process.stderr.isTTY,
+    env: process.env,
+  };
   const runtimeConfigPath = resolveRuntimeConfigPath(args);
   if (isDemoCliMode(args.mode)) {
     const result = await runDevDemoCli(args);
@@ -2197,6 +2500,7 @@ const main = async (): Promise<void> => {
           teamKeys: watchTeamKeys,
           pollIntervalMs: args.pollIntervalMs,
           signal: controller.signal,
+          display: stdoutDisplay,
           onLine: (line) => process.stdout.write(`${line}\n`),
         };
         if (watchContexts.length === 1) {
@@ -2396,6 +2700,7 @@ const main = async (): Promise<void> => {
                 ...(options.retryEscalated === true ? { retryEscalated: true } : {}),
                 ...(options.resumePublish === true ? { resumePublish: true } : {}),
                 ...(args.progressLevel === undefined ? {} : { progressLevel: args.progressLevel }),
+                display: stderrDisplay,
                 ...publishRunInput,
                 onProgressLine: (line) => process.stderr.write(`${line}\n`),
               });
@@ -2449,6 +2754,7 @@ const main = async (): Promise<void> => {
           await runLinearDaemonSupervisorCli({
             contexts: watchContexts,
             loopInput,
+            display: stdoutDisplay,
             onLine: (line) => process.stdout.write(`${line}\n`),
           });
         } else {
@@ -2553,6 +2859,7 @@ const main = async (): Promise<void> => {
       ...(args.retryEscalated === true ? { retryEscalated: true } : {}),
       ...(args.resumePublish === true ? { resumePublish: true } : {}),
       ...(args.progressLevel === undefined ? {} : { progressLevel: args.progressLevel }),
+      display: stderrDisplay,
       runStatePath: join(
         runContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`,
         "..",
@@ -2620,7 +2927,9 @@ const main = async (): Promise<void> => {
     runInput.registry = runtimeConfigToRegistry(runtimeConfig);
     runInput.issueStatusLabels = runtimeConfig.issueStatusLabels;
     const progressFormatter = createAcpRoleProgressFormatter(
-      args.progressLevel === undefined ? {} : { level: args.progressLevel },
+      args.progressLevel === undefined
+        ? { display: stderrDisplay }
+        : { level: args.progressLevel, display: stderrDisplay },
     );
     runInput.runner = createAcpRoleRunner({
       onProgress: (event) => {
