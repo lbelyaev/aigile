@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { formatDistanceStrict } from "date-fns";
 import {
   createFakeCodeHostAdapter,
@@ -13,9 +13,13 @@ import {
 } from "@aigile/adapters";
 import {
   DEFAULT_ISSUE_STATUS_LABELS,
+  defaultProductWorktreesPath,
+  expandHomePath,
   findProductConfig,
+  findRepoConfig,
   loadProductConfigFromFile,
   loadRuntimeConfigFromJson,
+  repoConfigToProduct,
   resolveProductPaths,
   runtimeConfigToRegistry,
   splitGithubRepo,
@@ -66,7 +70,7 @@ import {
   type IssueWorkspaceStatus,
 } from "@aigile/workspace";
 import { createFileRunStore, listResumableRuns } from "@aigile/workflow";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const demoCliEnabled = (): boolean => process.env.AIGILE_ENABLE_DEMO_CLI === "1";
 
@@ -294,7 +298,8 @@ export type DemoMode =
   | "run"
   | "status"
   | "watch"
-  | "reconcile";
+  | "reconcile"
+  | "init";
 
 export const selectDemoMode = (args: readonly string[]): DemoMode =>
   args.includes("demo:agents") || args.includes("--agents")
@@ -337,6 +342,7 @@ export interface CliArgs {
   retryEscalated?: boolean;
   resumePublish?: boolean;
   progressLevel?: ProgressLevel;
+  force?: boolean;
 }
 
 export interface ProductCliResolutionOptions {
@@ -360,6 +366,7 @@ export interface ResolvedProductCliContext {
   agentWrite: boolean;
   publish: boolean;
   startRun: boolean;
+  packageManager?: string;
   verification?: ProductVerificationPolicy;
 }
 
@@ -397,16 +404,14 @@ const resolveProductCliContextForProduct = async (
   options: ProductCliResolutionOptions = {},
 ): Promise<ResolvedProductCliContext> => {
   const cwd = options.cwd ?? process.cwd();
+  const homeDir = options.homeDir;
   const remote = args.remote ?? "origin";
-  const productPaths =
-    product === undefined
+  const configuredRepoPath =
+    product?.repoPath === undefined
       ? undefined
-      : resolveProductPaths(product, {
-          cwd,
-          ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
-        });
+      : expandHomePath(product.repoPath, homeDir ?? undefined);
   const linearTeam = args.linearTeam ?? product?.linear.team;
-  const repoPath = args.repoPath ?? productPaths?.repoPath ?? cwd;
+  const repoPath = args.repoPath ?? configuredRepoPath ?? cwd;
   const exec = options.exec ?? defaultExecCommand;
   const githubRepo =
     args.githubRepo ??
@@ -421,6 +426,10 @@ const resolveProductCliContextForProduct = async (
     product?.github.baseBranch ??
     (await resolveGitRemoteHeadBranch(repoPath, remote, exec)) ??
     "main";
+  const configuredWorktreesPath =
+    product?.worktreesPath === undefined
+      ? undefined
+      : expandHomePath(product.worktreesPath, homeDir ?? undefined);
   const mode =
     args.dryRun === true
       ? "dry_run"
@@ -438,11 +447,17 @@ const resolveProductCliContextForProduct = async (
     remote,
     baseBranch,
     repoPath,
-    worktreesPath: args.worktreesPath ?? productPaths?.worktreesPath ?? `${cwd}/.worktrees`,
+    worktreesPath:
+      args.worktreesPath ??
+      configuredWorktreesPath ??
+      (product === undefined || githubRepo === undefined
+        ? `${cwd}/.worktrees`
+        : defaultProductWorktreesPath(githubRepo, homeDir ?? undefined)),
     dryRun: mode === "dry_run",
     agentWrite: mode === "agent_write",
     publish: args.publish ?? product?.defaultRun.publish ?? false,
     startRun: args.startRun ?? product?.defaultRun.startRun ?? false,
+    ...(product?.packageManager === undefined ? {} : { packageManager: product.packageManager }),
     ...(product?.verification === undefined ? {} : { verification: product.verification }),
   };
 };
@@ -498,14 +513,23 @@ export const resolveProductCliContext = async (
   options: ProductCliResolutionOptions = {},
 ): Promise<ResolvedProductCliContext> => {
   const productsConfigPath = args.productsConfigPath ?? "config/aigile.products.json";
+  const cwd = options.cwd ?? process.cwd();
   if (
     args.product !== undefined &&
     productConfig === undefined &&
     !existsSync(productsConfigPath)
   ) {
-    throw new Error(
-      `product config not found: ${productsConfigPath}. Pass --products-config <path> or create config/aigile.products.json from config/aigile.products.example.json.`,
-    );
+    const repoConfig = findRepoConfig(cwd);
+    if (repoConfig.config === undefined) {
+      throw new Error(
+        `product config not found: ${productsConfigPath}. Pass --products-config <path> or create config/aigile.products.json from config/aigile.products.example.json.`,
+      );
+    }
+    const repoProduct = repoConfigToProduct(repoConfig.config, dirname(repoConfig.path!));
+    if (repoProduct.id !== args.product) {
+      throw new Error(`Product config did not contain product: ${args.product}`);
+    }
+    return resolveProductCliContextForProduct(args, repoProduct, options);
   }
   const loadedConfig =
     productConfig ??
@@ -515,7 +539,12 @@ export const resolveProductCliContext = async (
   const product =
     args.product === undefined
       ? loadedConfig === undefined
-        ? undefined
+        ? (() => {
+            const repoConfig = findRepoConfig(cwd);
+            return repoConfig.config === undefined
+              ? undefined
+              : repoConfigToProduct(repoConfig.config, dirname(repoConfig.path!));
+          })()
         : selectImplicitProductConfig(loadedConfig, args.issueKey)
       : findProductConfig(loadedConfig!, args.product);
   return resolveProductCliContextForProduct(args, product, options);
@@ -1375,8 +1404,22 @@ const resolveProgressLevel = (args: readonly string[]): ProgressLevel | undefine
   return undefined;
 };
 
+export const resolveRuntimeConfigPath = (
+  args: Pick<CliArgs, "runtimeConfigPath">,
+  cwd = process.cwd(),
+): string | undefined => {
+  if (args.runtimeConfigPath !== undefined) return args.runtimeConfigPath;
+  const defaultPath = join(cwd, "config", "aigile.runtimes.json");
+  return existsSync(defaultPath) ? defaultPath : undefined;
+};
+
 export const parseCliArgs = (args: readonly string[]): CliArgs => {
   const progressLevel = resolveProgressLevel(args);
+  if (args[0] === "init") {
+    const parsed: CliArgs = { mode: "init" };
+    if (args.includes("--force")) parsed.force = true;
+    return parsed;
+  }
   if (args[0] === "watch") {
     const preflightOnly = args.includes("--preflight");
     const pollInterval = optionValue(args, "--poll-interval");
@@ -1434,8 +1477,6 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (parsed.startRun) {
       if (parsed.pollIntervalMs === undefined)
         throw new Error("watch --start-run requires --poll-interval");
-      if (parsed.runtimeConfigPath === undefined)
-        throw new Error("watch --start-run requires --runtime-config");
     }
     if (progressLevel !== undefined) parsed.progressLevel = progressLevel;
     return parsed;
@@ -1584,7 +1625,11 @@ export const runCli = async (
 };
 
 const isDemoCliMode = (mode: DemoMode): boolean =>
-  mode !== "run" && mode !== "status" && mode !== "watch" && mode !== "reconcile";
+  mode !== "run" &&
+  mode !== "status" &&
+  mode !== "watch" &&
+  mode !== "reconcile" &&
+  mode !== "init";
 
 const issueFromRunArgs = (
   args: CliArgs,
@@ -1710,11 +1755,66 @@ const runDevDemoCli = async (args: CliArgs): Promise<DemoResult> => {
   return runDemoIssue({ issue: demoIssue });
 };
 
+export interface InitCliInput {
+  cwd?: string;
+  examplesDir?: string;
+  force?: boolean;
+}
+
+export const runInitCli = async (input: InitCliInput = {}): Promise<string> => {
+  const cwd = input.cwd ?? process.cwd();
+  const cwdExamplesDir = join(process.cwd(), "config");
+  const sourceExamplesDir = join(dirname(import.meta.path), "..", "..", "..", "config");
+  const examplesDir =
+    input.examplesDir ??
+    (existsSync(join(cwdExamplesDir, ".aigile.example.json")) ? cwdExamplesDir : sourceExamplesDir);
+  const force = input.force ?? false;
+  const files = [
+    {
+      source: join(examplesDir, ".aigile.example.json"),
+      target: join(cwd, ".aigile.json"),
+      display: ".aigile.json",
+    },
+    {
+      source: join(examplesDir, "aigile.products.example.json"),
+      target: join(cwd, "config", "aigile.products.json"),
+      display: "config/aigile.products.json",
+    },
+    {
+      source: join(examplesDir, "aigile.runtimes.example.json"),
+      target: join(cwd, "config", "aigile.runtimes.json"),
+      display: "config/aigile.runtimes.json",
+    },
+  ];
+  const existing = files.filter((file) => existsSync(file.target));
+  if (existing.length > 0 && !force) {
+    throw new Error(
+      `init refused to overwrite config that already exists: ${existing
+        .map((file) => file.display)
+        .join(", ")}. Pass --force to overwrite.`,
+    );
+  }
+  const lines: string[] = [];
+  for (const file of files) {
+    mkdirSync(dirname(file.target), { recursive: true });
+    const existed = existsSync(file.target);
+    writeFileSync(file.target, readFileSync(file.source, "utf8"));
+    lines.push(`${existed ? "Overwrote" : "Created"} ${file.display}`);
+  }
+  return lines.join("\n");
+};
+
 const main = async (): Promise<void> => {
   const args = parseCliArgs(process.argv.slice(2));
+  const runtimeConfigPath = resolveRuntimeConfigPath(args);
   if (isDemoCliMode(args.mode)) {
     const result = await runDevDemoCli(args);
     process.stdout.write(`${formatDemoResult(result)}\n`);
+    return;
+  }
+  if (args.mode === "init") {
+    const output = await runInitCli(args.force === undefined ? {} : { force: args.force });
+    process.stdout.write(`${output}\n`);
     return;
   }
   const runContext = args.mode === "run" ? await resolveProductCliContext(args) : undefined;
@@ -1759,7 +1859,7 @@ const main = async (): Promise<void> => {
     args.mode === "run" &&
     args.linear &&
     args.preflightOnly !== true &&
-    args.runtimeConfigPath === undefined
+    runtimeConfigPath === undefined
       ? await (async (): Promise<IssueRecord> => {
           return fetchLinearIssueForRun({
             apiKey: linearApiKey("run"),
@@ -1841,7 +1941,7 @@ const main = async (): Promise<void> => {
         if (args.claimStatus !== undefined) loopInput.claimStatus = args.claimStatus;
         if (args.maxPolls !== undefined) loopInput.maxPolls = args.maxPolls;
         if (watchContexts.some((context) => context.startRun)) {
-          if (args.runtimeConfigPath === undefined)
+          if (runtimeConfigPath === undefined)
             throw new Error("watch --start-run requires --runtime-config");
           if (
             watchContexts.some(
@@ -1933,7 +2033,7 @@ const main = async (): Promise<void> => {
               ...(context.linearTeam === undefined ? {} : { teamKey: context.linearTeam }),
               repoPath: context.repoPath,
               worktreesPath: context.worktreesPath,
-              runtimeConfigPath: args.runtimeConfigPath!,
+              runtimeConfigPath,
               baseBranch: context.baseBranch,
               runStatePath: runStatePathForContext(context),
               ...(context.dryRun === true ? { dryRun: true } : {}),
@@ -2010,7 +2110,7 @@ const main = async (): Promise<void> => {
     process.stdout.write(`${output}\n`);
     return;
   }
-  if (args.mode === "run" && args.linear && args.runtimeConfigPath !== undefined) {
+  if (args.mode === "run" && args.linear && runtimeConfigPath !== undefined) {
     if (runContext?.dryRun !== true && runContext?.agentWrite !== true) {
       throw new Error("run with --runtime-config requires --dry-run or --agent-write");
     }
@@ -2060,7 +2160,7 @@ const main = async (): Promise<void> => {
       repoPath: runContext?.repoPath ?? args.repoPath ?? process.cwd(),
       worktreesPath:
         runContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`,
-      runtimeConfigPath: args.runtimeConfigPath,
+      runtimeConfigPath,
       ...(runContext?.baseBranch === undefined ? {} : { baseBranch: runContext.baseBranch }),
       ...(runContext?.dryRun === true ? { dryRun: true } : {}),
       ...(runContext?.agentWrite === true ? { agentWrite: true } : {}),
@@ -2095,7 +2195,7 @@ const main = async (): Promise<void> => {
   }
   if (
     args.mode === "run" &&
-    args.runtimeConfigPath &&
+    runtimeConfigPath &&
     !args.preflightOnly &&
     runContext?.dryRun !== true &&
     runContext?.agentWrite !== true
@@ -2130,8 +2230,8 @@ const main = async (): Promise<void> => {
         defaultExecCommand(command, commandArgs, { cwd: options.cwd ?? process.cwd() }),
     });
   }
-  if (args.mode === "run" && args.runtimeConfigPath) {
-    const runtimeConfig = loadRuntimeConfigFromJson(readFileSync(args.runtimeConfigPath, "utf8"));
+  if (args.mode === "run" && runtimeConfigPath) {
+    const runtimeConfig = loadRuntimeConfigFromJson(readFileSync(runtimeConfigPath, "utf8"));
     runInput.registry = runtimeConfigToRegistry(runtimeConfig);
     runInput.issueStatusLabels = runtimeConfig.issueStatusLabels;
     const progressFormatter = createAcpRoleProgressFormatter(

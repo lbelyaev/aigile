@@ -14,6 +14,7 @@ describe("product config", () => {
             id: "aigile",
             linear: { team: "LBE", project: "Aigile" },
             github: { repo: "lbelyaev/aigile", baseBranch: "main" },
+            packageManager: "bun",
             worktreesPath: "~/.aigile/worktrees/lbelyaev/aigile",
             defaultRun: { startRun: true, mode: "agent_write", publish: true },
             verification: {
@@ -36,6 +37,7 @@ describe("product config", () => {
       id: "aigile",
       linear: { team: "LBE", project: "Aigile" },
       github: { repo: "lbelyaev/aigile", baseBranch: "main" },
+      packageManager: "bun",
       worktreesPath: "~/.aigile/worktrees/lbelyaev/aigile",
       defaultRun: { startRun: true, mode: "agent_write", publish: true },
       verification: {

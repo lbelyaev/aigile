@@ -34,6 +34,7 @@ export interface RuntimeProduct {
   };
   repoPath?: string;
   worktreesPath?: string;
+  packageManager?: string;
   defaultRun: {
     startRun: boolean;
     mode: ProductRunMode;
@@ -217,9 +218,11 @@ const parseProduct = (value: unknown, index: number): RuntimeProduct => {
   };
   const repoPath = optionalStringField(value, "repoPath", context);
   const worktreesPath = optionalStringField(value, "worktreesPath", context);
+  const packageManager = optionalStringField(value, "packageManager", context);
   const verification = parseVerification(value.verification, context);
   if (repoPath !== undefined) product.repoPath = repoPath;
   if (worktreesPath !== undefined) product.worktreesPath = worktreesPath;
+  if (packageManager !== undefined) product.packageManager = packageManager;
   if (verification !== undefined) product.verification = verification;
   return product;
 };

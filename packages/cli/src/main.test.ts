@@ -1,3 +1,6 @@
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
 import {
   createFakeCodeHostAdapter,
@@ -19,12 +22,14 @@ import {
   parseDurationMs,
   parseGitHubRepoFromRemoteUrl,
   parseCliArgs,
+  resolveRuntimeConfigPath,
   fetchLinearIssueForRun,
   runLinearIssueWorkflowCli,
   runLinearWatchLoopCli,
   runLinearWatchPreflightCli,
   runLinearWatchOnceCli,
   runReconcileProductsCli,
+  runInitCli,
   runWatchOnceCli,
   runRunModePreflight,
   runPublishPreflight,
@@ -494,6 +499,25 @@ describe("cli formatting", () => {
     });
   });
 
+  it("discovers the default runtime config path when present", () => {
+    const root = mkdtempSync(join(tmpdir(), "aigile-runtime-config-"));
+    try {
+      mkdirSync(join(root, "config"), { recursive: true });
+      writeFileSync(join(root, "config", "aigile.runtimes.json"), JSON.stringify({}));
+      expect(resolveRuntimeConfigPath(parseCliArgs(["run", "LBE-1"]), root)).toBe(
+        join(root, "config", "aigile.runtimes.json"),
+      );
+      expect(
+        resolveRuntimeConfigPath(
+          parseCliArgs(["run", "LBE-1", "--runtime-config", "custom/runtime.json"]),
+          root,
+        ),
+      ).toBe("custom/runtime.json");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("parses real run arguments", () => {
     expect(
       parseCliArgs([
@@ -572,6 +596,11 @@ describe("cli formatting", () => {
       product: "aigile",
       retryEscalated: true,
     });
+  });
+
+  it("parses init arguments", () => {
+    expect(parseCliArgs(["init"])).toEqual({ mode: "init" });
+    expect(parseCliArgs(["init", "--force"])).toEqual({ mode: "init", force: true });
   });
 
   it("parses resume-publish run arguments", () => {
@@ -1179,6 +1208,108 @@ describe("cli formatting", () => {
     ]);
   });
 
+  it("uses in-repo config when central products config is absent", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aigile-repo-context-"));
+    try {
+      mkdirSync(join(root, ".git"));
+      writeFileSync(
+        join(root, ".aigile.json"),
+        JSON.stringify({
+          version: 1,
+          id: "aigile",
+          packageManager: "bun",
+          linear: { team: "LBE", project: "Aigile" },
+          github: { baseBranch: "main" },
+          defaultRun: { startRun: true, mode: "agent_write", publish: false },
+          verification: { checks: [["bun", "run", "check"]] },
+        }),
+      );
+
+      await expect(
+        resolveProductCliContext(parseCliArgs(["run", "LBE-40", "--linear"]), undefined, {
+          cwd: root,
+          homeDir: "/home/test",
+          exec: async (command, args) => {
+            if (command === "git" && args[0] === "remote") {
+              return {
+                stdout: "https://github.com/lbelyaev/aigile.git\n",
+                stderr: "",
+                exitCode: 0,
+              };
+            }
+            if (command === "git" && args[0] === "symbolic-ref") {
+              return { stdout: "", stderr: "missing", exitCode: 1 };
+            }
+            throw new Error("unexpected command");
+          },
+        }),
+      ).resolves.toMatchObject({
+        productId: "aigile",
+        linearTeam: "LBE",
+        linearProject: "Aigile",
+        githubRepo: "lbelyaev/aigile",
+        githubOwner: "lbelyaev",
+        githubRepository: "aigile",
+        baseBranch: "main",
+        repoPath: root,
+        worktreesPath: "/home/test/.aigile/worktrees/lbelyaev/aigile",
+        agentWrite: true,
+        dryRun: false,
+        startRun: true,
+        packageManager: "bun",
+        verification: { checks: [["bun", "run", "check"]] },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lets central products config override in-repo config", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aigile-central-override-"));
+    try {
+      mkdirSync(join(root, ".git"));
+      writeFileSync(
+        join(root, ".aigile.json"),
+        JSON.stringify({
+          version: 1,
+          id: "repo",
+          linear: { team: "RPO", project: "Repo" },
+          github: { repo: "repo/local", baseBranch: "main" },
+          defaultRun: { startRun: true, mode: "dry_run", publish: false },
+        }),
+      );
+      const central = loadProductConfigFromJson(
+        JSON.stringify({
+          products: [
+            {
+              id: "central",
+              linear: { team: "LBE", project: "Central" },
+              github: { repo: "central/project", baseBranch: "develop" },
+              defaultRun: { startRun: true, mode: "agent_write", publish: true },
+            },
+          ],
+        }),
+      );
+
+      await expect(
+        resolveProductCliContext(parseCliArgs(["run", "LBE-40", "--linear"]), central, {
+          cwd: root,
+          homeDir: "/home/test",
+        }),
+      ).resolves.toMatchObject({
+        productId: "central",
+        linearTeam: "LBE",
+        linearProject: "Central",
+        githubRepo: "central/project",
+        baseBranch: "develop",
+        agentWrite: true,
+        publish: true,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("reports a setup hint when the default product config file is missing", async () => {
     await expect(
       resolveProductCliContext(
@@ -1250,6 +1381,29 @@ describe("cli formatting", () => {
     });
   });
 
+  it("scaffolds config files with init and refuses overwrite without force", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aigile-init-"));
+    try {
+      const output = await runInitCli({ cwd: root, examplesDir: join(process.cwd(), "config") });
+      expect(output).toContain("Created .aigile.json");
+      expect(readFileSync(join(root, ".aigile.json"), "utf8")).toContain('"version": 1');
+      expect(readFileSync(join(root, "config", "aigile.products.json"), "utf8")).toContain(
+        '"products"',
+      );
+      expect(readFileSync(join(root, "config", "aigile.runtimes.json"), "utf8")).toContain(
+        '"runtimes"',
+      );
+      await expect(
+        runInitCli({ cwd: root, examplesDir: join(process.cwd(), "config") }),
+      ).rejects.toThrow(/already exists/i);
+      await expect(
+        runInitCli({ cwd: root, examplesDir: join(process.cwd(), "config"), force: true }),
+      ).resolves.toContain("Overwrote .aigile.json");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects watch without an explicit once pass", () => {
     expect(() => parseCliArgs(["watch"])).toThrow(/requires --once or --poll-interval/i);
   });
@@ -1270,17 +1424,6 @@ describe("cli formatting", () => {
   });
 
   it("rejects start-run without runtime config or execution mode", () => {
-    expect(() =>
-      parseCliArgs([
-        "watch",
-        "--linear",
-        "--linear-team",
-        "LBE",
-        "--poll-interval",
-        "30s",
-        "--start-run",
-      ]),
-    ).toThrow(/requires --runtime-config/i);
     expect(
       parseCliArgs([
         "watch",
@@ -1300,6 +1443,23 @@ describe("cli formatting", () => {
       pollIntervalMs: 30_000,
       startRun: true,
       runtimeConfigPath: "config/aigile.runtimes.example.json",
+    });
+    expect(
+      parseCliArgs([
+        "watch",
+        "--linear",
+        "--linear-team",
+        "LBE",
+        "--poll-interval",
+        "30s",
+        "--start-run",
+      ]),
+    ).toEqual({
+      mode: "watch",
+      linear: true,
+      linearTeam: "LBE",
+      pollIntervalMs: 30_000,
+      startRun: true,
     });
   });
 

@@ -12,6 +12,12 @@ export {
   resolveProductPaths,
   splitGithubRepo,
 } from "./product-config.js";
+export {
+  findRepoConfig,
+  loadRepoConfigFromFile,
+  loadRepoConfigFromJson,
+  repoConfigToProduct,
+} from "./repo-config.js";
 
 export type { IssueStatusLabels, RuntimeConfig } from "./runtime-config.js";
 export type {
@@ -24,3 +30,4 @@ export type {
   RuntimeProduct,
   RuntimeProductConfig,
 } from "./product-config.js";
+export type { InRepoConfig, RepoConfigDiscoveryResult } from "./repo-config.js";
