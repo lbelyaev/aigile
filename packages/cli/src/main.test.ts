@@ -574,6 +574,18 @@ describe("cli formatting", () => {
     });
   });
 
+  it("parses resume-publish run arguments", () => {
+    expect(
+      parseCliArgs(["run", "LBE-34", "--linear", "--product", "aigile", "--resume-publish"]),
+    ).toEqual({
+      mode: "run",
+      issueKey: "LBE-34",
+      linear: true,
+      product: "aigile",
+      resumePublish: true,
+    });
+  });
+
   it("parses explicit agent-write run arguments", () => {
     expect(
       parseCliArgs([

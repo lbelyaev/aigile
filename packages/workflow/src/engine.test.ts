@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   listResumableRuns,
+  requestPublishRetry,
   runWorkflowEngine,
   type WorkflowCommandHandler,
   type WorkflowCommandHandlers,
@@ -382,6 +383,63 @@ describe("workflow engine durable resume", () => {
     expect(result.outcome).toBe("merged");
     expect(architectCalls).toBe(1); // architect ran once total — not re-run on resume
   });
+
+  it("resumes an escalated publish failure at merge_pull_request only", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "aigile-engine-"));
+    tempDirs.push(directory);
+    const store = createFileRunStore({ directory });
+    for (const type of [
+      "issue_received",
+      "plan_drafted",
+      "plan_approved",
+      "developer_finished",
+      "verification_passed",
+      "checker_passed",
+      "publish_failed",
+    ] satisfies WorkflowEvent["type"][]) {
+      await store.appendEvent("LIN-1", { type, issueId: "LIN-1" });
+    }
+
+    let architectCalls = 0;
+    let developerCalls = 0;
+    let checkerCalls = 0;
+    let publishCalls = 0;
+    await requestPublishRetry(store, "LIN-1");
+    const result = await runWorkflowEngine({
+      issueId: "LIN-1",
+      store,
+      handlers: {
+        start_architect_plan: async () => {
+          architectCalls += 1;
+          return { event: ev("plan_drafted") };
+        },
+        start_developer_attempt: async () => {
+          developerCalls += 1;
+          return { event: ev("developer_finished") };
+        },
+        start_checker_review: async () => {
+          checkerCalls += 1;
+          return { event: ev("checker_passed") };
+        },
+        merge_pull_request: async () => {
+          publishCalls += 1;
+          return { event: ev("merge_completed") };
+        },
+      },
+    });
+
+    expect(result.outcome).toBe("merged");
+    expect({ architectCalls, developerCalls, checkerCalls, publishCalls }).toEqual({
+      architectCalls: 0,
+      developerCalls: 0,
+      checkerCalls: 0,
+      publishCalls: 1,
+    });
+    expect((await store.load("LIN-1"))?.events.map((event) => event.type).slice(-2)).toEqual([
+      "publish_retry_requested",
+      "merge_completed",
+    ]);
+  });
 });
 
 describe("listResumableRuns", () => {
@@ -411,8 +469,18 @@ describe("listResumableRuns", () => {
     ]);
     // Interrupted right after planning -> included.
     await seed("STALLED-1", ["issue_received"]);
+    // Escalated at publish -> included for publish-only resume.
+    await seed("PUBLISH-1", [
+      "issue_received",
+      "plan_drafted",
+      "plan_approved",
+      "developer_finished",
+      "verification_passed",
+      "checker_passed",
+      "publish_failed",
+    ]);
 
     const resumable = (await listResumableRuns(store)).sort();
-    expect(resumable).toEqual(["PAUSED-1", "STALLED-1"]);
+    expect(resumable).toEqual(["PAUSED-1", "PUBLISH-1", "STALLED-1"]);
   });
 });

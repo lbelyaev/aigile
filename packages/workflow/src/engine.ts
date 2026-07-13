@@ -104,6 +104,16 @@ const STOP_STATES: ReadonlySet<WorkflowState> = new Set<WorkflowState>([
 
 const isStopState = (state: WorkflowState): boolean => STOP_STATES.has(state);
 
+const isPublishEscalatedRun = (
+  issueId: string,
+  events: readonly WorkflowEvent[],
+  policy?: WorkflowPolicy,
+): boolean => {
+  if (events.at(-1)?.type !== "publish_failed") return false;
+  const { snapshot } = replayWorkflow(initialWorkflowSnapshot(issueId), events, policy);
+  return snapshot.state === "escalated";
+};
+
 /**
  * Issue ids of persisted runs that have not reached a stop state — i.e. runs
  * that were interrupted (crash/restart) or paused (awaiting an external merge)
@@ -119,9 +129,32 @@ export const listResumableRuns = async (
     const run = await store.load(issueId);
     if (run === undefined || run.events.length === 0) continue;
     const { snapshot } = replayWorkflow(initialWorkflowSnapshot(issueId), run.events, policy);
-    if (!isStopState(snapshot.state)) resumable.push(issueId);
+    if (!isStopState(snapshot.state) || isPublishEscalatedRun(issueId, run.events, policy)) {
+      resumable.push(issueId);
+    }
   }
   return resumable;
+};
+
+export const requestPublishRetry = async (
+  store: RunStore,
+  issueId: string,
+  policy?: WorkflowPolicy,
+): Promise<void> => {
+  const run = await store.load(issueId);
+  if (run === undefined || run.events.length === 0) {
+    throw new Error(`No persisted run found for ${issueId}`);
+  }
+  const { snapshot } = replayWorkflow(initialWorkflowSnapshot(issueId), run.events, policy);
+  if (!isStopState(snapshot.state)) return;
+  if (!isPublishEscalatedRun(issueId, run.events, policy)) {
+    throw new Error(`Run ${issueId} is not escalated from a publish failure`);
+  }
+  await store.appendEvent(issueId, {
+    type: "publish_retry_requested",
+    issueId,
+    reason: "resume publish without rerunning agent phases",
+  });
 };
 
 const outcomeForState = (state: WorkflowState): WorkflowOutcome => {

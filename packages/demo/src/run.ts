@@ -50,6 +50,7 @@ import {
 import {
   createFileRunStore,
   initialWorkflowSnapshot,
+  requestPublishRetry,
   reviewRoleForChangedFiles,
   runWorkflowEngine,
   transitionWorkflow,
@@ -108,6 +109,7 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   changedFileGuards?: ProductChangedFileGuard[];
   runStatePath?: string;
   retryEscalated?: boolean;
+  resumePublish?: boolean;
 }
 
 export interface DemoGitHubInput extends DemoIssueInput {
@@ -984,6 +986,27 @@ export const runDemoIssueWithWorkspace = async (input: DemoWorkspaceInput): Prom
 
 const DEFAULT_AUTOFIX_COMMANDS: ProductVerificationCommand[] = [["bun", "run", "format"]];
 
+const canReusePublishCommit = async (
+  exec: ExecCommand,
+  worktreePath: string,
+  baseRef: string,
+  commitMessage: string,
+): Promise<boolean> => {
+  const subject = await exec("git", ["log", "-1", "--format=%s"], { cwd: worktreePath });
+  if (subject.exitCode !== 0 || subject.stdout.trim() !== commitMessage) return false;
+
+  const containsBase = await exec("git", ["merge-base", "--is-ancestor", baseRef, "HEAD"], {
+    cwd: worktreePath,
+  });
+  if (containsBase.exitCode !== 0) return false;
+
+  const unstaged = await exec("git", ["diff", "--quiet"], { cwd: worktreePath });
+  if (unstaged.exitCode !== 0) return false;
+
+  const staged = await exec("git", ["diff", "--cached", "--quiet"], { cwd: worktreePath });
+  return staged.exitCode === 0;
+};
+
 /**
  * Durable, engine-backed equivalent of runDemoIssueWithWorkspace: drives the
  * issue through runWorkflowEngine (event-sourced, retryable, resumable) using
@@ -1059,11 +1082,22 @@ export const runWorkspaceIssueWithEngine = async (
           : { changedFileGuards: input.changedFileGuards }),
       }),
     publish: async () => {
+      const commitMessage = `${input.issue.key} ${input.issue.title}`;
       // Collapse the per-attempt checkpoint commits into a single clean commit so
       // the PR isn't littered with "attempt N (checkpoint)". reset --soft moves HEAD
       // back to the base while keeping every change staged; the publisher then makes
-      // one commit with the real message and pushes it.
-      if (input.dryRun !== true) {
+      // one commit with the real message and pushes it. On resume after a partial
+      // publish, reuse that final commit instead of resetting and creating a sibling
+      // commit that would fail to push over the already-published branch.
+      if (
+        input.dryRun !== true &&
+        !(await canReusePublishCommit(
+          worktreeExec,
+          workspace.worktreePath,
+          reviewBaseRef,
+          commitMessage,
+        ))
+      ) {
         await worktreeExec("git", ["reset", "--soft", reviewBaseRef], {
           cwd: workspace.worktreePath,
         });
@@ -1074,7 +1108,7 @@ export const runWorkspaceIssueWithEngine = async (
         remote,
         owner: target.owner,
         repo: target.repo,
-        commitMessage: `${input.issue.key} ${input.issue.title}`,
+        commitMessage,
       });
     },
     // Checkpoint each reviewed attempt (and restore to the best on regression) so the
@@ -1099,6 +1133,7 @@ export const runWorkspaceIssueWithEngine = async (
     directory: input.runStatePath ?? join(input.worktreesPath, "..", "runs"),
   });
   if (input.retryEscalated === true) await store.deleteRun(input.issue.key);
+  if (input.resumePublish === true) await requestPublishRetry(store, input.issue.key);
   const engineInput: WorkflowEngineInput = {
     issueId: input.issue.key,
     store,

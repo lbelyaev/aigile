@@ -1,4 +1,5 @@
 import { defaultExecCommand, type ExecCommand, type ExecResult } from "./git-workspace.js";
+import { withPublishRetry, type PublishRetryOptions } from "./publish-retry.js";
 
 export interface GitPublishInput {
   worktreePath: string;
@@ -15,6 +16,7 @@ export interface GitPublisher {
 
 export interface GitPublisherOptions {
   exec?: ExecCommand;
+  retry?: PublishRetryOptions;
 }
 
 const assertSuccess = (result: ExecResult, operation: string): void => {
@@ -36,39 +38,48 @@ const pushTargetFor = (input: GitPublishInput): string => {
 
 export const createGitPublisher = (options: GitPublisherOptions = {}): GitPublisher => {
   const exec = options.exec ?? defaultExecCommand;
+  const retry = options.retry ?? {};
 
   return {
     publish: async (input) => {
-      assertSuccess(await exec("git", ["add", "-A"], { cwd: input.worktreePath }), "git add");
-      const stagedDiff = await exec("git", ["diff", "--cached", "--quiet"], {
-        cwd: input.worktreePath,
-      });
-      if (stagedDiff.exitCode === 1) {
-        assertSuccess(
-          await exec("git", ["commit", "-m", input.commitMessage], { cwd: input.worktreePath }),
-          "git commit",
-        );
-      } else {
-        assertSuccess(stagedDiff, "git diff --cached --quiet");
-      }
-      const pushTarget = pushTargetFor(input);
-      assertSuccess(
-        await exec(
-          "git",
-          [
-            "-c",
-            "credential.helper=",
-            "-c",
-            "credential.helper=!gh auth git-credential",
-            "push",
-            pushTarget,
-            `HEAD:${input.branchName}`,
-          ],
-          {
+      await withPublishRetry(
+        "git publish",
+        async () => {
+          assertSuccess(await exec("git", ["add", "-A"], { cwd: input.worktreePath }), "git add");
+          const stagedDiff = await exec("git", ["diff", "--cached", "--quiet"], {
             cwd: input.worktreePath,
-          },
-        ),
-        "git push",
+          });
+          if (stagedDiff.exitCode === 1) {
+            assertSuccess(
+              await exec("git", ["commit", "-m", input.commitMessage], {
+                cwd: input.worktreePath,
+              }),
+              "git commit",
+            );
+          } else {
+            assertSuccess(stagedDiff, "git diff --cached --quiet");
+          }
+          const pushTarget = pushTargetFor(input);
+          assertSuccess(
+            await exec(
+              "git",
+              [
+                "-c",
+                "credential.helper=",
+                "-c",
+                "credential.helper=!gh auth git-credential",
+                "push",
+                pushTarget,
+                `HEAD:${input.branchName}`,
+              ],
+              {
+                cwd: input.worktreePath,
+              },
+            ),
+            "git push",
+          );
+        },
+        retry,
       );
     },
   };

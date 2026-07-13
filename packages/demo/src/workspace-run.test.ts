@@ -1,10 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { createFakeCodeHostAdapter } from "@aigile/adapters";
+import { createFakeCodeHostAdapter, type CodeHostAdapter } from "@aigile/adapters";
 import {
   createRoleRuntimeRegistry,
   createScriptedRoleRunner,
   type RoleRunner,
 } from "@aigile/roles";
+import type { ExecCommand } from "@aigile/workspace";
 import { createFileRunStore } from "@aigile/workflow";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -933,6 +934,165 @@ describe("durable engine-backed workspace run", () => {
       expect(result.finalState).toBe("merged");
       expect(result.pullRequest).toBeDefined();
       expect(result.artifacts.map((artifact) => artifact.kind)).toContain("github.pull_request");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes after PR creation fails without recreating the published commit", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "aigile-engine-publish-resume-"));
+    const baseCodeHost = createFakeCodeHostAdapter({ mergeability: "mergeable", merged: false });
+    let createPullRequestCalls = 0;
+    const codeHost: CodeHostAdapter = {
+      ...baseCodeHost,
+      createPullRequest: async (input) => {
+        createPullRequestCalls += 1;
+        if (createPullRequestCalls === 1) throw new Error("gh pr create transient failure");
+        return baseCodeHost.createPullRequest(input);
+      },
+    };
+
+    const roleCalls: string[] = [];
+    const baseRunner = scriptedRunner();
+    const runner: RoleRunner = {
+      run: async (input) => {
+        roleCalls.push(input.roleId);
+        return baseRunner.run(input);
+      },
+    };
+
+    let worktreeExists = false;
+    let changedFilesAvailable = true;
+    let staged = false;
+    let headSubject = "origin/main";
+    let localHead = "origin-main";
+    let remoteHead: string | undefined;
+    let publishCommitCount = 0;
+    let resetSoftCount = 0;
+    let pushCount = 0;
+
+    const exec: ExecCommand = async (command, args) => {
+      if (command === "test" && args[0] === "-e") {
+        return { stdout: "", stderr: "", exitCode: worktreeExists ? 0 : 1 };
+      }
+      if (command === "git" && args[0] === "fetch") {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command === "git" && args[0] === "rev-parse" && args[1] === "--verify") {
+        return { stdout: "origin-main\n", stderr: "", exitCode: 0 };
+      }
+      if (command === "git" && args[0] === "rev-parse" && args[1] === "--abbrev-ref") {
+        return { stdout: "aigile/LIN-9\n", stderr: "", exitCode: 0 };
+      }
+      if (command === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+        return { stdout: `${localHead}\n`, stderr: "", exitCode: 0 };
+      }
+      if (command === "git" && args[0] === "merge-base") {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command === "git" && args[0] === "show-ref") {
+        return { stdout: "", stderr: "", exitCode: worktreeExists ? 0 : 1 };
+      }
+      if (command === "git" && args[0] === "worktree" && args[1] === "add") {
+        worktreeExists = true;
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command === "git" && args[0] === "log" && args[1] === "-1") {
+        return { stdout: `${headSubject}\n`, stderr: "", exitCode: 0 };
+      }
+      if (command === "git" && args[0] === "diff" && args.includes("--cached")) {
+        return { stdout: "", stderr: "", exitCode: staged ? 1 : 0 };
+      }
+      if (command === "git" && args[0] === "diff" && args.includes("--quiet")) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command === "git" && args[0] === "add") {
+        if (changedFilesAvailable) staged = true;
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command === "git" && args[0] === "commit") {
+        const message = args[args.indexOf("-m") + 1];
+        headSubject = message ?? "commit";
+        if (headSubject === "LIN-9 Engine run") {
+          publishCommitCount += 1;
+          localHead = `publish-${publishCommitCount}`;
+        } else {
+          localHead = "checkpoint-1";
+          changedFilesAvailable = false;
+        }
+        staged = false;
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command === "git" && args[0] === "reset" && args[1] === "--soft") {
+        resetSoftCount += 1;
+        staged = true;
+        headSubject = "origin/main";
+        localHead = "origin-main";
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command === "git" && args.includes("push")) {
+        pushCount += 1;
+        if (remoteHead !== undefined && remoteHead !== localHead) {
+          return { stdout: "", stderr: "non-fast-forward", exitCode: 1 };
+        }
+        remoteHead = localHead;
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (command === "bun") return { stdout: "", stderr: "", exitCode: 0 };
+      return { stdout: "", stderr: "", exitCode: 0 };
+    };
+
+    try {
+      const first = await runWorkspaceIssueWithEngine({
+        issue: {
+          id: "i",
+          key: "LIN-9",
+          title: "Engine run",
+          description: "",
+          acceptanceCriteria: [],
+          status: "todo",
+          comments: [],
+        },
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        runStatePath: directory,
+        runner,
+        codeHost,
+        exec,
+      });
+
+      expect(first.finalState).toBe("escalated");
+      expect(resetSoftCount).toBe(1);
+      expect(publishCommitCount).toBe(1);
+      expect(pushCount).toBe(1);
+      expect(roleCalls).toEqual(["architect", "developer", "checker"]);
+
+      const second = await runWorkspaceIssueWithEngine({
+        issue: {
+          id: "i",
+          key: "LIN-9",
+          title: "Engine run",
+          description: "",
+          acceptanceCriteria: [],
+          status: "todo",
+          comments: [],
+        },
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        runStatePath: directory,
+        resumePublish: true,
+        runner,
+        codeHost,
+        exec,
+      });
+
+      expect(second.finalState).toBe("merged");
+      expect(createPullRequestCalls).toBe(2);
+      expect(resetSoftCount).toBe(1);
+      expect(publishCommitCount).toBe(1);
+      expect(pushCount).toBe(2);
+      expect(remoteHead).toBe("publish-1");
+      expect(roleCalls).toEqual(["architect", "developer", "checker"]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
