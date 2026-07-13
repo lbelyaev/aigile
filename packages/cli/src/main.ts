@@ -335,6 +335,7 @@ export interface CliArgs {
   maxPolls?: number;
   startRun?: boolean;
   retryEscalated?: boolean;
+  resumePublish?: boolean;
   progressLevel?: ProgressLevel;
 }
 
@@ -768,6 +769,7 @@ export interface LinearIssueWorkflowCliInput {
   verification?: ProductVerificationPolicy;
   runStatePath?: string;
   retryEscalated?: boolean;
+  resumePublish?: boolean;
   progressLevel?: ProgressLevel;
 }
 
@@ -888,6 +890,7 @@ export const runLinearIssueWorkflowCli = async (
   }
   if (input.runStatePath !== undefined) runInput.runStatePath = input.runStatePath;
   if (input.retryEscalated === true) runInput.retryEscalated = true;
+  if (input.resumePublish === true) runInput.resumePublish = true;
   if (input.baseBranch !== undefined) runInput.baseBranch = input.baseBranch;
   if (input.dryRun === true) {
     runInput.dryRun = true;
@@ -1365,6 +1368,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (args.includes("--dry-run")) parsed.dryRun = true;
     if (args.includes("--agent-write")) parsed.agentWrite = true;
     if (args.includes("--retry-escalated")) parsed.retryEscalated = true;
+    if (args.includes("--resume-publish")) parsed.resumePublish = true;
     if (parsed.dryRun && parsed.agentWrite) {
       throw new Error("choose only one of --dry-run or --agent-write");
     }
@@ -1437,6 +1441,7 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (args.includes("--dry-run")) parsed.dryRun = true;
     if (args.includes("--agent-write")) parsed.agentWrite = true;
     if (args.includes("--retry-escalated")) parsed.retryEscalated = true;
+    if (args.includes("--resume-publish")) parsed.resumePublish = true;
     if (parsed.dryRun && parsed.agentWrite) {
       throw new Error("choose only one of --dry-run or --agent-write");
     }
@@ -1863,7 +1868,7 @@ const main = async (): Promise<void> => {
           const runIssueByKey = (
             issueKey: string,
             route?: WatchProductRoute,
-            options: { retryEscalated?: boolean } = {},
+            options: { retryEscalated?: boolean; resumePublish?: boolean } = {},
           ): Promise<string> => {
             const context = contextForRoute(route);
             return runLinearIssueWorkflowCli({
@@ -1879,6 +1884,7 @@ const main = async (): Promise<void> => {
               ...(context.agentWrite === true ? { agentWrite: true } : {}),
               ...(context.verification === undefined ? {} : { verification: context.verification }),
               ...(options.retryEscalated === true ? { retryEscalated: true } : {}),
+              ...(options.resumePublish === true ? { resumePublish: true } : {}),
               ...(args.progressLevel === undefined ? {} : { progressLevel: args.progressLevel }),
               ...(publishRunInputs.get(context.productId ?? "") ?? {}),
               onProgressLine: (line) => process.stderr.write(`${line}\n`),
@@ -1891,7 +1897,7 @@ const main = async (): Promise<void> => {
           loopInput.resume = {
             listResumable: () => listResumableRuns(runStore),
             resumeRun: async (issueId) => {
-              const output = await runIssueByKey(issueId);
+              const output = await runIssueByKey(issueId, undefined, { resumePublish: true });
               return { outcome: runResultStateLine(output) ?? "resumed" };
             },
           };
@@ -2004,6 +2010,7 @@ const main = async (): Promise<void> => {
       ...(runContext?.agentWrite === true ? { agentWrite: true } : {}),
       ...(runContext?.verification === undefined ? {} : { verification: runContext.verification }),
       ...(args.retryEscalated === true ? { retryEscalated: true } : {}),
+      ...(args.resumePublish === true ? { resumePublish: true } : {}),
       ...(args.progressLevel === undefined ? {} : { progressLevel: args.progressLevel }),
       runStatePath: join(
         runContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`,
@@ -2083,6 +2090,7 @@ const main = async (): Promise<void> => {
     });
   }
   if (args.mode === "run" && args.retryEscalated === true) runInput.retryEscalated = true;
+  if (args.mode === "run" && args.resumePublish === true) runInput.resumePublish = true;
   const result = await runWorkspaceIssueWithEngine(runInput);
   process.stdout.write(`${formatDemoResult(result)}\n`);
 };

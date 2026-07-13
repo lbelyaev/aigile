@@ -44,6 +44,7 @@ const expectedTransitions: Record<
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
+    publish_retry_requested: "illegal",
     human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
@@ -64,6 +65,7 @@ const expectedTransitions: Record<
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
+    publish_retry_requested: "illegal",
     human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
@@ -88,6 +90,7 @@ const expectedTransitions: Record<
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
+    publish_retry_requested: "illegal",
     human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
@@ -108,6 +111,7 @@ const expectedTransitions: Record<
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
+    publish_retry_requested: "illegal",
     human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
@@ -132,6 +136,7 @@ const expectedTransitions: Record<
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
+    publish_retry_requested: "illegal",
     human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
@@ -160,6 +165,7 @@ const expectedTransitions: Record<
     checker_escalated: { state: "escalated", command: "request_human_attention" },
     work_satisfied: { state: "satisfied", command: "sync_sources_of_truth" },
     publish_failed: "illegal",
+    publish_retry_requested: "illegal",
     human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
@@ -180,6 +186,7 @@ const expectedTransitions: Record<
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
+    publish_retry_requested: "illegal",
     human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
@@ -200,6 +207,7 @@ const expectedTransitions: Record<
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
+    publish_retry_requested: "illegal",
     human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
     merge_completed: "illegal",
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
@@ -224,6 +232,7 @@ const expectedTransitions: Record<
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: { state: "escalated", command: "request_human_attention" },
+    publish_retry_requested: "illegal",
     human_cancelled: { state: "cancelled", command: "sync_sources_of_truth" },
     merge_completed: { state: "merged", command: "sync_sources_of_truth" },
     timeout_elapsed: { state: "escalated", command: "request_human_attention" },
@@ -244,6 +253,7 @@ const expectedTransitions: Record<
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
+    publish_retry_requested: "illegal",
     human_cancelled: "illegal",
     merge_completed: "illegal",
     timeout_elapsed: "illegal",
@@ -264,6 +274,7 @@ const expectedTransitions: Record<
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
+    publish_retry_requested: "illegal",
     human_cancelled: "illegal",
     merge_completed: "illegal",
     timeout_elapsed: "illegal",
@@ -284,6 +295,7 @@ const expectedTransitions: Record<
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
+    publish_retry_requested: "illegal",
     human_cancelled: "illegal",
     merge_completed: "illegal",
     timeout_elapsed: "illegal",
@@ -304,6 +316,7 @@ const expectedTransitions: Record<
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
+    publish_retry_requested: "illegal",
     human_cancelled: "illegal",
     merge_completed: "illegal",
     timeout_elapsed: "illegal",
@@ -585,5 +598,27 @@ describe("workflow reducer", () => {
     expect(result.snapshot.state).toBe("escalated");
     expect(result.snapshot.artifactIds).toContain("pr-1");
     expect(commandTypes(result.commands)).toEqual(["request_human_attention"]);
+  });
+
+  it("resumes publish from an escalated publish failure without agent-phase commands", () => {
+    const issueId = "LIN-123";
+    const publishEscalated = replayWorkflow(initialWorkflowSnapshot(issueId), [
+      { type: "issue_received", issueId },
+      { type: "plan_drafted", issueId, artifactId: "plan-1" },
+      { type: "plan_approved", issueId },
+      { type: "developer_finished", issueId, artifactId: "attempt-1" },
+      { type: "verification_passed", issueId, artifactId: "verify-1" },
+      { type: "checker_passed", issueId, artifactId: "verdict-1" },
+      { type: "publish_failed", issueId, reason: "git push transient failure exhausted" },
+    ]).snapshot;
+
+    const result = transitionWorkflow(publishEscalated, {
+      type: "publish_retry_requested",
+      issueId,
+      reason: "operator requested publish retry",
+    });
+
+    expect(result.snapshot.state).toBe("merge_ready");
+    expect(commandTypes(result.commands)).toEqual(["merge_pull_request"]);
   });
 });

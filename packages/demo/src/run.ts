@@ -50,6 +50,7 @@ import {
 import {
   createFileRunStore,
   initialWorkflowSnapshot,
+  requestPublishRetry,
   reviewRoleForChangedFiles,
   runWorkflowEngine,
   transitionWorkflow,
@@ -108,6 +109,7 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   changedFileGuards?: ProductChangedFileGuard[];
   runStatePath?: string;
   retryEscalated?: boolean;
+  resumePublish?: boolean;
 }
 
 export interface DemoGitHubInput extends DemoIssueInput {
@@ -1099,6 +1101,7 @@ export const runWorkspaceIssueWithEngine = async (
     directory: input.runStatePath ?? join(input.worktreesPath, "..", "runs"),
   });
   if (input.retryEscalated === true) await store.deleteRun(input.issue.key);
+  if (input.resumePublish === true) await requestPublishRetry(store, input.issue.key);
   const engineInput: WorkflowEngineInput = {
     issueId: input.issue.key,
     store,

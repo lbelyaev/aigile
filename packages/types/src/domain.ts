@@ -30,6 +30,7 @@ export const WORKFLOW_EVENT_TYPES = [
   "checker_escalated",
   "work_satisfied",
   "publish_failed",
+  "publish_retry_requested",
   "human_cancelled",
   "merge_completed",
   "timeout_elapsed",

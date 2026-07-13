@@ -1,4 +1,4 @@
-import type { WorkflowEvent, WorkflowState } from "@aigile/types";
+import type { WorkflowEvent, WorkflowEventType, WorkflowState } from "@aigile/types";
 
 export const WORKFLOW_COMMAND_TYPES = [
   "start_architect_plan",
@@ -24,6 +24,7 @@ export interface WorkflowSnapshot {
   state: WorkflowState;
   developerAttempts: number;
   artifactIds: string[];
+  escalationEventType?: WorkflowEventType;
 }
 
 export interface WorkflowPolicy {
@@ -73,14 +74,28 @@ const moveTo = (
   commands: WorkflowCommand[],
   event: WorkflowEvent,
   developerAttempts = snapshot.developerAttempts,
-): TransitionResult => ({
-  snapshot: {
-    ...withArtifact(snapshot, event),
-    state,
-    developerAttempts,
-  },
-  commands,
-});
+): TransitionResult => {
+  const { escalationEventType: _previousEscalationEventType, ...base } = withArtifact(
+    snapshot,
+    event,
+  );
+  return {
+    snapshot:
+      state === "escalated"
+        ? {
+            ...base,
+            state,
+            developerAttempts,
+            escalationEventType: event.type,
+          }
+        : {
+            ...base,
+            state,
+            developerAttempts,
+          },
+    commands,
+  };
+};
 
 const illegalTransition = (state: WorkflowState, event: WorkflowEvent): never => {
   throw new Error(`Illegal transition from "${state}" on "${event.type}"`);
@@ -310,6 +325,17 @@ export const transitionWorkflow = (
       return illegalTransition(snapshot.state, event);
 
     case "escalated":
+      if (
+        event.type === "publish_retry_requested" &&
+        snapshot.escalationEventType === "publish_failed"
+      ) {
+        return moveTo(
+          snapshot,
+          "merge_ready",
+          [command("merge_pull_request", snapshot.issueId, event.reason)],
+          event,
+        );
+      }
       return illegalTransition(snapshot.state, event);
 
     case "failed":

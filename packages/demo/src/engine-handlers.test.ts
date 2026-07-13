@@ -91,6 +91,7 @@ const buildDeps = (
     ...(overrides.issueStatusLabels === undefined
       ? {}
       : { issueStatusLabels: overrides.issueStatusLabels }),
+    ...(overrides.publishRetry === undefined ? {} : { publishRetry: overrides.publishRetry }),
   };
 };
 
@@ -237,6 +238,55 @@ describe("engine command handlers", () => {
     expect(second.event?.type).toBe("publish_failed");
     expect(publishes).toBe(1);
     await expect(codeHost.getPullRequest("o/r#2")).rejects.toThrow(); // no second PR
+  });
+
+  it("retries a transient PR-create failure before publishing failure", async () => {
+    const baseCodeHost = createFakeCodeHostAdapter({ mergeability: "mergeable", merged: false });
+    let createCalls = 0;
+    const codeHost: CodeHostAdapter = {
+      ...baseCodeHost,
+      createPullRequest: async (input) => {
+        createCalls += 1;
+        if (createCalls === 1) throw new Error("GitHub API failed: 502 Bad Gateway");
+        return baseCodeHost.createPullRequest(input);
+      },
+    };
+
+    const result = await run(
+      buildDeps({
+        codeHost,
+        publishRetry: { maxAttempts: 2, baseDelayMs: 1, sleep: async () => {} },
+      }),
+    );
+
+    expect(result.outcome).toBe("merged");
+    expect(createCalls).toBe(2);
+  });
+
+  it("does not retry a terminal PR-create failure", async () => {
+    const baseCodeHost = createFakeCodeHostAdapter();
+    let createCalls = 0;
+    const codeHost: CodeHostAdapter = {
+      ...baseCodeHost,
+      createPullRequest: async () => {
+        createCalls += 1;
+        throw new Error("GitHub API failed: 401 Requires authentication");
+      },
+    };
+    const statuses: string[] = [];
+    const comments: string[] = [];
+
+    const result = await run(
+      buildDeps({
+        codeHost,
+        issueTracker: strictStatusTracker(statuses, comments),
+        publishRetry: { maxAttempts: 3, baseDelayMs: 1, sleep: async () => {} },
+      }),
+    );
+
+    expect(result.outcome).toBe("escalated");
+    expect(createCalls).toBe(1);
+    expect(comments.at(-1)).toContain("Requires authentication");
   });
 
   it("completes the merge on resume once the existing PR is merged", async () => {

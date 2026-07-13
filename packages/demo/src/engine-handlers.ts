@@ -17,6 +17,7 @@ import {
 import type { IssueStatusLabels } from "@aigile/config";
 import { runAssignedDeepReview } from "@aigile/roles";
 import { reviewRoleForChangedFiles, type WorkflowCommandHandlers } from "@aigile/workflow";
+import { withPublishRetry, type PublishRetryOptions } from "@aigile/workspace";
 import { resolveMergePolicy, type MergePolicy } from "./merge-policy.js";
 import { syncIssueStatusForState } from "./status-sync.js";
 
@@ -42,6 +43,7 @@ export interface EngineHandlerDeps {
   mergePolicy?: MergePolicy;
   issueTracker?: IssueTrackerAdapter;
   issueStatusLabels?: Partial<IssueStatusLabels>;
+  publishRetry?: PublishRetryOptions;
 }
 
 const findLatestByKind = (
@@ -406,14 +408,19 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
           const attempt = findLatestByKind(ctx.artifacts, "developer.attempt");
           const verdict = findLatestByKind(ctx.artifacts, "checker.verdict");
 
-          const pr = await codeHost.createPullRequest({
-            owner: pullRequestTarget.owner,
-            repo: pullRequestTarget.repo,
-            branch: branchName,
-            baseBranch: pullRequestTarget.baseBranch,
-            title: `${issue.key} ${issue.title}`,
-            body: pullRequestBody(issue, plan, attempt, verdict),
-          });
+          const pr = await withPublishRetry(
+            "create pull request",
+            () =>
+              codeHost.createPullRequest({
+                owner: pullRequestTarget.owner,
+                repo: pullRequestTarget.repo,
+                branch: branchName,
+                baseBranch: pullRequestTarget.baseBranch,
+                title: `${issue.key} ${issue.title}`,
+                body: pullRequestBody(issue, plan, attempt, verdict),
+              }),
+            deps.publishRetry,
+          );
           if (attempt !== undefined && isDeveloperAttemptPayload(attempt.payload)) {
             await codeHost.appendPullRequestComment(
               pr.id,
