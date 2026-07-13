@@ -877,7 +877,7 @@ describe("cli formatting", () => {
     });
   });
 
-  it("resolves product defaults for Linear watch runs", () => {
+  it("resolves product defaults for Linear watch runs", async () => {
     const config = loadProductConfigFromJson(
       JSON.stringify({
         products: [
@@ -892,7 +892,7 @@ describe("cli formatting", () => {
     );
 
     expect(
-      resolveProductCliContext(
+      await resolveProductCliContext(
         parseCliArgs([
           "watch",
           "--linear",
@@ -913,6 +913,7 @@ describe("cli formatting", () => {
       githubRepo: "lbelyaev/aigile",
       githubOwner: "lbelyaev",
       githubRepository: "aigile",
+      remote: "origin",
       baseBranch: "main",
       repoPath: "/repo/aigile",
       worktreesPath: "/home/test/.aigile/worktrees/lbelyaev/aigile",
@@ -923,7 +924,7 @@ describe("cli formatting", () => {
     });
   });
 
-  it("resolves every product from products config when watch omits --product", () => {
+  it("resolves every product from products config when watch omits --product", async () => {
     const config = loadProductConfigFromJson(
       JSON.stringify({
         products: [
@@ -949,7 +950,7 @@ describe("cli formatting", () => {
     );
 
     expect(
-      resolveProductCliContexts(
+      await resolveProductCliContexts(
         parseCliArgs([
           "watch",
           "--linear",
@@ -968,6 +969,7 @@ describe("cli formatting", () => {
         linearTeam: "LBE",
         linearProject: "Web",
         githubRepo: "lbelyaev/web",
+        remote: "origin",
         baseBranch: "main",
         repoPath: "/repo/web",
         worktreesPath: "/worktrees/web",
@@ -980,6 +982,7 @@ describe("cli formatting", () => {
         linearTeam: "LBE",
         linearProject: "API",
         githubRepo: "lbelyaev/api",
+        remote: "origin",
         baseBranch: "develop",
         repoPath: "/repo/api",
         worktreesPath: "/worktrees/api",
@@ -991,7 +994,7 @@ describe("cli formatting", () => {
     ]);
   });
 
-  it("resolves product defaults and verification policy for direct runs", () => {
+  it("resolves product defaults and verification policy for direct runs", async () => {
     const config = loadProductConfigFromJson(
       JSON.stringify({
         products: [
@@ -1012,7 +1015,7 @@ describe("cli formatting", () => {
     );
 
     expect(
-      resolveProductCliContext(
+      await resolveProductCliContext(
         parseCliArgs([
           "run",
           "LBE-27",
@@ -1032,6 +1035,7 @@ describe("cli formatting", () => {
       githubRepo: "lbelyaev/aigile",
       githubOwner: "lbelyaev",
       githubRepository: "aigile",
+      remote: "origin",
       baseBranch: "main",
       repoPath: "/repo/aigile",
       worktreesPath: "/worktrees/aigile",
@@ -1046,19 +1050,148 @@ describe("cli formatting", () => {
     });
   });
 
-  it("reports a setup hint when the default product config file is missing", () => {
-    expect(() =>
+  it("selects the sole product without --product and honors defaultRun mode", async () => {
+    const config = loadProductConfigFromJson(
+      JSON.stringify({
+        products: [
+          {
+            id: "aigile",
+            linear: { team: "LBE", project: "Aigile" },
+            github: { repo: "lbelyaev/aigile", baseBranch: "main" },
+            repoPath: "/repo/aigile",
+            worktreesPath: "/worktrees/aigile",
+            defaultRun: { startRun: true, mode: "agent_write", publish: true },
+          },
+        ],
+      }),
+    );
+
+    expect(
+      await resolveProductCliContext(
+        parseCliArgs([
+          "run",
+          "LBE-38",
+          "--linear",
+          "--runtime-config",
+          "config/aigile.runtimes.example.json",
+        ]),
+        config,
+      ),
+    ).toMatchObject({
+      productId: "aigile",
+      linearTeam: "LBE",
+      githubRepo: "lbelyaev/aigile",
+      remote: "origin",
+      baseBranch: "main",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/worktrees/aigile",
+      dryRun: false,
+      agentWrite: true,
+      publish: true,
+      startRun: true,
+    });
+  });
+
+  it("selects a product by issue key team prefix without --product", async () => {
+    const config = loadProductConfigFromJson(
+      JSON.stringify({
+        products: [
+          {
+            id: "web",
+            linear: { team: "WEB", project: "Web" },
+            github: { repo: "lbelyaev/web", baseBranch: "main" },
+            defaultRun: { startRun: true, mode: "agent_write", publish: false },
+          },
+          {
+            id: "api",
+            linear: { team: "API", project: "API" },
+            github: { repo: "lbelyaev/api", baseBranch: "develop" },
+            repoPath: "/repo/api",
+            worktreesPath: "/worktrees/api",
+            defaultRun: { startRun: true, mode: "dry_run", publish: false },
+          },
+        ],
+      }),
+    );
+
+    expect(
+      await resolveProductCliContext(
+        parseCliArgs([
+          "run",
+          "API-42",
+          "--linear",
+          "--runtime-config",
+          "config/aigile.runtimes.example.json",
+        ]),
+        config,
+      ),
+    ).toMatchObject({
+      productId: "api",
+      linearTeam: "API",
+      githubRepo: "lbelyaev/api",
+      baseBranch: "develop",
+      repoPath: "/repo/api",
+      worktreesPath: "/worktrees/api",
+      dryRun: true,
+      agentWrite: false,
+    });
+  });
+
+  it("derives github repo and base branch from git remote defaults", async () => {
+    const calls: Array<{ command: string; args: string[]; cwd: string }> = [];
+
+    const context = await resolveProductCliContext(
+      parseCliArgs(["run", "LBE-38", "--linear", "--products-config", "/missing/products.json"]),
+      undefined,
+      {
+        cwd: "/repo/aigile",
+        exec: async (command, args, options) => {
+          calls.push({ command, args: [...args], cwd: options.cwd });
+          if (command === "git" && args[0] === "remote") {
+            return { stdout: "git@github.com:lbelyaev/aigile.git\n", stderr: "", exitCode: 0 };
+          }
+          if (command === "git" && args[0] === "symbolic-ref") {
+            return { stdout: "refs/remotes/origin/trunk\n", stderr: "", exitCode: 0 };
+          }
+          throw new Error("unexpected command");
+        },
+      },
+    );
+
+    expect(context).toMatchObject({
+      githubRepo: "lbelyaev/aigile",
+      githubOwner: "lbelyaev",
+      githubRepository: "aigile",
+      remote: "origin",
+      baseBranch: "trunk",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      dryRun: false,
+      agentWrite: false,
+    });
+    expect(calls).toEqual([
+      { command: "git", args: ["remote", "get-url", "origin"], cwd: "/repo/aigile" },
+      {
+        command: "git",
+        args: ["symbolic-ref", "refs/remotes/origin/HEAD"],
+        cwd: "/repo/aigile",
+      },
+    ]);
+  });
+
+  it("reports a setup hint when the default product config file is missing", async () => {
+    await expect(
       resolveProductCliContext(
         parseCliArgs(["watch", "--linear", "--product", "aigile", "--poll-interval", "30s"]),
         undefined,
         { cwd: "/repo/aigile", homeDir: "/home/test" },
       ),
-    ).toThrow(
+    ).rejects.toThrow(
       /product config not found: config\/aigile\.products\.json\. Pass --products-config <path> or create config\/aigile\.products\.json from config\/aigile\.products\.example\.json/,
     );
   });
 
-  it("lets explicit CLI flags override product defaults", () => {
+  it("lets explicit CLI flags override product defaults", async () => {
     const config = loadProductConfigFromJson(
       JSON.stringify({
         products: [
@@ -1075,7 +1208,7 @@ describe("cli formatting", () => {
     );
 
     expect(
-      resolveProductCliContext(
+      await resolveProductCliContext(
         parseCliArgs([
           "watch",
           "--linear",
@@ -1087,6 +1220,8 @@ describe("cli formatting", () => {
           "acme/project",
           "--base-branch",
           "develop",
+          "--remote",
+          "upstream",
           "--repo",
           "/override/repo",
           "--worktrees",
@@ -1104,6 +1239,7 @@ describe("cli formatting", () => {
       githubRepo: "acme/project",
       githubOwner: "acme",
       githubRepository: "project",
+      remote: "upstream",
       baseBranch: "develop",
       repoPath: "/override/repo",
       worktreesPath: "/override/worktrees",
@@ -1145,7 +1281,7 @@ describe("cli formatting", () => {
         "--start-run",
       ]),
     ).toThrow(/requires --runtime-config/i);
-    expect(() =>
+    expect(
       parseCliArgs([
         "watch",
         "--linear",
@@ -1157,7 +1293,14 @@ describe("cli formatting", () => {
         "--runtime-config",
         "config/aigile.runtimes.example.json",
       ]),
-    ).toThrow(/requires --dry-run or --agent-write/i);
+    ).toEqual({
+      mode: "watch",
+      linear: true,
+      linearTeam: "LBE",
+      pollIntervalMs: 30_000,
+      startRun: true,
+      runtimeConfigPath: "config/aigile.runtimes.example.json",
+    });
   });
 
   it("runs a local watch-once claim without starting agents", async () => {

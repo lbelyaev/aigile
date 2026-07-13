@@ -342,6 +342,7 @@ export interface CliArgs {
 export interface ProductCliResolutionOptions {
   cwd?: string;
   homeDir?: string;
+  exec?: ExecCommand;
 }
 
 export interface ResolvedProductCliContext {
@@ -351,6 +352,7 @@ export interface ResolvedProductCliContext {
   githubRepo?: string;
   githubOwner?: string;
   githubRepository?: string;
+  remote: string;
   baseBranch: string;
   repoPath: string;
   worktreesPath: string;
@@ -361,21 +363,64 @@ export interface ResolvedProductCliContext {
   verification?: ProductVerificationPolicy;
 }
 
-const resolveProductCliContextForProduct = (
+const parseRemoteHeadBranch = (remote: string, ref: string): string | undefined => {
+  const trimmed = ref.trim();
+  const prefix = `refs/remotes/${remote}/`;
+  if (!trimmed.startsWith(prefix)) return undefined;
+  const branch = trimmed.slice(prefix.length);
+  return branch.length > 0 && branch !== "HEAD" ? branch : undefined;
+};
+
+const resolveGitRemoteUrl = async (
+  repoPath: string,
+  remote: string,
+  exec: ExecCommand,
+): Promise<string | undefined> => {
+  const result = await exec("git", ["remote", "get-url", remote], { cwd: repoPath });
+  return result.exitCode === 0 ? result.stdout.trim() : undefined;
+};
+
+const resolveGitRemoteHeadBranch = async (
+  repoPath: string,
+  remote: string,
+  exec: ExecCommand,
+): Promise<string | undefined> => {
+  const result = await exec("git", ["symbolic-ref", `refs/remotes/${remote}/HEAD`], {
+    cwd: repoPath,
+  });
+  return result.exitCode === 0 ? parseRemoteHeadBranch(remote, result.stdout) : undefined;
+};
+
+const resolveProductCliContextForProduct = async (
   args: CliArgs,
   product: RuntimeProduct | undefined,
   options: ProductCliResolutionOptions = {},
-): ResolvedProductCliContext => {
+): Promise<ResolvedProductCliContext> => {
+  const cwd = options.cwd ?? process.cwd();
+  const remote = args.remote ?? "origin";
   const productPaths =
     product === undefined
       ? undefined
       : resolveProductPaths(product, {
-          cwd: options.cwd ?? process.cwd(),
+          cwd,
           ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
         });
   const linearTeam = args.linearTeam ?? product?.linear.team;
-  const githubRepo = args.githubRepo ?? product?.github.repo;
+  const repoPath = args.repoPath ?? productPaths?.repoPath ?? cwd;
+  const exec = options.exec ?? defaultExecCommand;
+  const githubRepo =
+    args.githubRepo ??
+    product?.github.repo ??
+    (await (async (): Promise<string | undefined> => {
+      const remoteUrl = await resolveGitRemoteUrl(repoPath, remote, exec);
+      return remoteUrl === undefined ? undefined : parseGitHubRepoFromRemoteUrl(remoteUrl);
+    })());
   const githubParts = githubRepo === undefined ? undefined : splitGithubRepo(githubRepo);
+  const baseBranch =
+    args.baseBranch ??
+    product?.github.baseBranch ??
+    (await resolveGitRemoteHeadBranch(repoPath, remote, exec)) ??
+    "main";
   const mode =
     args.dryRun === true
       ? "dry_run"
@@ -390,12 +435,10 @@ const resolveProductCliContextForProduct = (
     ...(githubParts === undefined
       ? {}
       : { githubOwner: githubParts.owner, githubRepository: githubParts.repo }),
-    baseBranch: args.baseBranch ?? product?.github.baseBranch ?? "main",
-    repoPath: args.repoPath ?? productPaths?.repoPath ?? options.cwd ?? process.cwd(),
-    worktreesPath:
-      args.worktreesPath ??
-      productPaths?.worktreesPath ??
-      `${options.cwd ?? process.cwd()}/.worktrees`,
+    remote,
+    baseBranch,
+    repoPath,
+    worktreesPath: args.worktreesPath ?? productPaths?.worktreesPath ?? `${cwd}/.worktrees`,
     dryRun: mode === "dry_run",
     agentWrite: mode === "agent_write",
     publish: args.publish ?? product?.defaultRun.publish ?? false,
@@ -435,11 +478,25 @@ export const parseGitHubRepoFromRemoteUrl = (remoteUrl: string): string | undefi
   return sshUrlMatch?.[1];
 };
 
-export const resolveProductCliContext = (
+const productMatchesIssueKey = (product: RuntimeProduct, issueKey: string | undefined): boolean => {
+  if (issueKey === undefined) return false;
+  return issueKey.toUpperCase().startsWith(`${product.linear.team.toUpperCase()}-`);
+};
+
+const selectImplicitProductConfig = (
+  config: RuntimeProductConfig,
+  issueKey: string | undefined,
+): RuntimeProduct | undefined => {
+  if (config.products.length === 1) return config.products[0];
+  const matches = config.products.filter((product) => productMatchesIssueKey(product, issueKey));
+  return matches.length === 1 ? matches[0] : undefined;
+};
+
+export const resolveProductCliContext = async (
   args: CliArgs,
   productConfig?: RuntimeProductConfig,
   options: ProductCliResolutionOptions = {},
-): ResolvedProductCliContext => {
+): Promise<ResolvedProductCliContext> => {
   const productsConfigPath = args.productsConfigPath ?? "config/aigile.products.json";
   if (
     args.product !== undefined &&
@@ -450,32 +507,34 @@ export const resolveProductCliContext = (
       `product config not found: ${productsConfigPath}. Pass --products-config <path> or create config/aigile.products.json from config/aigile.products.example.json.`,
     );
   }
+  const loadedConfig =
+    productConfig ??
+    (args.product !== undefined || existsSync(productsConfigPath)
+      ? loadProductConfigFromFile(productsConfigPath)
+      : undefined);
   const product =
     args.product === undefined
-      ? undefined
-      : findProductConfig(
-          productConfig ?? loadProductConfigFromFile(productsConfigPath),
-          args.product,
-        );
+      ? loadedConfig === undefined
+        ? undefined
+        : selectImplicitProductConfig(loadedConfig, args.issueKey)
+      : findProductConfig(loadedConfig!, args.product);
   return resolveProductCliContextForProduct(args, product, options);
 };
 
-export const resolveProductCliContexts = (
+export const resolveProductCliContexts = async (
   args: CliArgs,
   productConfig?: RuntimeProductConfig,
   options: ProductCliResolutionOptions = {},
-): ResolvedProductCliContext[] => {
-  if (args.product !== undefined) return [resolveProductCliContext(args, productConfig, options)];
-  if (args.productsConfigPath === undefined && productConfig === undefined) {
-    return [resolveProductCliContext(args, productConfig, options)];
-  }
+): Promise<ResolvedProductCliContext[]> => {
+  if (args.product !== undefined)
+    return [await resolveProductCliContext(args, productConfig, options)];
   const productsConfigPath = args.productsConfigPath ?? "config/aigile.products.json";
   if (productConfig === undefined && !existsSync(productsConfigPath)) {
-    return [resolveProductCliContext(args, productConfig, options)];
+    return [await resolveProductCliContext(args, productConfig, options)];
   }
   const config = productConfig ?? loadProductConfigFromFile(productsConfigPath);
-  return config.products.map((product) =>
-    resolveProductCliContextForProduct(args, product, options),
+  return Promise.all(
+    config.products.map((product) => resolveProductCliContextForProduct(args, product, options)),
   );
 };
 
@@ -1377,9 +1436,6 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
         throw new Error("watch --start-run requires --poll-interval");
       if (parsed.runtimeConfigPath === undefined)
         throw new Error("watch --start-run requires --runtime-config");
-      if (parsed.product === undefined && parsed.dryRun !== true && parsed.agentWrite !== true) {
-        throw new Error("watch --start-run requires --dry-run or --agent-write");
-      }
     }
     if (progressLevel !== undefined) parsed.progressLevel = progressLevel;
     return parsed;
@@ -1661,7 +1717,7 @@ const main = async (): Promise<void> => {
     process.stdout.write(`${formatDemoResult(result)}\n`);
     return;
   }
-  const runContext = args.mode === "run" ? resolveProductCliContext(args) : undefined;
+  const runContext = args.mode === "run" ? await resolveProductCliContext(args) : undefined;
   const linearApiKey = (command: "run" | "watch" | "reconcile"): string => {
     const apiKeyEnv = args.linearApiKeyEnv ?? "LINEAR_API_KEY";
     const apiKey = process.env[apiKeyEnv];
@@ -1719,7 +1775,7 @@ const main = async (): Promise<void> => {
   if (runContext !== undefined) runInput.baseBranch = runContext.baseBranch;
   else if (args.baseBranch !== undefined) runInput.baseBranch = args.baseBranch;
   if (args.mode === "watch") {
-    const watchContexts = resolveProductCliContexts(args);
+    const watchContexts = await resolveProductCliContexts(args);
     const watchContext = watchContexts[0];
     if (watchContext === undefined) throw new Error("watch requires at least one product route");
     const watchProductRoutes = watchContexts
@@ -1815,7 +1871,7 @@ const main = async (): Promise<void> => {
               "publish" | "remote" | "pullRequestTarget" | "codeHost"
             > = {};
             if (context.publish === true && context.dryRun !== true) {
-              const remote = args.remote ?? "origin";
+              const remote = context.remote;
               const publishPreflightInput: PublishPreflightInput = {
                 repoPath: context.repoPath,
                 remote,
@@ -1840,7 +1896,7 @@ const main = async (): Promise<void> => {
               });
             } else if (context.publish === true) {
               publishRunInput.publish = true;
-              publishRunInput.remote = args.remote ?? "origin";
+              publishRunInput.remote = context.remote;
               if (context.githubOwner !== undefined && context.githubRepository !== undefined) {
                 publishRunInput.pullRequestTarget = {
                   owner: context.githubOwner,
@@ -1963,7 +2019,7 @@ const main = async (): Promise<void> => {
       "publish" | "remote" | "pullRequestTarget" | "codeHost"
     > = {};
     if (runContext?.publish === true && runContext.dryRun !== true) {
-      const remote = args.remote ?? "origin";
+      const remote = runContext.remote;
       const publishPreflightInput: PublishPreflightInput = {
         repoPath: runContext.repoPath,
         remote,
@@ -1988,7 +2044,7 @@ const main = async (): Promise<void> => {
       });
     } else if (runContext?.publish === true) {
       publishRunInput.publish = true;
-      publishRunInput.remote = args.remote ?? "origin";
+      publishRunInput.remote = runContext.remote;
       if (runContext.githubOwner !== undefined && runContext.githubRepository !== undefined) {
         publishRunInput.pullRequestTarget = {
           owner: runContext.githubOwner,
@@ -2050,7 +2106,7 @@ const main = async (): Promise<void> => {
     runInput.createPullRequest = false;
   }
   if (args.mode === "run" && runContext?.publish === true && runContext.dryRun !== true) {
-    const remote = args.remote ?? "origin";
+    const remote = runContext.remote;
     const publishPreflightInput: PublishPreflightInput = {
       repoPath: runContext.repoPath,
       remote,
