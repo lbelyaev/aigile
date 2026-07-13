@@ -1789,6 +1789,26 @@ describe("cli formatting", () => {
     expect(calls.filter((call) => call.query.includes("commentCreate"))).toHaveLength(1);
   });
 
+  it("prints a single idle heartbeat for consecutive idle Linear polls", async () => {
+    const output = await runLinearWatchLoopCli({
+      apiKey: "test-key",
+      teamKey: "LBE",
+      readyStatus: "Todo",
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 3,
+      sleep: async () => {},
+      fetchGraphql: async (query) => {
+        if (query.includes("ReadyIssues")) return { issues: { nodes: [] } };
+        return {};
+      },
+    });
+
+    expect(output).toContain("Poll 1: idle heartbeat; ready issues: 0");
+    expect(output).not.toContain("Poll 2: idle heartbeat");
+    expect(output).not.toContain("Poll 3: idle heartbeat");
+  });
+
   it("formats daemon startup output for configured products", () => {
     expect(
       formatDaemonStartupSummary(

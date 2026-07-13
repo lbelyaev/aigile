@@ -13,6 +13,7 @@ import {
 } from "@aigile/adapters";
 import {
   DEFAULT_ISSUE_STATUS_LABELS,
+  DEFAULT_MAX_CONCURRENT_RUNS,
   defaultProductWorktreesPath,
   expandHomePath,
   findProductConfig,
@@ -354,6 +355,7 @@ export interface ProductCliResolutionOptions {
 }
 
 export interface ResolvedProductCliContext {
+  globalMaxConcurrentRuns?: number;
   productId?: string;
   linearTeam?: string;
   linearProject?: string;
@@ -368,6 +370,7 @@ export interface ResolvedProductCliContext {
   agentWrite: boolean;
   publish: boolean;
   startRun: boolean;
+  maxConcurrentRuns?: number;
   packageManager?: string;
   verification?: ProductVerificationPolicy;
 }
@@ -404,6 +407,7 @@ const resolveProductCliContextForProduct = async (
   args: CliArgs,
   product: RuntimeProduct | undefined,
   options: ProductCliResolutionOptions = {},
+  globalMaxConcurrentRuns?: number,
 ): Promise<ResolvedProductCliContext> => {
   const cwd = options.cwd ?? process.cwd();
   const homeDir = options.homeDir;
@@ -439,6 +443,7 @@ const resolveProductCliContextForProduct = async (
         ? "agent_write"
         : product?.defaultRun.mode;
   return {
+    ...(globalMaxConcurrentRuns === undefined ? {} : { globalMaxConcurrentRuns }),
     ...(product === undefined ? {} : { productId: product.id }),
     ...(linearTeam === undefined ? {} : { linearTeam }),
     ...(product?.linear.project === undefined ? {} : { linearProject: product.linear.project }),
@@ -459,6 +464,9 @@ const resolveProductCliContextForProduct = async (
     agentWrite: mode === "agent_write",
     publish: args.publish ?? product?.defaultRun.publish ?? false,
     startRun: args.startRun ?? product?.defaultRun.startRun ?? false,
+    ...(product?.maxConcurrentRuns === undefined
+      ? {}
+      : { maxConcurrentRuns: product.maxConcurrentRuns }),
     ...(product?.packageManager === undefined ? {} : { packageManager: product.packageManager }),
     ...(product?.verification === undefined ? {} : { verification: product.verification }),
   };
@@ -549,7 +557,14 @@ export const resolveProductCliContext = async (
           })()
         : selectImplicitProductConfig(loadedConfig, args.issueKey)
       : findProductConfig(loadedConfig!, args.product);
-  return resolveProductCliContextForProduct(args, product, options);
+  return resolveProductCliContextForProduct(
+    args,
+    product,
+    options,
+    loadedConfig?.maxConcurrentRuns === DEFAULT_MAX_CONCURRENT_RUNS
+      ? undefined
+      : loadedConfig?.maxConcurrentRuns,
+  );
 };
 
 export const resolveProductCliContexts = async (
@@ -565,7 +580,16 @@ export const resolveProductCliContexts = async (
   }
   const config = productConfig ?? loadProductConfigFromFile(productsConfigPath);
   return Promise.all(
-    config.products.map((product) => resolveProductCliContextForProduct(args, product, options)),
+    config.products.map((product) =>
+      resolveProductCliContextForProduct(
+        args,
+        product,
+        options,
+        config.maxConcurrentRuns === DEFAULT_MAX_CONCURRENT_RUNS
+          ? undefined
+          : config.maxConcurrentRuns,
+      ),
+    ),
   );
 };
 
@@ -808,6 +832,8 @@ export interface LinearWatchLoopCliInput extends LinearWatchOnceCliInput {
   productRoutes?: readonly WatchProductRoute[];
   pollIntervalMs: number;
   maxPolls?: number;
+  maxConcurrentRuns?: number;
+  productMaxConcurrentRuns?: Readonly<Record<string, number>>;
   signal?: AbortSignal;
   sleep?: (durationMs: number, signal?: AbortSignal) => Promise<void>;
   onLine?: (line: string) => void;
@@ -1108,7 +1134,9 @@ const formatWatchLoopEvent = (event: WatchLoopEvent): string | undefined => {
   if (event.type === "issue_skipped") {
     return `Poll ${event.poll}: skipped ${event.issueKey} (${event.reason})`;
   }
-  if (event.type === "poll_idle") return undefined;
+  if (event.type === "poll_idle") {
+    return `Poll ${event.poll}: idle heartbeat; ready issues: ${event.readyCount}`;
+  }
   if (event.type === "issue_claimed") {
     return `Poll ${event.poll}: claimed ${event.issueKey} (ready issues: ${event.readyCount})${routeSuffix(event.selectedRoute)}`;
   }
@@ -1232,6 +1260,12 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
     ...(input.resume === undefined ? {} : { resume: input.resume }),
     ...(productRoutes === undefined ? {} : { productRoutes }),
     ...(input.maxPolls === undefined ? {} : { maxPolls: input.maxPolls }),
+    ...(input.maxConcurrentRuns === undefined
+      ? {}
+      : { maxConcurrentRuns: input.maxConcurrentRuns }),
+    ...(input.productMaxConcurrentRuns === undefined
+      ? {}
+      : { productMaxConcurrentRuns: input.productMaxConcurrentRuns }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
     ...(input.sleep === undefined ? {} : { sleep: input.sleep }),
     onEvent: (event) => {
@@ -1278,10 +1312,13 @@ export const formatDaemonStartupSummary = (
         `- ${daemonValue(context.productId)} linear-team=${daemonValue(context.linearTeam)} linear-project=${daemonValue(context.linearProject)} github-repo=${daemonValue(context.githubRepo)}`,
     ),
     `Poll interval: ${input.pollIntervalMs}ms`,
+    ...(contexts.some((context) => context.globalMaxConcurrentRuns !== undefined)
+      ? [`Max concurrent runs: ${contexts[0]?.globalMaxConcurrentRuns}`]
+      : []),
     "Run defaults:",
     ...contexts.map(
       (context) =>
-        `- ${daemonValue(context.productId)} mode=${daemonRunMode(context)} publish=${context.publish} start-run=${context.startRun}`,
+        `- ${daemonValue(context.productId)} mode=${daemonRunMode(context)} publish=${context.publish} start-run=${context.startRun}${context.maxConcurrentRuns === undefined ? "" : ` max-concurrent-runs=${context.maxConcurrentRuns}`}`,
     ),
   ].join("\n");
 
@@ -1299,6 +1336,7 @@ export interface LinearDaemonSupervisorCliInput {
 const productConfigForDaemonStartup = (
   contexts: readonly ResolvedProductCliContext[],
 ): RuntimeProductConfig => ({
+  maxConcurrentRuns: contexts[0]?.globalMaxConcurrentRuns ?? DEFAULT_MAX_CONCURRENT_RUNS,
   products: contexts.flatMap((context): RuntimeProduct[] => {
     if (
       context.publish !== true ||
@@ -1316,6 +1354,9 @@ const productConfigForDaemonStartup = (
         github: { repo: context.githubRepo, baseBranch: context.baseBranch },
         repoPath: context.repoPath,
         worktreesPath: context.worktreesPath,
+        ...(context.maxConcurrentRuns === undefined
+          ? {}
+          : { maxConcurrentRuns: context.maxConcurrentRuns }),
         defaultRun: {
           startRun: context.startRun,
           mode: context.agentWrite ? "agent_write" : "dry_run",
@@ -2169,6 +2210,24 @@ const main = async (): Promise<void> => {
         if (args.readyStatus !== undefined) loopInput.readyStatus = args.readyStatus;
         if (args.claimStatus !== undefined) loopInput.claimStatus = args.claimStatus;
         if (args.maxPolls !== undefined) loopInput.maxPolls = args.maxPolls;
+        if (watchContext.globalMaxConcurrentRuns !== undefined) {
+          loopInput.maxConcurrentRuns = watchContext.globalMaxConcurrentRuns;
+        }
+        const productMaxConcurrentRuns = Object.fromEntries(
+          watchContexts
+            .filter(
+              (
+                context,
+              ): context is ResolvedProductCliContext & {
+                productId: string;
+                maxConcurrentRuns: number;
+              } => context.productId !== undefined && context.maxConcurrentRuns !== undefined,
+            )
+            .map((context) => [context.productId, context.maxConcurrentRuns]),
+        );
+        if (Object.keys(productMaxConcurrentRuns).length > 0) {
+          loopInput.productMaxConcurrentRuns = productMaxConcurrentRuns;
+        }
         if (watchContexts.some((context) => context.startRun)) {
           if (runtimeConfigPath === undefined)
             throw new Error(`${command} --start-run requires --runtime-config`);

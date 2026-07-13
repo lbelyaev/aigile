@@ -82,6 +82,9 @@ export type WatchLoopEvent =
 export interface WatchLoopInput extends WatchOnceInput {
   pollIntervalMs: number;
   maxPolls?: number;
+  maxConcurrentRuns?: number;
+  productMaxConcurrentRuns?: Readonly<Record<string, number>>;
+  idleHeartbeatPolls?: number;
   signal?: AbortSignal;
   sleep?: (durationMs: number, signal?: AbortSignal) => Promise<void>;
   onEvent?: (event: WatchLoopEvent) => void;
@@ -120,6 +123,8 @@ export interface RoutedReadyIssue {
 
 const defaultClaimStatus = "aigile:claimed";
 const defaultClaimComment = "Aigile claimed this issue for local processing.";
+const defaultMaxConcurrentRuns = 1;
+const defaultIdleHeartbeatPolls = 30;
 
 const defaultSleep = async (durationMs: number, signal?: AbortSignal): Promise<void> => {
   if (signal?.aborted) return;
@@ -292,10 +297,107 @@ export const watchOnce = async (input: WatchOnceInput): Promise<WatchOnceResult>
   };
 };
 
+const assertPositiveInteger = (value: number, context: string): void => {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${context} must be a positive integer`);
+  }
+};
+
+const productConcurrencyKey = (route: WatchProductRoute | undefined): string =>
+  route?.productId ?? "";
+
 export const watchLoop = async (input: WatchLoopInput): Promise<void> => {
   const claimedKeys = new Set<string>();
   const sleep = input.sleep ?? defaultSleep;
+  const maxConcurrentRuns = input.maxConcurrentRuns ?? defaultMaxConcurrentRuns;
+  const idleHeartbeatPolls = input.idleHeartbeatPolls ?? defaultIdleHeartbeatPolls;
+  assertPositiveInteger(maxConcurrentRuns, "maxConcurrentRuns");
+  assertPositiveInteger(idleHeartbeatPolls, "idleHeartbeatPolls");
+  for (const [productId, limit] of Object.entries(input.productMaxConcurrentRuns ?? {})) {
+    assertPositiveInteger(limit, `productMaxConcurrentRuns.${productId}`);
+  }
+  const activeByProduct = new Map<string, number>();
+  let activeRuns = 0;
+  let lastIdleEventPoll: number | undefined;
   let polls = 0;
+
+  const hasCapacity = (route: WatchProductRoute | undefined): boolean => {
+    if (activeRuns >= maxConcurrentRuns) return false;
+    const productId = productConcurrencyKey(route);
+    const productLimit = input.productMaxConcurrentRuns?.[productId];
+    return productLimit === undefined || (activeByProduct.get(productId) ?? 0) < productLimit;
+  };
+
+  const emitIdleHeartbeat = (readyCount: number): void => {
+    if (lastIdleEventPoll === undefined || polls - lastIdleEventPoll >= idleHeartbeatPolls) {
+      input.onEvent?.({ type: "poll_idle", poll: polls, readyCount });
+      lastIdleEventPoll = polls;
+    }
+  };
+
+  const claimRoutedIssue = async (
+    selected: RoutedReadyIssue,
+    readyCount: number,
+    skippedActions: readonly string[],
+    skippedIssues: readonly WatchSkippedIssue[],
+  ): Promise<WatchOnceResult> => {
+    const issue = selected.issue;
+    const claimStatus = input.claimStatus ?? defaultClaimStatus;
+    const claimComment = input.claimComment ?? defaultClaimComment;
+    const hasClaimComment = issue.comments.includes(claimComment);
+    await input.tracker.updateIssueStatus(issue.key, claimStatus);
+    if (!hasClaimComment) {
+      await input.tracker.appendIssueComment(issue.key, claimComment);
+    }
+    return {
+      readyCount,
+      claimedIssue: issue,
+      ...(input.productRoutes === undefined || input.productRoutes.length === 0
+        ? {}
+        : { selectedRoute: selected.route }),
+      ...(skippedIssues.length === 0 ? {} : { skippedIssues: [...skippedIssues] }),
+      actions: hasClaimComment
+        ? [...skippedActions, `status:${issue.key}:${claimStatus}`]
+        : [...skippedActions, `status:${issue.key}:${claimStatus}`, `comment:${issue.key}`],
+    };
+  };
+
+  const startClaimedRun = (
+    issue: IssueRecord,
+    route: WatchProductRoute | undefined,
+    claimPoll: number,
+  ): void => {
+    const productId = productConcurrencyKey(route);
+    activeRuns += 1;
+    activeByProduct.set(productId, (activeByProduct.get(productId) ?? 0) + 1);
+    void (async () => {
+      try {
+        await input.onClaimedIssue?.(issue, route);
+      } catch (error) {
+        const outcome = claimedRunFailureOutcome(issue, route, error);
+        const failureComment = formatClaimedRunFailureComment(outcome);
+        const restoreStatus = input.tracker.updateIssueStatus(issue.key, issue.status);
+        const appendFailureComment = input.tracker.appendIssueComment(issue.key, failureComment);
+        input.onEvent?.({
+          type: "claimed_issue_run_failed",
+          poll: claimPoll,
+          issueKey: issue.key,
+          productId: outcome.productId,
+          phase: outcome.phase,
+          message: outcome.message,
+          restoredStatus: issue.status,
+          error: outcome.message,
+          outcome,
+        });
+        await Promise.allSettled([restoreStatus, appendFailureComment]);
+      } finally {
+        activeRuns -= 1;
+        const nextProductActive = (activeByProduct.get(productId) ?? 1) - 1;
+        if (nextProductActive <= 0) activeByProduct.delete(productId);
+        else activeByProduct.set(productId, nextProductActive);
+      }
+    })();
+  };
 
   while (input.signal?.aborted !== true) {
     polls += 1;
@@ -357,16 +459,25 @@ export const watchLoop = async (input: WatchLoopInput): Promise<void> => {
       }
     }
 
-    const result = await watchOnce({
-      source: {
-        listReadyIssues: async () =>
-          (await input.source.listReadyIssues()).filter((issue) => !claimedKeys.has(issue.key)),
-      },
-      tracker: input.tracker,
-      ...(input.claimStatus === undefined ? {} : { claimStatus: input.claimStatus }),
-      ...(input.claimComment === undefined ? {} : { claimComment: input.claimComment }),
-      ...(input.productRoutes === undefined ? {} : { productRoutes: input.productRoutes }),
-    });
+    const listedReadyIssues = (await input.source.listReadyIssues()).filter(
+      (issue) => !claimedKeys.has(issue.key),
+    );
+    const routed = routeReadyIssuesForProducts(listedReadyIssues, input.productRoutes);
+    const skippedActions = routed.skippedIssues.map(skipAction);
+    const selected = routed.readyIssues.find((candidate) => hasCapacity(candidate.route));
+    const result =
+      selected === undefined
+        ? ({
+            readyCount: routed.readyIssues.length,
+            actions: [...skippedActions, "no_ready_issues"],
+            ...(routed.skippedIssues.length === 0 ? {} : { skippedIssues: routed.skippedIssues }),
+          } satisfies WatchOnceResult)
+        : await claimRoutedIssue(
+            selected,
+            routed.readyIssues.length,
+            skippedActions,
+            routed.skippedIssues,
+          );
 
     for (const skippedIssue of result.skippedIssues ?? []) {
       input.onEvent?.({
@@ -378,8 +489,9 @@ export const watchLoop = async (input: WatchLoopInput): Promise<void> => {
     }
 
     if (result.claimedIssue === undefined) {
-      input.onEvent?.({ type: "poll_idle", poll: polls, readyCount: result.readyCount });
+      emitIdleHeartbeat(result.readyCount);
     } else {
+      lastIdleEventPoll = undefined;
       claimedKeys.add(result.claimedIssue.key);
       input.onEvent?.({
         type: "issue_claimed",
@@ -388,35 +500,9 @@ export const watchLoop = async (input: WatchLoopInput): Promise<void> => {
         readyCount: result.readyCount,
         ...(result.selectedRoute === undefined ? {} : { selectedRoute: result.selectedRoute }),
       });
-      try {
-        await input.onClaimedIssue?.(result.claimedIssue, result.selectedRoute);
-      } catch (error) {
-        const outcome = claimedRunFailureOutcome(result.claimedIssue, result.selectedRoute, error);
-        const failureComment = formatClaimedRunFailureComment(outcome);
-        try {
-          await input.tracker.updateIssueStatus(
-            result.claimedIssue.key,
-            result.claimedIssue.status,
-          );
-        } catch {
-          // Failure handling is best-effort; supervisor liveness wins.
-        }
-        try {
-          await input.tracker.appendIssueComment(result.claimedIssue.key, failureComment);
-        } catch {
-          // Failure handling is best-effort; supervisor liveness wins.
-        }
-        input.onEvent?.({
-          type: "claimed_issue_run_failed",
-          poll: polls,
-          issueKey: result.claimedIssue.key,
-          productId: outcome.productId,
-          phase: outcome.phase,
-          message: outcome.message,
-          restoredStatus: result.claimedIssue.status,
-          error: outcome.message,
-          outcome,
-        });
+      startClaimedRun(result.claimedIssue, result.selectedRoute, polls);
+      for (let flush = 0; flush < 5; flush += 1) {
+        await Promise.resolve();
       }
     }
 
