@@ -19,6 +19,32 @@ export interface WatchOnceResult {
 
 export type WatchLoopStopReason = "aborted" | "max_polls";
 
+export type ClaimedRunFailurePhase =
+  | "runtime"
+  | "workspace"
+  | "preflight"
+  | "agent"
+  | "verification"
+  | "publish";
+
+export interface ClaimedRunFailureOutcome {
+  type: "failure";
+  issueKey: string;
+  productId: string;
+  phase: ClaimedRunFailurePhase;
+  message: string;
+}
+
+export class ClaimedRunFailure extends Error {
+  readonly phase: ClaimedRunFailurePhase;
+
+  constructor(phase: ClaimedRunFailurePhase, message: string) {
+    super(message);
+    this.name = "ClaimedRunFailure";
+    this.phase = phase;
+  }
+}
+
 export type WatchLoopEvent =
   | { type: "poll_started"; poll: number }
   | { type: "issue_skipped"; poll: number; issueKey: string; reason: WatchSkipReason }
@@ -34,8 +60,12 @@ export type WatchLoopEvent =
       type: "claimed_issue_run_failed";
       poll: number;
       issueKey: string;
+      productId: string;
+      phase: ClaimedRunFailurePhase;
+      message: string;
       restoredStatus: string;
       error: string;
+      outcome: ClaimedRunFailureOutcome;
     }
   | { type: "issue_status_reconciled"; poll: number; issueKey: string; from: string; to: string }
   | {
@@ -178,6 +208,55 @@ export const routeReadyIssuesForProducts = (
 const skipAction = (skippedIssue: WatchSkippedIssue): string =>
   `skip:${skippedIssue.issueKey}:${skippedIssue.reason}`;
 
+const errorMessage = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.trim().length === 0 ? "unknown run failure" : message;
+};
+
+const inferFailurePhase = (message: string): ClaimedRunFailurePhase => {
+  const lower = message.toLowerCase();
+  if (lower.includes("runtime") || lower.includes("runtime config")) return "runtime";
+  if (
+    lower.includes("worktree") ||
+    lower.includes("workspace") ||
+    lower.includes("branch") ||
+    lower.includes("dirty")
+  ) {
+    return "workspace";
+  }
+  if (lower.includes("preflight") || lower.includes("auth status")) return "preflight";
+  if (lower.includes("verification") || lower.includes("verify")) return "verification";
+  if (
+    lower.includes("publish") ||
+    lower.includes("publication") ||
+    lower.includes("pull request") ||
+    lower.includes("pr create")
+  ) {
+    return "publish";
+  }
+  return "agent";
+};
+
+export const claimedRunFailureOutcome = (
+  issue: IssueRecord,
+  route: WatchProductRoute | undefined,
+  error: unknown,
+): ClaimedRunFailureOutcome => {
+  const message = errorMessage(error);
+  return {
+    type: "failure",
+    issueKey: issue.key,
+    productId: route?.productId ?? "",
+    phase: error instanceof ClaimedRunFailure ? error.phase : inferFailurePhase(message),
+    message,
+  };
+};
+
+export const formatClaimedRunFailureComment = (outcome: ClaimedRunFailureOutcome): string => {
+  const product = outcome.productId.trim().length === 0 ? "unrouted" : outcome.productId;
+  return `Aigile run failed for ${outcome.issueKey} (product: ${product}, phase: ${outcome.phase}): ${outcome.message}`;
+};
+
 export const watchOnce = async (input: WatchOnceInput): Promise<WatchOnceResult> => {
   const readyIssues = await input.source.listReadyIssues();
   const routed = routeReadyIssuesForProducts(readyIssues, input.productRoutes);
@@ -312,13 +391,31 @@ export const watchLoop = async (input: WatchLoopInput): Promise<void> => {
       try {
         await input.onClaimedIssue?.(result.claimedIssue, result.selectedRoute);
       } catch (error) {
-        await input.tracker.updateIssueStatus(result.claimedIssue.key, result.claimedIssue.status);
+        const outcome = claimedRunFailureOutcome(result.claimedIssue, result.selectedRoute, error);
+        const failureComment = formatClaimedRunFailureComment(outcome);
+        try {
+          await input.tracker.updateIssueStatus(
+            result.claimedIssue.key,
+            result.claimedIssue.status,
+          );
+        } catch {
+          // Failure handling is best-effort; supervisor liveness wins.
+        }
+        try {
+          await input.tracker.appendIssueComment(result.claimedIssue.key, failureComment);
+        } catch {
+          // Failure handling is best-effort; supervisor liveness wins.
+        }
         input.onEvent?.({
           type: "claimed_issue_run_failed",
           poll: polls,
           issueKey: result.claimedIssue.key,
+          productId: outcome.productId,
+          phase: outcome.phase,
+          message: outcome.message,
           restoredStatus: result.claimedIssue.status,
-          error: error instanceof Error ? error.message : String(error),
+          error: outcome.message,
+          outcome,
         });
       }
     }

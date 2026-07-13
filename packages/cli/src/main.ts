@@ -49,6 +49,7 @@ import type {
 import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
 import { isArchitectPlanPayload, type WorkflowArtifact } from "@aigile/types";
 import {
+  ClaimedRunFailure,
   defaultClaimComment,
   ingestExternalReviewFeedback,
   reconcileIssueStatus,
@@ -936,7 +937,14 @@ export const runLinearIssueWorkflowCli = async (
       ? { apiKey: input.apiKey, issueKey: input.issueKey }
       : { apiKey: input.apiKey, issueKey: input.issueKey, fetchGraphql },
   );
-  const runtimeConfig = loadRuntimeConfigFromJson(readFileSync(input.runtimeConfigPath, "utf8"));
+  const runtimeConfig = (() => {
+    try {
+      return loadRuntimeConfigFromJson(readFileSync(input.runtimeConfigPath, "utf8"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ClaimedRunFailure("runtime", message);
+    }
+  })();
   const runInput: DemoWorkspaceInput = {
     issue,
     repoPath: input.repoPath,
@@ -1105,7 +1113,8 @@ const formatWatchLoopEvent = (event: WatchLoopEvent): string | undefined => {
     return `Poll ${event.poll}: claimed ${event.issueKey} (ready issues: ${event.readyCount})${routeSuffix(event.selectedRoute)}`;
   }
   if (event.type === "claimed_issue_run_failed") {
-    return `Poll ${event.poll}: run failed for ${event.issueKey}; restored status to ${event.restoredStatus}: ${event.error}`;
+    const product = event.productId.trim().length === 0 ? "unrouted" : event.productId;
+    return `Poll ${event.poll}: run failed for ${event.issueKey} product: ${product} phase: ${event.phase}; restored status to ${event.restoredStatus}: ${event.message}`;
   }
   if (event.type === "issue_status_reconciled") {
     return `Poll ${event.poll}: reconciled ${event.issueKey} (${event.from} -> ${event.to})`;
@@ -1126,6 +1135,24 @@ const runResultStateLine = (output: string): string | undefined =>
   output
     .split("\n")
     .find((line) => line.startsWith("Final state:") || line.startsWith("Workflow state:"));
+
+const runFailureFromOutput = (output: string): ClaimedRunFailure | undefined => {
+  const finalState = output
+    .split("\n")
+    .find((line) => line.startsWith("Final state:"))
+    ?.slice("Final state:".length)
+    .trim();
+  if (finalState !== "escalated") return undefined;
+  const publicationDetail = output
+    .split("\n")
+    .find((line) => line.startsWith("Publication detail:"))
+    ?.slice("Publication detail:".length)
+    .trim();
+  if (publicationDetail !== undefined && publicationDetail.length > 0) {
+    return new ClaimedRunFailure("publish", publicationDetail);
+  }
+  return new ClaimedRunFailure("verification", "run escalated before successful verification");
+};
 
 export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Promise<string> => {
   const tracker = createLinearWatchAdapters(input).tracker;
@@ -1220,6 +1247,8 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
             const stateLine = runResultStateLine(output);
             if (stateLine !== undefined)
               emit(`Run ${issue.key}: ${stateLine}${routeSuffix(route)}`);
+            const failure = runFailureFromOutput(output);
+            if (failure !== undefined) throw failure;
             emit(`Run ${issue.key}: completed${routeSuffix(route)}`);
           },
         }),
@@ -2030,6 +2059,8 @@ const main = async (): Promise<void> => {
               "publish" | "remote" | "pullRequestTarget" | "codeHost"
             >
           >();
+          const publishRunInputKey = (context: ResolvedProductCliContext): string =>
+            context.productId ?? "";
           const createPublishRunInput = async (
             context: ResolvedProductCliContext,
           ): Promise<
@@ -2042,50 +2073,94 @@ const main = async (): Promise<void> => {
               LinearIssueWorkflowCliInput,
               "publish" | "remote" | "pullRequestTarget" | "codeHost"
             > = {};
-            if (context.publish === true && context.dryRun !== true) {
-              const remote = context.remote;
-              const publishPreflightInput: PublishPreflightInput = {
-                repoPath: context.repoPath,
-                remote,
-                baseBranch: context.baseBranch,
-              };
-              if (context.githubRepo !== undefined)
-                publishPreflightInput.githubRepo = context.githubRepo;
-              const publishPreflight = await runPublishPreflight(publishPreflightInput);
-              const [owner, repo] = publishPreflight.githubRepo.split("/");
-              if (!owner || !repo) throw new Error("--github-repo must be in owner/repo format");
-              publishRunInput.publish = true;
-              publishRunInput.remote = remote;
-              publishRunInput.pullRequestTarget = {
-                owner,
-                repo,
-                baseBranch: context.baseBranch,
-              };
-              publishRunInput.codeHost = createGitHubCliCodeHostAdapter({
-                cwd: context.repoPath,
-                exec: async (command, commandArgs, options) =>
-                  defaultExecCommand(command, commandArgs, { cwd: options.cwd ?? process.cwd() }),
-              });
-            } else if (context.publish === true) {
-              publishRunInput.publish = true;
-              publishRunInput.remote = context.remote;
-              if (context.githubOwner !== undefined && context.githubRepository !== undefined) {
-                publishRunInput.pullRequestTarget = {
-                  owner: context.githubOwner,
-                  repo: context.githubRepository,
+            try {
+              if (context.publish === true && context.dryRun !== true) {
+                const remote = context.remote;
+                const publishPreflightInput: PublishPreflightInput = {
+                  repoPath: context.repoPath,
+                  remote,
                   baseBranch: context.baseBranch,
                 };
+                if (context.githubRepo !== undefined)
+                  publishPreflightInput.githubRepo = context.githubRepo;
+                const publishPreflight = await runPublishPreflight(publishPreflightInput);
+                const [owner, repo] = publishPreflight.githubRepo.split("/");
+                if (!owner || !repo) throw new Error("--github-repo must be in owner/repo format");
+                publishRunInput.publish = true;
+                publishRunInput.remote = remote;
+                publishRunInput.pullRequestTarget = {
+                  owner,
+                  repo,
+                  baseBranch: context.baseBranch,
+                };
+                publishRunInput.codeHost = createGitHubCliCodeHostAdapter({
+                  cwd: context.repoPath,
+                  exec: async (command, commandArgs, options) =>
+                    defaultExecCommand(command, commandArgs, { cwd: options.cwd ?? process.cwd() }),
+                });
+              } else if (context.publish === true) {
+                publishRunInput.publish = true;
+                publishRunInput.remote = context.remote;
+                if (context.githubOwner !== undefined && context.githubRepository !== undefined) {
+                  publishRunInput.pullRequestTarget = {
+                    owner: context.githubOwner,
+                    repo: context.githubRepository,
+                    baseBranch: context.baseBranch,
+                  };
+                }
               }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              throw new ClaimedRunFailure("preflight", message);
             }
             return publishRunInput;
           };
-          for (const context of watchContexts) {
-            publishRunInputs.set(context.productId ?? "", await createPublishRunInput(context));
+          const publishRunInputForContext = async (
+            context: ResolvedProductCliContext,
+          ): Promise<
+            Pick<
+              LinearIssueWorkflowCliInput,
+              "publish" | "remote" | "pullRequestTarget" | "codeHost"
+            >
+          > => {
+            const key = publishRunInputKey(context);
+            const cached = publishRunInputs.get(key);
+            if (cached !== undefined) return cached;
+            const publishRunInput = await createPublishRunInput(context);
+            publishRunInputs.set(key, publishRunInput);
+            return publishRunInput;
+          };
+          const primaryPublishRunInput: Pick<
+            LinearIssueWorkflowCliInput,
+            "publish" | "remote" | "pullRequestTarget" | "codeHost"
+          > =
+            watchContext.dryRun === true && watchContext.publish === true
+              ? (() => {
+                  const publishRunInput: Pick<
+                    LinearIssueWorkflowCliInput,
+                    "publish" | "remote" | "pullRequestTarget" | "codeHost"
+                  > = {};
+                  publishRunInput.publish = true;
+                  publishRunInput.remote = watchContext.remote;
+                  if (
+                    watchContext.githubOwner !== undefined &&
+                    watchContext.githubRepository !== undefined
+                  ) {
+                    publishRunInput.pullRequestTarget = {
+                      owner: watchContext.githubOwner,
+                      repo: watchContext.githubRepository,
+                      baseBranch: watchContext.baseBranch,
+                    };
+                  }
+                  return publishRunInput;
+                })()
+              : {};
+          if (watchContext.dryRun === true && watchContext.publish === true) {
+            publishRunInputs.set(publishRunInputKey(watchContext), primaryPublishRunInput);
           }
           const runStatePathForContext = (context: ResolvedProductCliContext): string =>
             join(context.worktreesPath, "..", "runs");
           const primaryRunStatePath = runStatePathForContext(watchContext);
-          const primaryPublishRunInput = publishRunInputs.get(watchContext.productId ?? "") ?? {};
           loopInput.runStatePath = primaryRunStatePath;
           const contextForRoute = (route?: WatchProductRoute): ResolvedProductCliContext => {
             if (route === undefined) return watchContext;
@@ -2097,27 +2172,31 @@ const main = async (): Promise<void> => {
             issueKey: string,
             route?: WatchProductRoute,
             options: { retryEscalated?: boolean; resumePublish?: boolean } = {},
-          ): Promise<string> => {
-            const context = contextForRoute(route);
-            return runLinearIssueWorkflowCli({
-              apiKey,
-              issueKey,
-              ...(context.linearTeam === undefined ? {} : { teamKey: context.linearTeam }),
-              repoPath: context.repoPath,
-              worktreesPath: context.worktreesPath,
-              runtimeConfigPath,
-              baseBranch: context.baseBranch,
-              runStatePath: runStatePathForContext(context),
-              ...(context.dryRun === true ? { dryRun: true } : {}),
-              ...(context.agentWrite === true ? { agentWrite: true } : {}),
-              ...(context.verification === undefined ? {} : { verification: context.verification }),
-              ...(options.retryEscalated === true ? { retryEscalated: true } : {}),
-              ...(options.resumePublish === true ? { resumePublish: true } : {}),
-              ...(args.progressLevel === undefined ? {} : { progressLevel: args.progressLevel }),
-              ...(publishRunInputs.get(context.productId ?? "") ?? {}),
-              onProgressLine: (line) => process.stderr.write(`${line}\n`),
-            });
-          };
+          ): Promise<string> =>
+            (async () => {
+              const context = contextForRoute(route);
+              const publishRunInput = await publishRunInputForContext(context);
+              return runLinearIssueWorkflowCli({
+                apiKey,
+                issueKey,
+                ...(context.linearTeam === undefined ? {} : { teamKey: context.linearTeam }),
+                repoPath: context.repoPath,
+                worktreesPath: context.worktreesPath,
+                runtimeConfigPath,
+                baseBranch: context.baseBranch,
+                runStatePath: runStatePathForContext(context),
+                ...(context.dryRun === true ? { dryRun: true } : {}),
+                ...(context.agentWrite === true ? { agentWrite: true } : {}),
+                ...(context.verification === undefined
+                  ? {}
+                  : { verification: context.verification }),
+                ...(options.retryEscalated === true ? { retryEscalated: true } : {}),
+                ...(options.resumePublish === true ? { resumePublish: true } : {}),
+                ...(args.progressLevel === undefined ? {} : { progressLevel: args.progressLevel }),
+                ...publishRunInput,
+                onProgressLine: (line) => process.stderr.write(`${line}\n`),
+              });
+            })();
           loopInput.startRun = async (issue, route) =>
             runIssueByKey(issue.key, route, { retryEscalated: true });
           // Resume interrupted/paused runs from the persisted run log each poll.

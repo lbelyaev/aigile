@@ -1160,6 +1160,18 @@ export const runWorkspaceIssueWithEngine = async (
   if (pullRequestArtifact !== undefined) {
     demoResult.pullRequest = pullRequestArtifact.payload as PullRequestRecord;
   }
+  if (
+    result.snapshot.state === "escalated" &&
+    result.snapshot.escalationEventType === "publish_failed"
+  ) {
+    demoResult.publicationFailure = {
+      operation: "publish_pull_request",
+      message: result.reason ?? "publish failed",
+      ...(demoResult.pullRequest?.url === undefined
+        ? {}
+        : { pullRequestUrl: demoResult.pullRequest.url }),
+    };
+  }
   return demoResult;
 };
 

@@ -2098,11 +2098,94 @@ describe("cli formatting", () => {
     expect(output).toContain("Poll 1: claimed LBE-18 (ready issues: 1)");
     expect(output).toContain("Run LBE-18: starting");
     expect(output).toContain(
-      "Poll 1: run failed for LBE-18; restored status to Todo: Issue branch aigile/LBE-18 is stale relative to origin/main",
+      "Poll 1: run failed for LBE-18 product: unrouted phase: workspace; restored status to Todo: Issue branch aigile/LBE-18 is stale relative to origin/main",
     );
     expect(output).toContain("Agents: handled claimed issues");
     expect(statusUpdates).toHaveLength(2);
     expect(statusUpdates.at(-1)).toMatchObject({ status: "state-todo" });
+  });
+
+  it("treats escalated publish output from a claimed run as a contained run failure", async () => {
+    const comments: unknown[] = [];
+
+    const output = await runLinearWatchLoopCli({
+      apiKey: "test-key",
+      teamKey: "LBE",
+      productId: "aigile",
+      linearProject: "Aigile",
+      githubRepo: "lbelyaev/aigile",
+      readyStatus: "Todo",
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 1,
+      sleep: async () => {},
+      startRun: async () =>
+        formatDemoResult({
+          issueKey: "LBE-19",
+          finalState: "escalated",
+          publicationFailure: {
+            operation: "publish_pull_request",
+            message: "gh pr create failed",
+          },
+          artifacts: [],
+          timeline: [],
+          durationMs: 0,
+        }),
+      fetchGraphql: async (query, variables) => {
+        if (query.includes("ReadyIssues")) {
+          return {
+            issues: {
+              nodes: [
+                {
+                  id: "issue-id",
+                  identifier: "LBE-19",
+                  title: "Contain publish failure",
+                  description: "Acceptance:\n- Reports publish failure",
+                  state: { name: "Todo" },
+                  project: { id: "project-aigile", name: "Aigile" },
+                  comments: { nodes: [] },
+                },
+              ],
+            },
+          };
+        }
+        if (query.includes("WorkflowStateByName")) {
+          return {
+            workflowStates: {
+              nodes: [
+                {
+                  id:
+                    typeof variables?.name === "string" && variables.name === "Todo"
+                      ? "state-todo"
+                      : "state-in-progress",
+                  name: variables?.name,
+                },
+              ],
+            },
+          };
+        }
+        if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+        if (query.includes("issueUpdate")) return {};
+        if (query.includes("commentCreate")) {
+          comments.push(variables);
+          return {};
+        }
+        return {};
+      },
+    });
+
+    expect(output).toContain(
+      "Run LBE-19: Final state: escalated product: aigile repo: lbelyaev/aigile",
+    );
+    expect(output).toContain(
+      "Poll 1: run failed for LBE-19 product: aigile phase: publish; restored status to Todo: gh pr create failed",
+    );
+    expect(output).not.toContain("Run LBE-19: completed");
+    expect(
+      comments.filter((comment) =>
+        JSON.stringify(comment).includes("Aigile run failed for LBE-19"),
+      ),
+    ).toHaveLength(1);
   });
 
   it("prints product and GitHub repo when product-backed watch starts a run", async () => {
