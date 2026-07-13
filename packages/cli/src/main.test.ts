@@ -17,6 +17,7 @@ import {
   formatAcpRoleProgress,
   formatArchitectPlanComment,
   formatDaemonStartupSummary,
+  formatDisplayEvent,
   formatDemoResult,
   formatDuration,
   runCli,
@@ -39,9 +40,88 @@ import {
   resolveProductCliContext,
   resolveProductCliContexts,
   selectDemoMode,
+  stripAnsi,
 } from "./main.js";
 
 describe("cli formatting", () => {
+  it("formats structured display rows with role, product, action, and detail", () => {
+    expect(
+      formatDisplayEvent({
+        type: "row",
+        issueKey: "LBE-50",
+        productId: "aigile",
+        source: "architect",
+        action: "plan ready",
+        detail: "7 scope items",
+        severity: "success",
+      }),
+    ).toBe("LBE-50   aigile   architect      plan ready       7 scope items");
+  });
+
+  it("keeps colorized display rows text-equivalent to no-color rows", () => {
+    const event = {
+      type: "row" as const,
+      issueKey: "LBE-50",
+      productId: "aigile",
+      source: "verifier" as const,
+      action: "passed",
+      detail: "bun run check, 41s",
+      severity: "success" as const,
+    };
+    const colorized = formatDisplayEvent(event, { isTty: true, env: {} });
+    const plain = formatDisplayEvent(event, { isTty: true, noColor: true, env: {} });
+
+    expect(colorized.includes("\x1b[")).toBe(true);
+    expect(plain.includes("\x1b[")).toBe(false);
+    expect(stripAnsi(colorized)).toBe(plain);
+  });
+
+  it("formats a full structured run lifecycle", () => {
+    const events = [
+      { source: "architect" as const, action: "plan ready", detail: "7 scope items" },
+      { source: "developer" as const, action: "edited", detail: "4 files" },
+      { source: "verifier" as const, action: "passed", detail: "bun run check, 41s" },
+      { source: "github" as const, action: "pr opened", detail: "#68" },
+      { source: "linear" as const, action: "status", detail: "In Review" },
+    ];
+
+    expect(
+      events
+        .map((event) =>
+          formatDisplayEvent({
+            type: "row",
+            issueKey: "LBE-50",
+            productId: "aigile",
+            severity: "info",
+            ...event,
+          }),
+        )
+        .join("\n"),
+    ).toBe(
+      [
+        "LBE-50   aigile   architect      plan ready       7 scope items",
+        "LBE-50   aigile   developer      edited           4 files",
+        "LBE-50   aigile   verifier       passed           bun run check, 41s",
+        "LBE-50   aigile   github         pr opened        #68",
+        "LBE-50   aigile   linear         status           In Review",
+      ].join("\n"),
+    );
+  });
+
+  it("formats error display rows", () => {
+    expect(
+      formatDisplayEvent({
+        type: "row",
+        issueKey: "LBE-50",
+        productId: "aigile",
+        source: "developer",
+        action: "failed",
+        detail: "workspace stale",
+        severity: "error",
+      }),
+    ).toBe("LBE-50   aigile   developer      failed           workspace stale");
+  });
+
   it("formats architect plan comments deterministically", () => {
     expect(
       formatArchitectPlanComment({
@@ -364,7 +444,7 @@ describe("cli formatting", () => {
   });
 
   it("coalesces small ACP text deltas before printing progress", () => {
-    const formatter = createAcpRoleProgressFormatter({ textFlushThreshold: 80 });
+    const formatter = createAcpRoleProgressFormatter({ textFlushThreshold: 80, level: "verbose" });
     const base = {
       roleId: "developer",
       issueId: "LIN-123",
@@ -383,7 +463,7 @@ describe("cli formatting", () => {
   });
 
   it("flushes ACP text deltas at newlines and on final flush", () => {
-    const formatter = createAcpRoleProgressFormatter({ textFlushThreshold: 80 });
+    const formatter = createAcpRoleProgressFormatter({ textFlushThreshold: 80, level: "verbose" });
     const base = {
       roleId: "architect",
       issueId: "LIN-123",
@@ -401,25 +481,39 @@ describe("cli formatting", () => {
     const formatter = createAcpRoleProgressFormatter({ level: "quiet" });
     const base = { roleId: "developer", issueId: "LIN-9", runtimeId: "codex-acp" };
     expect(formatter.format({ type: "role_started", ...base })).toEqual([
-      "[LIN-9 developer] starting codex-acp",
+      formatDisplayEvent({
+        type: "row",
+        issueKey: "LIN-9",
+        source: "developer",
+        action: "starting",
+        detail: "codex-acp",
+        severity: "info",
+      }),
     ]);
     expect(formatter.format({ type: "text_delta", ...base, delta: "hello world" })).toEqual([]);
     expect(formatter.format({ type: "tool_start", ...base, tool: "Bash" })).toEqual([]);
     expect(formatter.format({ type: "thinking_delta", ...base, delta: "x" })).toEqual([]);
     expect(
       formatter.format({ type: "artifact_parsed", ...base, artifactKind: "developer.attempt" }),
-    ).toEqual(["[LIN-9 developer] artifact parsed: developer.attempt"]);
+    ).toEqual([
+      formatDisplayEvent({
+        type: "row",
+        issueKey: "LIN-9",
+        source: "developer",
+        action: "artifact parsed",
+        detail: "developer.attempt",
+        severity: "success",
+      }),
+    ]);
     expect(formatter.flush()).toEqual([]);
   });
 
-  it("normal level (default) drops thinking and stderr noise but keeps text and tools", () => {
+  it("normal level (default) drops raw stream noise", () => {
     const formatter = createAcpRoleProgressFormatter();
     const base = { roleId: "developer", issueId: "LIN-9", runtimeId: "codex-acp" };
     expect(formatter.format({ type: "thinking_delta", ...base, delta: "x" })).toEqual([]);
     expect(formatter.format({ type: "runtime_stderr", ...base, chunk: "noise\n" })).toEqual([]);
-    expect(formatter.format({ type: "tool_start", ...base, tool: "Bash" })).toEqual([
-      "[LIN-9 developer] tool started: Bash",
-    ]);
+    expect(formatter.format({ type: "tool_start", ...base, tool: "Bash" })).toEqual([]);
   });
 
   it("verbose level emits raw streams suppressed at normal", () => {
@@ -436,6 +530,7 @@ describe("cli formatting", () => {
   it("parses --quiet and --verbose into a progress level", () => {
     expect(parseCliArgs(["run", "LIN-1", "--quiet"]).progressLevel).toBe("quiet");
     expect(parseCliArgs(["run", "LIN-1", "--verbose"]).progressLevel).toBe("verbose");
+    expect(parseCliArgs(["run", "LIN-1", "--no-color"]).noColor).toBe(true);
     expect(parseCliArgs(["run", "LIN-1"]).progressLevel).toBeUndefined();
     expect(() => parseCliArgs(["run", "LIN-1", "--quiet", "--verbose"])).toThrow(
       /only one of --quiet/,
@@ -1789,7 +1884,7 @@ describe("cli formatting", () => {
     expect(calls.filter((call) => call.query.includes("commentCreate"))).toHaveLength(1);
   });
 
-  it("prints a single idle heartbeat for consecutive idle Linear polls", async () => {
+  it("suppresses consecutive idle Linear polls in normal output", async () => {
     const output = await runLinearWatchLoopCli({
       apiKey: "test-key",
       teamKey: "LBE",
@@ -1804,7 +1899,7 @@ describe("cli formatting", () => {
       },
     });
 
-    expect(output).toContain("Poll 1: idle heartbeat; ready issues: 0");
+    expect(output).not.toContain("Poll 1: idle heartbeat");
     expect(output).not.toContain("Poll 2: idle heartbeat");
     expect(output).not.toContain("Poll 3: idle heartbeat");
   });
@@ -1849,16 +1944,9 @@ describe("cli formatting", () => {
         { pollIntervalMs: 30_000 },
       ),
     ).toBe(
-      [
-        "Aigile daemon: supervisor",
-        "Products:",
-        "- web linear-team=LBE linear-project=Web github-repo=lbelyaev/web",
-        "- api linear-team=API linear-project=API github-repo=lbelyaev/api",
-        "Poll interval: 30000ms",
-        "Run defaults:",
-        "- web mode=agent_write publish=true start-run=true",
-        "- api mode=dry_run publish=false start-run=false",
-      ].join("\n"),
+      ["aigile  daemon started", "       products: web, api", "       poll interval: 30000ms"].join(
+        "\n",
+      ),
     );
   });
 
@@ -2012,7 +2100,7 @@ describe("cli formatting", () => {
       },
     });
 
-    expect(output).toContain("Aigile daemon: supervisor");
+    expect(output).toContain("aigile  daemon started");
     expect(output).toContain("Aigile watch: loop");
     expect(output).toContain("Stopped: aborted after 1 polls");
     expect(calls.filter((call) => call.query.includes("issueUpdate"))).toHaveLength(0);
