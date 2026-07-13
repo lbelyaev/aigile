@@ -4,7 +4,10 @@ import { join } from "node:path";
 
 export type ProductRunMode = "dry_run" | "agent_write";
 
+export const DEFAULT_MAX_CONCURRENT_RUNS = 1;
+
 export interface RuntimeProductConfig {
+  maxConcurrentRuns?: number;
   products: RuntimeProduct[];
 }
 
@@ -34,6 +37,7 @@ export interface RuntimeProduct {
   };
   repoPath?: string;
   worktreesPath?: string;
+  maxConcurrentRuns?: number;
   packageManager?: string;
   defaultRun: {
     startRun: boolean;
@@ -91,6 +95,19 @@ const booleanField = (value: Record<string, unknown>, field: string, context: st
   const fieldValue = value[field];
   if (typeof fieldValue !== "boolean") {
     throw new Error(`Product config ${context}.${field} must be a boolean`);
+  }
+  return fieldValue;
+};
+
+const optionalPositiveIntegerField = (
+  value: Record<string, unknown>,
+  field: string,
+  context: string,
+): number | undefined => {
+  const fieldValue = value[field];
+  if (fieldValue === undefined) return undefined;
+  if (typeof fieldValue !== "number" || !Number.isInteger(fieldValue) || fieldValue <= 0) {
+    throw new Error(`Product config ${context}.${field} must be a positive integer`);
   }
   return fieldValue;
 };
@@ -218,10 +235,12 @@ const parseProduct = (value: unknown, index: number): RuntimeProduct => {
   };
   const repoPath = optionalStringField(value, "repoPath", context);
   const worktreesPath = optionalStringField(value, "worktreesPath", context);
+  const maxConcurrentRuns = optionalPositiveIntegerField(value, "maxConcurrentRuns", context);
   const packageManager = optionalStringField(value, "packageManager", context);
   const verification = parseVerification(value.verification, context);
   if (repoPath !== undefined) product.repoPath = repoPath;
   if (worktreesPath !== undefined) product.worktreesPath = worktreesPath;
+  if (maxConcurrentRuns !== undefined) product.maxConcurrentRuns = maxConcurrentRuns;
   if (packageManager !== undefined) product.packageManager = packageManager;
   if (verification !== undefined) product.verification = verification;
   return product;
@@ -231,6 +250,8 @@ export const loadProductConfigFromJson = (json: string): RuntimeProductConfig =>
   const value = parseJson(json);
   if (!isRecord(value)) throw new Error("Product config must be an object");
   if (!Array.isArray(value.products)) throw new Error("Product config products must be an array");
+  const maxConcurrentRuns =
+    optionalPositiveIntegerField(value, "maxConcurrentRuns", "root") ?? DEFAULT_MAX_CONCURRENT_RUNS;
   const products = value.products.map(parseProduct);
   if (products.length === 0)
     throw new Error("Product config products must contain at least one product");
@@ -240,7 +261,7 @@ export const loadProductConfigFromJson = (json: string): RuntimeProductConfig =>
       throw new Error(`Product config product id is duplicated: ${product.id}`);
     seen.add(product.id);
   }
-  return { products };
+  return { maxConcurrentRuns, products };
 };
 
 export const loadProductConfigFromFile = (path: string): RuntimeProductConfig =>

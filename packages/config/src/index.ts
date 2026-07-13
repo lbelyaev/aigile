@@ -4,6 +4,7 @@ export {
   runtimeConfigToRegistry,
 } from "./runtime-config.js";
 export {
+  DEFAULT_MAX_CONCURRENT_RUNS,
   defaultProductWorktreesPath,
   expandHomePath,
   findProductConfig,

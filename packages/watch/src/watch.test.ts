@@ -9,6 +9,14 @@ import {
   type WatchLoopEvent,
 } from "./index.js";
 
+const deferred = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve!: () => void;
+  const promise = new Promise<void>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
+};
+
 describe("watchOnce", () => {
   it("claims the first ready issue and posts an operator comment", async () => {
     const seedIssues = [
@@ -164,6 +172,239 @@ describe("watchOnce", () => {
       status: "aigile:claimed",
       comments: [defaultClaimComment],
     });
+  });
+
+  it("does not claim more issues than the global concurrency limit", async () => {
+    const seedIssues = [
+      {
+        id: "issue-1",
+        key: "LIN-900",
+        title: "First issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "Todo",
+        comments: [],
+      },
+      {
+        id: "issue-2",
+        key: "LIN-901",
+        title: "Second issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "Todo",
+        comments: [],
+      },
+      {
+        id: "issue-3",
+        key: "LIN-902",
+        title: "Third issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "Todo",
+        comments: [],
+      },
+    ];
+    const tracker = createFakeIssueTrackerAdapter(seedIssues);
+    const blockers = new Map(seedIssues.map((issue) => [issue.key, deferred()]));
+    let active = 0;
+    let peakActive = 0;
+
+    await watchLoop({
+      source: createFakeReadyIssueSource(seedIssues, "Todo"),
+      tracker,
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 3,
+      maxConcurrentRuns: 2,
+      sleep: async () => {},
+      onClaimedIssue: async (issue) => {
+        active += 1;
+        peakActive = Math.max(peakActive, active);
+        await blockers.get(issue.key)!.promise;
+        active -= 1;
+      },
+    });
+
+    expect(peakActive).toBe(2);
+    expect(await tracker.getIssue("LIN-900")).toMatchObject({ status: "In Progress" });
+    expect(await tracker.getIssue("LIN-901")).toMatchObject({ status: "In Progress" });
+    expect(await tracker.getIssue("LIN-902")).toMatchObject({ status: "Todo" });
+    for (const blocker of blockers.values()) blocker.resolve();
+  });
+
+  it("does not exceed per-product concurrency when another product has capacity", async () => {
+    const seedIssues = [
+      {
+        id: "issue-web-1",
+        key: "LIN-910",
+        title: "First web issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "Todo",
+        project: { id: "project-web", name: "Web" },
+        comments: [],
+      },
+      {
+        id: "issue-web-2",
+        key: "LIN-911",
+        title: "Second web issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "Todo",
+        project: { id: "project-web", name: "Web" },
+        comments: [],
+      },
+      {
+        id: "issue-api-1",
+        key: "LIN-912",
+        title: "API issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "Todo",
+        project: { id: "project-api", name: "API" },
+        comments: [],
+      },
+    ];
+    const tracker = createFakeIssueTrackerAdapter(seedIssues);
+    const blockers = new Map(seedIssues.map((issue) => [issue.key, deferred()]));
+    const started: string[] = [];
+
+    await watchLoop({
+      source: createFakeReadyIssueSource(seedIssues, "Todo"),
+      tracker,
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 3,
+      maxConcurrentRuns: 3,
+      productMaxConcurrentRuns: { web: 1 },
+      productRoutes: [
+        { productId: "web", linearProject: "Web", githubRepo: "lbelyaev/web" },
+        { productId: "api", linearProject: "API", githubRepo: "lbelyaev/api" },
+      ],
+      sleep: async () => {},
+      onClaimedIssue: async (issue) => {
+        started.push(issue.key);
+        await blockers.get(issue.key)!.promise;
+      },
+    });
+
+    expect(started).toEqual(["LIN-910", "LIN-912"]);
+    expect(await tracker.getIssue("LIN-910")).toMatchObject({ status: "In Progress" });
+    expect(await tracker.getIssue("LIN-911")).toMatchObject({ status: "Todo" });
+    expect(await tracker.getIssue("LIN-912")).toMatchObject({ status: "In Progress" });
+    for (const blocker of blockers.values()) blocker.resolve();
+  });
+
+  it("releases capacity after a claimed run completes", async () => {
+    const seedIssues = [
+      {
+        id: "issue-1",
+        key: "LIN-920",
+        title: "First issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "Todo",
+        comments: [],
+      },
+      {
+        id: "issue-2",
+        key: "LIN-921",
+        title: "Second issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "Todo",
+        comments: [],
+      },
+    ];
+    const tracker = createFakeIssueTrackerAdapter(seedIssues);
+    const firstRun = deferred();
+    const started: string[] = [];
+    let sleeps = 0;
+
+    await watchLoop({
+      source: createFakeReadyIssueSource(seedIssues, "Todo"),
+      tracker,
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 2,
+      maxConcurrentRuns: 1,
+      sleep: async () => {
+        sleeps += 1;
+        if (sleeps === 1) firstRun.resolve();
+      },
+      onClaimedIssue: async (issue) => {
+        started.push(issue.key);
+        if (issue.key === "LIN-920") await firstRun.promise;
+      },
+    });
+
+    expect(started).toEqual(["LIN-920", "LIN-921"]);
+  });
+
+  it("releases capacity after a claimed run fails", async () => {
+    const seedIssues = [
+      {
+        id: "issue-1",
+        key: "LIN-930",
+        title: "First issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "Todo",
+        comments: [],
+      },
+      {
+        id: "issue-2",
+        key: "LIN-931",
+        title: "Second issue",
+        description: "",
+        acceptanceCriteria: [],
+        status: "Todo",
+        comments: [],
+      },
+    ];
+    const tracker = createFakeIssueTrackerAdapter(seedIssues);
+    const started: string[] = [];
+
+    await watchLoop({
+      source: createFakeReadyIssueSource(seedIssues, "Todo"),
+      tracker,
+      claimStatus: "In Progress",
+      pollIntervalMs: 1,
+      maxPolls: 2,
+      maxConcurrentRuns: 1,
+      sleep: async () => {},
+      onClaimedIssue: async (issue) => {
+        started.push(issue.key);
+        if (issue.key === "LIN-930") throw new ClaimedRunFailure("agent", "agent exited");
+      },
+    });
+
+    expect(started).toEqual(["LIN-930", "LIN-931"]);
+    expect(await tracker.getIssue("LIN-930")).toMatchObject({ status: "Todo" });
+    expect(await tracker.getIssue("LIN-931")).toMatchObject({ status: "In Progress" });
+  });
+
+  it("collapses consecutive idle polls into a stateful heartbeat", async () => {
+    const events: string[] = [];
+
+    await watchLoop({
+      source: createFakeReadyIssueSource([]),
+      tracker: createFakeIssueTrackerAdapter([]),
+      pollIntervalMs: 1,
+      maxPolls: 3,
+      sleep: async () => {},
+      onEvent: (event) => {
+        events.push(event.type);
+      },
+    });
+
+    expect(events).toEqual([
+      "poll_started",
+      "poll_idle",
+      "poll_started",
+      "poll_started",
+      "watch_stopped",
+    ]);
   });
 
   it("stops when aborted before a poll begins", async () => {
