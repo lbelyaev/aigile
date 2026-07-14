@@ -54,6 +54,18 @@ describe("file run store", () => {
     expect(run?.events).toHaveLength(2);
   });
 
+  it("persists checkpointed artifacts without appending events", async () => {
+    const directory = await makeDir();
+    const writer = createFileRunStore({ directory });
+    await writer.appendEvent("LIN-1", ev("issue_received"));
+    await writer.appendArtifacts("LIN-1", [art("checkpoint-1")]);
+
+    const reader = createFileRunStore({ directory });
+    const run = await reader.load("LIN-1");
+    expect(run?.events.map((entry) => entry.type)).toEqual(["issue_received"]);
+    expect(run?.artifacts.map((entry) => entry.id)).toEqual(["checkpoint-1"]);
+  });
+
   it("lists persisted run issue ids (empty for a missing directory)", async () => {
     const directory = join(await makeDir(), "nested-runs");
     const store = createFileRunStore({ directory });

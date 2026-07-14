@@ -296,6 +296,10 @@ const deepReviewProgressDisplayEvent = (event: DeepReviewProgressEvent): Display
     event.angle,
     `call ${event.sequence}`,
   ];
+  if (event.completedSubcalls !== undefined && event.totalSubcalls !== undefined) {
+    detailParts.push(`done ${event.completedSubcalls}/${event.totalSubcalls}`);
+  }
+  if (event.elapsedMs !== undefined) detailParts.push(`+${event.elapsedMs}ms`);
   if (event.findingId !== undefined) detailParts.push(event.findingId);
   return {
     type: "row",

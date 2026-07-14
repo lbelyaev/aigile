@@ -21,6 +21,7 @@ export interface RunStore {
     event: WorkflowEvent,
     artifacts?: readonly WorkflowArtifact[],
   ): Promise<void>;
+  appendArtifacts(issueId: string, artifacts: readonly WorkflowArtifact[]): Promise<void>;
   // Issue ids of all persisted runs, so interrupted runs can be discovered and resumed.
   list(): Promise<string[]>;
 }
@@ -51,6 +52,14 @@ export const createInMemoryRunStore = (): RunStore => {
       runs.set(issueId, {
         issueId,
         events: [...existing.events, structuredClone(event)],
+        artifacts: mergeArtifacts(existing.artifacts, artifacts),
+      });
+    },
+    appendArtifacts: async (issueId, artifacts) => {
+      const existing = runs.get(issueId) ?? { issueId, events: [], artifacts: [] };
+      runs.set(issueId, {
+        issueId,
+        events: [...existing.events],
         artifacts: mergeArtifacts(existing.artifacts, artifacts),
       });
     },
@@ -89,6 +98,16 @@ export const createFileRunStore = (options: { directory: string }): RunStore => 
       const next: PersistedRun = {
         issueId,
         events: [...existing.events, event],
+        artifacts: mergeArtifacts(existing.artifacts, artifacts),
+      };
+      await mkdir(options.directory, { recursive: true });
+      await writeFile(fileFor(issueId), `${JSON.stringify(next, null, 2)}\n`);
+    },
+    appendArtifacts: async (issueId, artifacts) => {
+      const existing = (await readRun(issueId)) ?? { issueId, events: [], artifacts: [] };
+      const next: PersistedRun = {
+        issueId,
+        events: [...existing.events],
         artifacts: mergeArtifacts(existing.artifacts, artifacts),
       };
       await mkdir(options.directory, { recursive: true });

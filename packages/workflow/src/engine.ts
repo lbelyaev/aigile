@@ -14,6 +14,7 @@ export interface WorkflowCommandContext {
   command: WorkflowCommand;
   snapshot: WorkflowSnapshot;
   artifacts: readonly WorkflowArtifact[];
+  checkpointArtifacts?: (artifacts: readonly WorkflowArtifact[]) => Promise<void>;
 }
 
 /**
@@ -195,6 +196,12 @@ const notifyStateChange = async (
   }
 };
 
+const mergeArtifacts = (
+  artifacts: readonly WorkflowArtifact[],
+  incoming: readonly WorkflowArtifact[],
+): WorkflowArtifact[] =>
+  incoming.reduce((merged, artifact) => mergeArtifact(merged, artifact), [...artifacts]);
+
 /**
  * Drive a workflow run to a terminal outcome by repeatedly: taking the FSM's
  * pending command, invoking its handler to perform the side effect and produce
@@ -250,7 +257,15 @@ export const runWorkflowEngine = async (
 
     let output: WorkflowCommandOutput;
     try {
-      output = await handler({ command, snapshot, artifacts: [...artifacts] });
+      output = await handler({
+        command,
+        snapshot,
+        artifacts: [...artifacts],
+        checkpointArtifacts: async (checkpointArtifacts) => {
+          artifacts = mergeArtifacts(artifacts, checkpointArtifacts);
+          await store.appendArtifacts(issueId, checkpointArtifacts);
+        },
+      });
     } catch (error) {
       // A handler/role/tool failure must escalate gracefully, never abort the run.
       // Persist a handler_failed event so the escalation is durable and replayable,
@@ -306,7 +321,15 @@ export const runWorkflowEngine = async (
     const handler = command === undefined ? undefined : handlers[command.type];
     if (command !== undefined && handler !== undefined) {
       try {
-        const output = await handler({ command, snapshot, artifacts: [...artifacts] });
+        const output = await handler({
+          command,
+          snapshot,
+          artifacts: [...artifacts],
+          checkpointArtifacts: async (checkpointArtifacts) => {
+            artifacts = mergeArtifacts(artifacts, checkpointArtifacts);
+            await store.appendArtifacts(issueId, checkpointArtifacts);
+          },
+        });
         if (output.artifact !== undefined) artifacts = mergeArtifact(artifacts, output.artifact);
       } catch {
         // Best-effort terminal side effect (e.g. status sync on escalation). The run

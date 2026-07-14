@@ -455,9 +455,14 @@ describe("cli formatting", () => {
         angleIndex: 3,
         angleCount: 4,
         sequence: 6,
+        completedSubcalls: 5,
+        totalSubcalls: 9,
+        elapsedMs: 1200,
         findingId: "cross-file:1",
       }),
-    ).toBe("LIN-123           deep_reviewer  refute finding   3/4 cross-file call 6 cross-file:1");
+    ).toBe(
+      "LIN-123           deep_reviewer  refute finding   3/4 cross-file call 6 done 5/9 +1200ms cross-file:1",
+    );
 
     expect(
       formatDeepReviewProgress({

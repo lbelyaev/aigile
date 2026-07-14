@@ -367,11 +367,15 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
         `${issue.key} attempt ${ctx.snapshot.developerAttempts} (checkpoint)`,
       );
       const reviewRole = reviewRoleForChangedFiles(developerChangedFiles(attempt));
+      const checkpointArtifacts = ctx.checkpointArtifacts;
       const reviewed = artifactWithRunSuffix(
         reviewRole === "deep_reviewer"
           ? await runAssignedDeepReview({
               issueId: issue.key,
               inputArtifacts: ctx.artifacts,
+              ...(checkpointArtifacts === undefined
+                ? {}
+                : { checkpointArtifact: (artifact) => checkpointArtifacts([artifact]) }),
               ...(deps.onDeepReviewProgress === undefined
                 ? {}
                 : { onProgress: deps.onDeepReviewProgress }),
