@@ -32,6 +32,7 @@ export type {
   DeepReviewPassInput,
   DeepReviewPassRefutationInput,
   DeepReviewPassResult,
+  DeepReviewProgressEvent,
   DeepReviewRefutationRecord,
   DeepReviewRefutationResult,
   DeepReviewSurvivingFinding,

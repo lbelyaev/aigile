@@ -47,7 +47,11 @@ import type {
   LinearFetchGraphql,
   ReadyIssueSource,
 } from "@aigile/adapters";
-import { createAcpRoleRunner, type AcpRoleProgressEvent } from "@aigile/roles";
+import {
+  createAcpRoleRunner,
+  type AcpRoleProgressEvent,
+  type DeepReviewProgressEvent,
+} from "@aigile/roles";
 import { isArchitectPlanPayload, type WorkflowArtifact } from "@aigile/types";
 import {
   ClaimedRunFailure,
@@ -254,6 +258,34 @@ export const formatDisplayEvent = (
 
 const formatDisplayLine = (event: DisplayEvent, options: DisplayFormatterOptions = {}): string =>
   formatDisplayEvent(event, options);
+
+const deepReviewProgressDisplayEvent = (event: DeepReviewProgressEvent): DisplayRowEvent => {
+  const action =
+    event.mode === "angle_pass"
+      ? "review angle"
+      : event.mode === "refute_pass"
+        ? "refute pass"
+        : "refute finding";
+  const detailParts = [
+    `${event.angleIndex}/${event.angleCount}`,
+    event.angle,
+    `call ${event.sequence}`,
+  ];
+  if (event.findingId !== undefined) detailParts.push(event.findingId);
+  return {
+    type: "row",
+    issueKey: event.issueId,
+    source: "deep_reviewer",
+    action,
+    detail: detailParts.join(" "),
+    severity: "info",
+  };
+};
+
+export const formatDeepReviewProgress = (
+  event: DeepReviewProgressEvent,
+  options: DisplayFormatterOptions = {},
+): string => formatDisplayLine(deepReviewProgressDisplayEvent(event), options);
 
 const roleProgressDisplayEvent = (event: AcpRoleProgressEvent): DisplayRowEvent => {
   const source = event.roleId as DisplaySourceLabel;
@@ -1248,6 +1280,10 @@ export const runLinearIssueWorkflowCli = async (
       }
     },
   });
+  runInput.onDeepReviewProgress = (event) => {
+    const line = formatDeepReviewProgress(event, input.display);
+    if (line.trim().length > 0) input.onProgressLine?.(line);
+  };
   const result = await (input.runWorkspace ?? runWorkspaceIssueWithEngine)(runInput);
   const syncedResult = await syncLinearIssueWorkflowResult(input, result);
   const formattedResult = formatDemoResult(syncedResult);
@@ -2938,6 +2974,10 @@ const main = async (): Promise<void> => {
         }
       },
     });
+    runInput.onDeepReviewProgress = (event) => {
+      const line = formatDeepReviewProgress(event, stderrDisplay);
+      if (line.trim().length > 0) process.stderr.write(`${line}\n`);
+    };
   }
   if (args.mode === "run" && args.retryEscalated === true) runInput.retryEscalated = true;
   if (args.mode === "run" && args.resumePublish === true) runInput.resumePublish = true;

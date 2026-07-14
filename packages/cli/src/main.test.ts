@@ -17,6 +17,7 @@ import {
   formatAcpRoleProgress,
   formatArchitectPlanComment,
   formatDaemonStartupSummary,
+  formatDeepReviewProgress,
   formatDisplayEvent,
   formatDemoResult,
   formatDuration,
@@ -441,6 +442,21 @@ describe("cli formatting", () => {
         detail: "6/5 Read File",
       }),
     ).toBe("[LIN-123 architect] policy violation file_read_budget: 6/5 Read File");
+  });
+
+  it("formats deep-review substeps with angle and call progress", () => {
+    expect(
+      formatDeepReviewProgress({
+        type: "deep_review_step",
+        issueId: "LIN-123",
+        mode: "refute_finding",
+        angle: "cross-file",
+        angleIndex: 3,
+        angleCount: 4,
+        sequence: 6,
+        findingId: "cross-file:1",
+      }),
+    ).toBe("LIN-123           deep_reviewer  refute finding   3/4 cross-file call 6 cross-file:1");
   });
 
   it("coalesces small ACP text deltas before printing progress", () => {

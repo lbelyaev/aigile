@@ -16,7 +16,7 @@ import {
   type PullRequestReviewInput,
 } from "@aigile/adapters";
 import type { IssueStatusLabels } from "@aigile/config";
-import { runAssignedDeepReview } from "@aigile/roles";
+import { runAssignedDeepReview, type DeepReviewProgressEvent } from "@aigile/roles";
 import { reviewRoleForChangedFiles, type WorkflowCommandHandlers } from "@aigile/workflow";
 import { withPublishRetry, type PublishRetryOptions } from "@aigile/workspace";
 import { resolveMergePolicy, type MergePolicy } from "./merge-policy.js";
@@ -45,6 +45,7 @@ export interface EngineHandlerDeps {
   issueTracker?: IssueTrackerAdapter;
   issueStatusLabels?: Partial<IssueStatusLabels>;
   publishRetry?: PublishRetryOptions;
+  onDeepReviewProgress?: (event: DeepReviewProgressEvent) => void;
 }
 
 const findLatestByKind = (
@@ -371,6 +372,9 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
           ? await runAssignedDeepReview({
               issueId: issue.key,
               inputArtifacts: ctx.artifacts,
+              ...(deps.onDeepReviewProgress === undefined
+                ? {}
+                : { onProgress: deps.onDeepReviewProgress }),
               runRole: deps.runRole,
             })
           : await deps.runRole(reviewRole, ctx.artifacts),

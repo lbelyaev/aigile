@@ -59,6 +59,7 @@ export interface DeepReviewInput {
   changedFiles: readonly string[];
   reviewerModel: string;
   angles?: readonly DeepReviewAngle[];
+  maxFindingsPerAngle?: number;
   runPass: (input: DeepReviewPassInput) => Promise<DeepReviewPassResult>;
   refuteFinding: (input: DeepReviewFindingRefutationInput) => Promise<DeepReviewRefutationResult>;
   refutePass: (input: DeepReviewPassRefutationInput) => Promise<DeepReviewRefutationResult>;
@@ -101,6 +102,18 @@ const nonPassWithoutFinding = (pass: DeepReviewPassResult): DeepReviewSurvivingF
   severity: pass.verdict === "escalate" ? "high" : "medium",
 });
 
+const skippedFindingsFinding = (
+  pass: DeepReviewPassResult,
+  skippedCount: number,
+): DeepReviewSurvivingFinding => ({
+  id: `refutation-cap:${pass.angle}`,
+  angle: pass.angle,
+  title: `${skippedCount} ${pass.angle} finding(s) were not refuted`,
+  detail:
+    "Deep review capped per-angle finding refutations to keep the review bounded; unrefuted findings keep the verdict from passing.",
+  severity: pass.verdict === "escalate" ? "high" : "medium",
+});
+
 const verdictFor = (
   passResults: readonly DeepReviewPassResult[],
   findings: readonly DeepReviewSurvivingFinding[],
@@ -113,6 +126,14 @@ export const runDeepReview = async (input: DeepReviewInput): Promise<DeepReviewV
   const angles = input.angles ?? DEEP_REVIEW_ANGLES;
   if (angles.length < 2) {
     throw new Error("Deep review requires at least two independent angle passes");
+  }
+  const maxFindingsPerAngle = input.maxFindingsPerAngle ?? 2;
+  if (
+    !Number.isInteger(maxFindingsPerAngle) ||
+    maxFindingsPerAngle < 0 ||
+    maxFindingsPerAngle > 10
+  ) {
+    throw new Error("Deep review maxFindingsPerAngle must be an integer between 0 and 10");
   }
   const passResults: DeepReviewPassResult[] = [];
   const findings: DeepReviewSurvivingFinding[] = [];
@@ -128,7 +149,7 @@ export const runDeepReview = async (input: DeepReviewInput): Promise<DeepReviewV
     const pass = await input.runPass(passInput);
     passResults.push(pass);
 
-    for (const finding of pass.findings) {
+    for (const finding of pass.findings.slice(0, maxFindingsPerAngle)) {
       const refutation = await input.refuteFinding({ ...passInput, pass, finding });
       refutations.push({
         targetId: finding.id,
@@ -139,6 +160,8 @@ export const runDeepReview = async (input: DeepReviewInput): Promise<DeepReviewV
       });
       if (refutation.survives) findings.push({ ...finding, angle });
     }
+    const skippedFindings = pass.findings.length - maxFindingsPerAngle;
+    if (skippedFindings > 0) findings.push(skippedFindingsFinding(pass, skippedFindings));
 
     if (pass.verdict === "pass") {
       const refutation = await input.refutePass({ ...passInput, pass });
@@ -175,10 +198,23 @@ export interface RunAssignedDeepReviewInput {
   inputArtifacts: readonly WorkflowArtifact[];
   reviewerModel?: string;
   angles?: readonly DeepReviewAngle[];
+  maxFindingsPerAngle?: number;
+  onProgress?: (event: DeepReviewProgressEvent) => void;
   runRole: (
     roleId: "deep_reviewer",
     inputArtifacts: readonly WorkflowArtifact[],
   ) => Promise<WorkflowArtifact>;
+}
+
+export interface DeepReviewProgressEvent {
+  type: "deep_review_step";
+  issueId: string;
+  mode: "angle_pass" | "refute_finding" | "refute_pass";
+  angle: DeepReviewAngle;
+  angleIndex: number;
+  angleCount: number;
+  sequence: number;
+  findingId?: string;
 }
 
 const requestArtifact = (
@@ -231,13 +267,36 @@ export const runAssignedDeepReview = async (
 ): Promise<WorkflowArtifact> => {
   let sequence = 0;
   const reviewerModel = input.reviewerModel ?? "configured-deep-reviewer-runtime";
+  const angles = input.angles ?? DEEP_REVIEW_ANGLES;
+  const anglePosition = (angle: DeepReviewAngle): number => angles.indexOf(angle) + 1;
+  const emitProgress = (
+    mode: DeepReviewProgressEvent["mode"],
+    angle: DeepReviewAngle,
+    findingId?: string,
+  ): void => {
+    const progress: DeepReviewProgressEvent = {
+      type: "deep_review_step",
+      issueId: input.issueId,
+      mode,
+      angle,
+      angleIndex: anglePosition(angle),
+      angleCount: angles.length,
+      sequence: sequence + 1,
+    };
+    if (findingId !== undefined) progress.findingId = findingId;
+    input.onProgress?.(progress);
+  };
   const result = await runDeepReview({
     diff: "",
     changedFiles: [],
     reviewerModel,
-    ...(input.angles === undefined ? {} : { angles: input.angles }),
-    runPass: async ({ angle }) =>
-      passResultFromArtifact(
+    angles,
+    ...(input.maxFindingsPerAngle === undefined
+      ? {}
+      : { maxFindingsPerAngle: input.maxFindingsPerAngle }),
+    runPass: async ({ angle }) => {
+      emitProgress("angle_pass", angle);
+      return passResultFromArtifact(
         angle,
         await input.runRole("deep_reviewer", [
           ...input.inputArtifacts,
@@ -249,8 +308,10 @@ export const runAssignedDeepReview = async (
               "Run only this independent deep-review angle. Return checker.verdict: pass only if this angle finds no issues, changes_requested for grounded defects, escalate for uncertainty requiring human attention.",
           }),
         ]),
-      ),
+      );
+    },
     refuteFinding: async ({ angle, finding, pass }) => {
+      emitProgress("refute_finding", angle, finding.id);
       const payload = requireCheckerPayload(
         await input.runRole("deep_reviewer", [
           ...input.inputArtifacts,
@@ -268,6 +329,7 @@ export const runAssignedDeepReview = async (
       return { survives: payload.verdict === "pass", reason: refutationReason(payload) };
     },
     refutePass: async ({ angle, pass }) => {
+      emitProgress("refute_pass", angle);
       const payload = requireCheckerPayload(
         await input.runRole("deep_reviewer", [
           ...input.inputArtifacts,

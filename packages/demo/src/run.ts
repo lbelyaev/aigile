@@ -26,6 +26,7 @@ import {
   runAssignedDeepReview,
   runAssignedRole,
   type AcpRuntimeConnector,
+  type DeepReviewProgressEvent,
   type RoleRunner,
   type RoleRuntimeRegistry,
 } from "@aigile/roles";
@@ -80,6 +81,7 @@ export interface DemoWithRolesInput extends DemoIssueInput {
   verify?: (artifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact>;
   beforeVerification?: (artifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact[]>;
   beforePullRequest?: (artifacts: readonly WorkflowArtifact[]) => Promise<void>;
+  onDeepReviewProgress?: (event: DeepReviewProgressEvent) => void;
 }
 
 export interface DemoWithAcpRolesInput extends DemoIssueInput {
@@ -110,6 +112,7 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   runStatePath?: string;
   retryEscalated?: boolean;
   resumePublish?: boolean;
+  onDeepReviewProgress?: (event: DeepReviewProgressEvent) => void;
 }
 
 export interface DemoGitHubInput extends DemoIssueInput {
@@ -621,6 +624,9 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
           reviewerModel:
             input.registry.getRuntimeForRole("deep_reviewer").defaultModel ??
             input.registry.getRuntimeForRole("deep_reviewer").id,
+          ...(input.onDeepReviewProgress === undefined
+            ? {}
+            : { onProgress: input.onDeepReviewProgress }),
           runRole: (roleId, inputArtifacts) =>
             runAssignedRole({
               roleId,
@@ -1111,6 +1117,9 @@ export const runWorkspaceIssueWithEngine = async (
         commitMessage,
       });
     },
+    ...(input.onDeepReviewProgress === undefined
+      ? {}
+      : { onDeepReviewProgress: input.onDeepReviewProgress }),
     // Checkpoint each reviewed attempt (and restore to the best on regression) so the
     // loop hill-climbs. Dry-run forbids commits, so neither applies there.
     ...(input.dryRun === true

@@ -109,12 +109,55 @@ describe("deep review", () => {
     ]);
   });
 
+  it("caps per-angle finding refutations without green-lighting skipped findings", async () => {
+    const refutedFindingIds: string[] = [];
+    const result = await runDeepReview({
+      diff: "diff",
+      changedFiles: ["packages/demo/src/run.ts"],
+      reviewerModel: "independent-review-model",
+      angles: ["correctness", "cross-file"],
+      maxFindingsPerAngle: 2,
+      runPass: async ({ angle }) =>
+        angle === "correctness"
+          ? pass(angle, "changes_requested", [
+              { id: "f1", title: "Finding one", detail: "detail", severity: "medium" },
+              { id: "f2", title: "Finding two", detail: "detail", severity: "medium" },
+              { id: "f3", title: "Finding three", detail: "detail", severity: "medium" },
+              { id: "f4", title: "Finding four", detail: "detail", severity: "medium" },
+            ])
+          : pass(angle, "pass"),
+      refuteFinding: async ({ finding }) => {
+        refutedFindingIds.push(finding.id);
+        return { survives: false, reason: "refuted" };
+      },
+      refutePass: async () => ({ survives: true, reason: "no contradiction" }),
+    });
+
+    expect(refutedFindingIds).toEqual(["f1", "f2"]);
+    expect(result.verdict).toBe("changes_requested");
+    expect(result.findings).toEqual([
+      {
+        id: "refutation-cap:correctness",
+        angle: "correctness",
+        title: "2 correctness finding(s) were not refuted",
+        detail:
+          "Deep review capped per-angle finding refutations to keep the review bounded; unrefuted findings keep the verdict from passing.",
+        severity: "medium",
+      },
+    ]);
+  });
+
   it("orchestrates production deep review through multiple role calls and refutations", async () => {
     const requestModes: string[] = [];
+    const progress: string[] = [];
     const artifact = await runAssignedDeepReview({
       issueId: "LIN-1",
       inputArtifacts: [],
       reviewerModel: "independent-review-model",
+      onProgress: (event) =>
+        progress.push(
+          `${event.mode}:${event.angle}:${event.angleIndex}/${event.angleCount}:${event.sequence}`,
+        ),
       runRole: async (roleId, artifacts) => {
         expect(roleId).toBe("deep_reviewer");
         const request = artifacts.at(-1);
@@ -157,6 +200,16 @@ describe("deep review", () => {
       "refute_finding:cross-file",
       "angle_pass:tests-faithful-to-reality",
       "refute_pass:tests-faithful-to-reality",
+    ]);
+    expect(progress).toEqual([
+      "angle_pass:correctness:1/4:1",
+      "refute_pass:correctness:1/4:2",
+      "angle_pass:removed-behavior:2/4:3",
+      "refute_pass:removed-behavior:2/4:4",
+      "angle_pass:cross-file:3/4:5",
+      "refute_finding:cross-file:3/4:6",
+      "angle_pass:tests-faithful-to-reality:4/4:7",
+      "refute_pass:tests-faithful-to-reality:4/4:8",
     ]);
     expect(artifact.kind).toBe("checker.verdict");
     expect(artifact.producerRoleId).toBe("deep_reviewer");
