@@ -81,6 +81,7 @@ export type AcpRoleProgressEvent =
       issueId: string;
       runtimeId: string;
       artifactKind: string;
+      artifactPayload?: unknown;
     }
   | { type: "runtime_stopped"; roleId: string; issueId: string; runtimeId: string };
 
@@ -575,6 +576,7 @@ export const createAcpRoleRunner = (options: AcpRoleRunnerOptions = {}): RoleRun
           type: "artifact_parsed",
           ...progressBase(input),
           artifactKind: response.artifactKind,
+          artifactPayload: structuredClone(response.payload),
         });
         return {
           id: `agent:${input.issueId}:${input.roleId}:${response.artifactKind}`,

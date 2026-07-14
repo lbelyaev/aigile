@@ -52,7 +52,12 @@ import {
   type AcpRoleProgressEvent,
   type DeepReviewProgressEvent,
 } from "@aigile/roles";
-import { isArchitectPlanPayload, type WorkflowArtifact } from "@aigile/types";
+import {
+  isArchitectPlanPayload,
+  isCheckerVerdictPayload,
+  isDeveloperAttemptPayload,
+  type WorkflowArtifact,
+} from "@aigile/types";
 import {
   ClaimedRunFailure,
   defaultClaimComment,
@@ -339,6 +344,26 @@ const roleProgressDisplayEvent = (event: AcpRoleProgressEvent): DisplayRowEvent 
       severity: "success",
     };
   }
+  if (event.type === "tool_start") {
+    return {
+      type: "row",
+      issueKey: event.issueId,
+      source,
+      action: "tool started",
+      detail: event.tool,
+      severity: "info",
+    };
+  }
+  if (event.type === "tool_end") {
+    return {
+      type: "row",
+      issueKey: event.issueId,
+      source,
+      action: "tool finished",
+      detail: event.tool,
+      severity: "success",
+    };
+  }
   return {
     type: "row",
     issueKey: event.issueId,
@@ -382,7 +407,7 @@ export interface AcpRoleProgressFormatter {
 // Progress verbosity. "quiet" = lifecycle milestones + things needing attention
 // only; "normal" (default) keeps structured lifecycle milestones and suppresses
 // raw streams; "verbose" adds raw streams (thinking, subprocess stderr,
-// connection chatter, tool events, text) for debugging.
+// connection chatter, text, full artifacts, and full diffs) for debugging.
 export type ProgressLevel = "quiet" | "normal" | "verbose";
 
 const LEVEL_RANK: Record<ProgressLevel, number> = { quiet: 0, normal: 1, verbose: 2 };
@@ -395,14 +420,14 @@ const EVENT_MIN_LEVEL: Record<AcpRoleProgressEvent["type"], ProgressLevel> = {
   approval_request: "quiet",
   artifact_parsed: "quiet",
   text_delta: "verbose",
-  tool_start: "verbose",
+  tool_start: "normal",
   permission_decision: "verbose",
   runtime_stopped: "normal",
   runtime_connecting: "verbose",
   prompt_started: "verbose",
   thinking_delta: "verbose",
   runtime_stderr: "verbose",
-  tool_end: "verbose",
+  tool_end: "normal",
   token_usage: "verbose",
 };
 
@@ -426,6 +451,117 @@ const formatBufferedText = (
   const trimmed = text.trimEnd();
   if (trimmed.length === 0) return undefined;
   return `[${event.issueId} ${event.roleId}] text: ${trimmed}`;
+};
+
+const SUMMARY_PREFIX = "       ";
+
+const isRecordValue = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const boundedText = (value: string, maxLength = 240): string => {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+};
+
+const formatStringList = (values: readonly string[], maxItems = 5): string => {
+  const visible = values.slice(0, maxItems).map((value) => boundedText(value, 120));
+  const remaining = values.length - visible.length;
+  return remaining > 0 ? `${visible.join(", ")} (+${remaining} more)` : visible.join(", ");
+};
+
+const countPattern = (text: string, pattern: RegExp): number | undefined => {
+  const matches = [...text.matchAll(pattern)];
+  if (matches.length === 0) return undefined;
+  return matches.reduce((total, match) => total + Number(match[1]), 0);
+};
+
+const verificationCounts = (text: string): string | undefined => {
+  const passed = countPattern(text, /\b(\d+)\s+(?:pass|passed|passing)\b/gi);
+  const failed = countPattern(text, /\b(\d+)\s+(?:fail|failed|failing)\b/gi);
+  if (passed === undefined && failed === undefined) return undefined;
+  return [
+    ...(passed === undefined ? [] : [`${passed} passed`]),
+    ...(failed === undefined ? [] : [`${failed} failed`]),
+  ].join(", ");
+};
+
+const actionableLines = (text: string): string[] =>
+  text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        !/^\d+\s+(?:pass|passed|passing|fail|failed|failing)\b/i.test(line) &&
+        /(?:error|fail|failed|expected|not ok|exception|traceback)/i.test(line),
+    )
+    .slice(0, 3);
+
+const formatVerificationSummary = (payload: unknown): string[] => {
+  if (!isRecordValue(payload)) return [];
+  const lines: string[] = [];
+  if (typeof payload.status === "string") lines.push(`Status: ${boundedText(payload.status)}`);
+  const commands = Array.isArray(payload.commands) ? payload.commands : [];
+  for (const commandResult of commands) {
+    if (!isRecordValue(commandResult) || typeof commandResult.command !== "string") continue;
+    const args = Array.isArray(commandResult.args)
+      ? commandResult.args.filter((arg): arg is string => typeof arg === "string")
+      : [];
+    const exitCode =
+      typeof commandResult.exitCode === "number" ? commandResult.exitCode : undefined;
+    const commandLine = [commandResult.command, ...args].join(" ");
+    lines.push(
+      `Command: ${boundedText(commandLine)}${exitCode === undefined ? "" : ` (exit ${exitCode})`}`,
+    );
+    const output = [
+      typeof commandResult.stdout === "string" ? commandResult.stdout : "",
+      typeof commandResult.stderr === "string" ? commandResult.stderr : "",
+    ].join("\n");
+    const counts = verificationCounts(output);
+    if (counts !== undefined) lines.push(`Counts: ${counts}`);
+    for (const line of actionableLines(output)) lines.push(`Error: ${boundedText(line)}`);
+    break;
+  }
+  return lines;
+};
+
+const formatArtifactSummaryLines = (event: AcpRoleProgressEvent): string[] => {
+  if (event.type !== "artifact_parsed") return [];
+  const payload = event.artifactPayload;
+  const lines: string[] = [];
+  if (isCheckerVerdictPayload(payload)) {
+    lines.push(`Verdict: ${payload.verdict}`);
+    lines.push(`Summary: ${boundedText(payload.summary)}`);
+    if (payload.reasons.length > 0) lines.push(`Reasons: ${formatStringList(payload.reasons)}`);
+  } else if (isDeveloperAttemptPayload(payload)) {
+    lines.push(`Summary: ${boundedText(payload.summary)}`);
+    if (payload.changedFiles.length > 0) {
+      lines.push(`Changed files: ${formatStringList(payload.changedFiles)}`);
+    }
+    lines.push(`Verification: ${boundedText(payload.verificationNotes)}`);
+  } else if (isArchitectPlanPayload(payload)) {
+    lines.push(`Summary: ${boundedText(payload.summary)}`);
+    if (payload.scope.length > 0) lines.push(`Scope: ${formatStringList(payload.scope, 3)}`);
+    if (payload.verificationCommands.length > 0) {
+      lines.push(`Verification: ${formatStringList(payload.verificationCommands, 3)}`);
+    }
+    if (payload.risks.length > 0) lines.push(`Risks: ${formatStringList(payload.risks, 3)}`);
+  } else if (event.artifactKind === "verification.result") {
+    lines.push(...formatVerificationSummary(payload));
+  } else if (isRecordValue(payload) && typeof payload.summary === "string") {
+    lines.push(`Summary: ${boundedText(payload.summary)}`);
+  }
+  return lines.map((line) => `${SUMMARY_PREFIX}${line}`);
+};
+
+const formatVerboseArtifactJson = (event: AcpRoleProgressEvent): string[] => {
+  if (event.type !== "artifact_parsed" || event.artifactPayload === undefined) return [];
+  return [
+    `${SUMMARY_PREFIX}Artifact JSON:`,
+    ...JSON.stringify({ artifactKind: event.artifactKind, payload: event.artifactPayload }, null, 2)
+      .split("\n")
+      .map((line) => `${SUMMARY_PREFIX}${line}`),
+  ];
 };
 
 export const createAcpRoleProgressFormatter = (
@@ -456,12 +592,16 @@ export const createAcpRoleProgressFormatter = (
         return [
           ...flushKey(key),
           formatDisplayLine(roleProgressDisplayEvent(event), displayOptions),
+          ...(level === "normal" ? formatArtifactSummaryLines(event) : []),
         ].filter((line) => line.trim().length > 0);
       }
       if (event.type !== "text_delta") {
-        return [...flushKey(key), formatAcpRoleProgress(event)].filter(
-          (line) => line.trim().length > 0,
-        );
+        return [
+          ...flushKey(key),
+          formatAcpRoleProgress(event),
+          ...formatArtifactSummaryLines(event),
+          ...formatVerboseArtifactJson(event),
+        ].filter((line) => line.trim().length > 0);
       }
 
       const existing = buffers.get(key)?.text ?? "";
@@ -851,6 +991,7 @@ export interface IssueWorkspaceStatusInput {
   repoPath: string;
   worktreesPath: string;
   baseBranch: string;
+  progressLevel?: ProgressLevel;
   exec?: ExecCommand;
 }
 
@@ -862,11 +1003,25 @@ const workspaceStateLabel = (status: IssueWorkspaceStatus): string => {
   return "missing";
 };
 
-export const formatIssueWorkspaceStatus = (status: IssueWorkspaceStatus): string => {
-  const changedFiles =
+export interface IssueWorkspaceStatusFormatOptions {
+  level?: ProgressLevel | undefined;
+  unifiedDiff?: string | undefined;
+}
+
+export const formatIssueWorkspaceStatus = (
+  status: IssueWorkspaceStatus,
+  options: IssueWorkspaceStatusFormatOptions = {},
+): string => {
+  const workspaceDiff =
     status.changedFiles.length === 0
-      ? ["Changed files: none"]
-      : ["Changed files:", ...status.changedFiles.map((line) => `- ${line.trimStart()}`)];
+      ? ["Workspace diff: none"]
+      : ["Workspace diff:", ...status.changedFiles.map((line) => `- ${line.trimStart()}`)];
+  const verboseDiff =
+    options.level === "verbose" &&
+    options.unifiedDiff !== undefined &&
+    options.unifiedDiff.trim().length > 0
+      ? ["Unified diff:", options.unifiedDiff.trimEnd()]
+      : [];
   const details = [
     `Aigile status: ${status.workspace.issueKey}`,
     `Workspace: ${status.workspace.worktreePath}`,
@@ -875,7 +1030,8 @@ export const formatIssueWorkspaceStatus = (status: IssueWorkspaceStatus): string
     `Base: ${status.workspace.baseBranch}`,
     `State: ${workspaceStateLabel(status)}`,
     ...(status.message === undefined ? [] : [`Message: ${status.message.trimEnd()}`]),
-    ...changedFiles,
+    ...workspaceDiff,
+    ...verboseDiff,
     "Suggested next actions:",
     `- run ${status.workspace.issueKey} --agent-write to continue local agent work`,
     `- run ${status.workspace.issueKey} --publish to let Aigile commit, push, and open a PR`,
@@ -887,15 +1043,25 @@ export const formatIssueWorkspaceStatus = (status: IssueWorkspaceStatus): string
 export const runIssueWorkspaceStatus = async (
   input: IssueWorkspaceStatusInput,
 ): Promise<string> => {
+  const exec = input.exec ?? defaultExecCommand;
   const status = await createGitWorkspaceAdapter({
     repoPath: input.repoPath,
     worktreesPath: input.worktreesPath,
-    exec: input.exec ?? defaultExecCommand,
+    exec,
   }).getIssueWorkspaceStatus({
     issueKey: input.issueKey,
     baseBranch: input.baseBranch,
   });
-  return formatIssueWorkspaceStatus(status);
+  const diffResult =
+    input.progressLevel === "verbose" && status.state !== "missing"
+      ? await exec("git", ["diff"], { cwd: status.workspace.worktreePath })
+      : undefined;
+  return formatIssueWorkspaceStatus(status, {
+    ...(input.progressLevel === undefined ? {} : { level: input.progressLevel }),
+    ...(diffResult !== undefined && diffResult.exitCode === 0
+      ? { unifiedDiff: diffResult.stdout }
+      : {}),
+  });
 };
 
 export const runRunModePreflight = async (input: RunModePreflightInput): Promise<string> => {
@@ -1972,8 +2138,8 @@ const parsePositiveInteger = (value: string, name: string): number => {
 
 const resolveProgressLevel = (args: readonly string[]): ProgressLevel | undefined => {
   const quiet = args.includes("--quiet");
-  const verbose = args.includes("--verbose");
-  if (quiet && verbose) throw new Error("choose only one of --quiet or --verbose");
+  const verbose = args.includes("--verbose") || args.includes("--debug");
+  if (quiet && verbose) throw new Error("choose only one of --quiet, --verbose, or --debug");
   if (quiet) return "quiet";
   if (verbose) return "verbose";
   return undefined;
@@ -2433,6 +2599,7 @@ const main = async (): Promise<void> => {
       repoPath: args.repoPath ?? process.cwd(),
       worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
       baseBranch: args.baseBranch ?? "main",
+      ...(args.progressLevel === undefined ? {} : { progressLevel: args.progressLevel }),
     });
     process.stdout.write(`${output}\n`);
     return;
