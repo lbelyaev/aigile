@@ -50,6 +50,7 @@ import type {
 import {
   createAcpRoleRunner,
   type AcpRoleProgressEvent,
+  type DeepReviewAngle,
   type DeepReviewProgressEvent,
 } from "@aigile/roles";
 import {
@@ -161,7 +162,7 @@ export const formatDemoResult = (result: DemoResult): string => {
   ].join("\n");
 };
 
-export type DisplaySeverity = "info" | "success" | "warn" | "error";
+export type DisplaySeverity = "info" | "success" | "warn" | "error" | "muted";
 
 export type DisplaySourceLabel =
   | "architect"
@@ -215,6 +216,7 @@ const ANSI_BY_SEVERITY: Record<DisplaySeverity, string> = {
   success: "\x1b[32m",
   warn: "\x1b[33m",
   error: "\x1b[31m",
+  muted: "\x1b[2;90m",
 };
 
 const ANSI_RESET = "\x1b[0m";
@@ -227,6 +229,14 @@ const colorizeDisplay = (
   severity: DisplaySeverity,
   options: DisplayFormatterOptions,
 ): string => (shouldUseColor(options) ? `${ANSI_BY_SEVERITY[severity]}${line}${ANSI_RESET}` : line);
+
+const DETAIL_PREFIX = "  ";
+
+const formatDetailBlock = (lines: readonly string[]): string[] =>
+  lines.flatMap((line) => {
+    const splitLines = line.split(/\r?\n/);
+    return splitLines.map((splitLine) => `${DETAIL_PREFIX}${splitLine}`);
+  });
 
 const padDisplay = (value: string | undefined, width: number): string =>
   (value ?? "").padEnd(width);
@@ -242,13 +252,13 @@ export const formatDisplayEvent = (
   if (event.type === "daemon_startup") {
     const header = colorizeDisplay("aigile  daemon started", event.severity, options);
     const detailLines = [
-      `       products: ${event.products.length === 0 ? "none" : event.products.join(", ")}`,
+      `products: ${event.products.length === 0 ? "none" : event.products.join(", ")}`,
       ...(event.globalMaxConcurrentRuns === undefined
         ? []
-        : [`       concurrency: global=${event.globalMaxConcurrentRuns}`]),
-      ...(event.detail === undefined ? [] : [`       ${event.detail}`]),
+        : [`concurrency: global=${event.globalMaxConcurrentRuns}`]),
+      ...(event.detail === undefined ? [] : [event.detail]),
     ];
-    return [header, ...detailLines].join("\n");
+    return [header, ...formatDetailBlock(detailLines)].join("\n");
   }
 
   const base = `${padDisplay(event.issueKey, DISPLAY_COLUMNS.issueKey)}  ${padDisplay(
@@ -263,6 +273,16 @@ export const formatDisplayEvent = (
 
 const formatDisplayLine = (event: DisplayEvent, options: DisplayFormatterOptions = {}): string =>
   formatDisplayEvent(event, options);
+
+const DEEP_REVIEW_ANGLE_DESCRIPTIONS: Record<DeepReviewAngle, string> = {
+  correctness: "Functional correctness; bugs, wrong edge cases, invalid assumptions.",
+  "removed-behavior":
+    "Removed behavior; existing behavior, compatibility, or operator guarantees lost by the change.",
+  "cross-file":
+    "Cross-file consistency; related files, contracts, callers, and schemas updated together.",
+  "tests-faithful-to-reality":
+    "Test realism; tests exercise realistic behavior and would catch the defect.",
+};
 
 const deepReviewProgressDisplayEvent = (event: DeepReviewProgressEvent): DisplayRowEvent => {
   const action =
@@ -290,7 +310,11 @@ const deepReviewProgressDisplayEvent = (event: DeepReviewProgressEvent): Display
 export const formatDeepReviewProgress = (
   event: DeepReviewProgressEvent,
   options: DisplayFormatterOptions = {},
-): string => formatDisplayLine(deepReviewProgressDisplayEvent(event), options);
+): string => {
+  const row = formatDisplayLine(deepReviewProgressDisplayEvent(event), options);
+  if (event.mode !== "angle_pass") return row;
+  return [row, ...formatDetailBlock([DEEP_REVIEW_ANGLE_DESCRIPTIONS[event.angle]])].join("\n");
+};
 
 const roleProgressDisplayEvent = (event: AcpRoleProgressEvent): DisplayRowEvent => {
   const source = event.roleId as DisplaySourceLabel;
@@ -350,8 +374,9 @@ const roleProgressDisplayEvent = (event: AcpRoleProgressEvent): DisplayRowEvent 
       issueKey: event.issueId,
       source,
       action: "tool started",
-      detail: event.tool,
-      severity: "info",
+      detail:
+        event.detail === undefined ? event.tool : `${event.tool} ${boundedText(event.detail, 140)}`,
+      severity: "muted",
     };
   }
   if (event.type === "tool_end") {
@@ -360,8 +385,9 @@ const roleProgressDisplayEvent = (event: AcpRoleProgressEvent): DisplayRowEvent 
       issueKey: event.issueId,
       source,
       action: "tool finished",
-      detail: event.tool,
-      severity: "success",
+      detail:
+        event.detail === undefined ? event.tool : `${event.tool} ${boundedText(event.detail, 140)}`,
+      severity: "muted",
     };
   }
   return {
@@ -386,8 +412,12 @@ export const formatAcpRoleProgress = (event: AcpRoleProgressEvent): string => {
   if (event.type === "text_delta") return `${prefix} text: ${event.delta.trimEnd()}`;
   if (event.type === "thinking_delta") return `${prefix} thinking`;
   if (event.type === "token_usage") return "";
-  if (event.type === "tool_start") return `${prefix} tool started: ${event.tool}`;
-  if (event.type === "tool_end") return `${prefix} tool finished: ${event.tool}`;
+  if (event.type === "tool_start") {
+    return `${prefix} tool started: ${event.tool}${event.detail === undefined ? "" : ` ${event.detail}`}`;
+  }
+  if (event.type === "tool_end") {
+    return `${prefix} tool finished: ${event.tool}${event.detail === undefined ? "" : ` ${event.detail}`}`;
+  }
   if (event.type === "policy_violation") {
     return `${prefix} policy violation ${event.reason}: ${event.detail}`;
   }
@@ -453,7 +483,7 @@ const formatBufferedText = (
   return `[${event.issueId} ${event.roleId}] text: ${trimmed}`;
 };
 
-const SUMMARY_PREFIX = "       ";
+const SUMMARY_PREFIX = DETAIL_PREFIX;
 
 const isRecordValue = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -468,6 +498,17 @@ const formatStringList = (values: readonly string[], maxItems = 5): string => {
   const visible = values.slice(0, maxItems).map((value) => boundedText(value, 120));
   const remaining = values.length - visible.length;
   return remaining > 0 ? `${visible.join(", ")} (+${remaining} more)` : visible.join(", ");
+};
+
+const formatBullets = (label: string, values: readonly string[], maxItems = 5): string[] => {
+  if (values.length === 0) return [];
+  const visible = values.slice(0, maxItems).map((value) => boundedText(value, 180));
+  const remaining = values.length - visible.length;
+  return [
+    label,
+    ...visible.map((value) => `- ${value}`),
+    ...(remaining > 0 ? [`- +${remaining} more`] : []),
+  ];
 };
 
 const countPattern = (text: string, pattern: RegExp): number | undefined => {
@@ -530,26 +571,26 @@ const formatArtifactSummaryLines = (event: AcpRoleProgressEvent): string[] => {
   const payload = event.artifactPayload;
   const lines: string[] = [];
   if (isCheckerVerdictPayload(payload)) {
-    lines.push(`Verdict: ${payload.verdict}`);
-    lines.push(`Summary: ${boundedText(payload.summary)}`);
-    if (payload.reasons.length > 0) lines.push(`Reasons: ${formatStringList(payload.reasons)}`);
+    lines.push(`verdict ${payload.verdict}`);
+    lines.push(`summary ${boundedText(payload.summary)}`);
+    lines.push(...formatBullets("reasons", payload.reasons));
   } else if (isDeveloperAttemptPayload(payload)) {
-    lines.push(`Summary: ${boundedText(payload.summary)}`);
+    lines.push(`summary ${boundedText(payload.summary)}`);
     if (payload.changedFiles.length > 0) {
-      lines.push(`Changed files: ${formatStringList(payload.changedFiles)}`);
+      lines.push(`changed files ${formatStringList(payload.changedFiles)}`);
     }
-    lines.push(`Verification: ${boundedText(payload.verificationNotes)}`);
+    lines.push(`verification ${boundedText(payload.verificationNotes)}`);
   } else if (isArchitectPlanPayload(payload)) {
-    lines.push(`Summary: ${boundedText(payload.summary)}`);
-    if (payload.scope.length > 0) lines.push(`Scope: ${formatStringList(payload.scope, 3)}`);
+    lines.push(`summary ${boundedText(payload.summary)}`);
+    if (payload.scope.length > 0) lines.push(`scope ${formatStringList(payload.scope, 3)}`);
     if (payload.verificationCommands.length > 0) {
-      lines.push(`Verification: ${formatStringList(payload.verificationCommands, 3)}`);
+      lines.push(`verification ${formatStringList(payload.verificationCommands, 3)}`);
     }
-    if (payload.risks.length > 0) lines.push(`Risks: ${formatStringList(payload.risks, 3)}`);
+    if (payload.risks.length > 0) lines.push(`risks ${formatStringList(payload.risks, 3)}`);
   } else if (event.artifactKind === "verification.result") {
     lines.push(...formatVerificationSummary(payload));
   } else if (isRecordValue(payload) && typeof payload.summary === "string") {
-    lines.push(`Summary: ${boundedText(payload.summary)}`);
+    lines.push(`summary ${boundedText(payload.summary)}`);
   }
   return lines.map((line) => `${SUMMARY_PREFIX}${line}`);
 };
@@ -571,6 +612,7 @@ export const createAcpRoleProgressFormatter = (
   const level = options.level ?? "normal";
   const displayOptions = options.display ?? {};
   const buffers = new Map<string, { issueId: string; roleId: string; text: string }>();
+  const toolCounts = new Map<string, Map<string, number>>();
 
   const flushKey = (key: string): string[] => {
     const buffer = buffers.get(key);
@@ -578,6 +620,27 @@ export const createAcpRoleProgressFormatter = (
     buffers.delete(key);
     const line = formatBufferedText(buffer, buffer.text);
     return line === undefined ? [] : [line];
+  };
+
+  const recordTool = (event: Extract<AcpRoleProgressEvent, { type: "tool_start" }>): void => {
+    const key = progressKey(event);
+    const counts = toolCounts.get(key) ?? new Map<string, number>();
+    const label =
+      event.detail === undefined ? event.tool : `${event.tool} ${boundedText(event.detail, 120)}`;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+    toolCounts.set(key, counts);
+  };
+
+  const flushToolSummary = (
+    event: Pick<AcpRoleProgressEvent, "issueId" | "roleId" | "runtimeId">,
+  ): string[] => {
+    const key = progressKey(event);
+    const counts = toolCounts.get(key);
+    if (counts === undefined || counts.size === 0) return [];
+    toolCounts.delete(key);
+    const summary = [...counts.entries()].map(([tool, count]) => `${count} ${tool}`).join(" · ");
+    const line = `${DETAIL_PREFIX}tools ${summary}`;
+    return [colorizeDisplay(line, "muted", displayOptions)];
   };
 
   return {
@@ -588,9 +651,17 @@ export const createAcpRoleProgressFormatter = (
       if (!isEventVisible(level, event.type)) {
         return flushKey(key);
       }
+      if (level === "normal" && event.type === "tool_start") {
+        recordTool(event);
+        return flushKey(key);
+      }
+      if (level === "normal" && event.type === "tool_end") {
+        return flushKey(key);
+      }
       if (level !== "verbose") {
         return [
           ...flushKey(key),
+          ...flushToolSummary(event),
           formatDisplayLine(roleProgressDisplayEvent(event), displayOptions),
           ...(level === "normal" ? formatArtifactSummaryLines(event) : []),
         ].filter((line) => line.trim().length > 0);
@@ -630,6 +701,10 @@ export const createAcpRoleProgressFormatter = (
       const lines: string[] = [];
       for (const key of [...buffers.keys()]) {
         lines.push(...flushKey(key));
+      }
+      for (const key of [...toolCounts.keys()]) {
+        const [issueId = "", roleId = "", runtimeId = ""] = key.split("\0");
+        lines.push(...flushToolSummary({ issueId, roleId, runtimeId }));
       }
       return lines;
     },

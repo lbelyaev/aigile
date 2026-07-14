@@ -458,6 +458,23 @@ describe("cli formatting", () => {
         findingId: "cross-file:1",
       }),
     ).toBe("LIN-123           deep_reviewer  refute finding   3/4 cross-file call 6 cross-file:1");
+
+    expect(
+      formatDeepReviewProgress({
+        type: "deep_review_step",
+        issueId: "LIN-123",
+        mode: "angle_pass",
+        angle: "removed-behavior",
+        angleIndex: 2,
+        angleCount: 4,
+        sequence: 4,
+      }),
+    ).toBe(
+      [
+        "LIN-123           deep_reviewer  review angle     2/4 removed-behavior call 4",
+        "  Removed behavior; existing behavior, compatibility, or operator guarantees lost by the change.",
+      ].join("\n"),
+    );
   });
 
   it("coalesces small ACP text deltas before printing progress", () => {
@@ -549,9 +566,9 @@ describe("cli formatting", () => {
         detail: "developer.attempt",
         severity: "success",
       }),
-      "       Summary: Updated pretty logs.",
-      "       Changed files: packages/cli/src/main.ts, packages/cli/src/main.test.ts",
-      "       Verification: bun test packages/cli is expected to pass.",
+      "  summary Updated pretty logs.",
+      "  changed files packages/cli/src/main.ts, packages/cli/src/main.test.ts",
+      "  verification bun test packages/cli is expected to pass.",
     ]);
   });
 
@@ -572,20 +589,21 @@ describe("cli formatting", () => {
       }),
     ).toEqual([
       "[LIN-9 checker] artifact parsed: checker.verdict",
-      "       Verdict: changes_requested",
-      "       Summary: One issue remains.",
-      "       Reasons: Missing test coverage",
-      "       Artifact JSON:",
-      "       {",
-      '         "artifactKind": "checker.verdict",',
-      '         "payload": {',
-      '           "verdict": "changes_requested",',
-      '           "summary": "One issue remains.",',
-      '           "reasons": [',
-      '             "Missing test coverage"',
-      "           ]",
-      "         }",
-      "       }",
+      "  verdict changes_requested",
+      "  summary One issue remains.",
+      "  reasons",
+      "  - Missing test coverage",
+      "  Artifact JSON:",
+      "  {",
+      '    "artifactKind": "checker.verdict",',
+      '    "payload": {',
+      '      "verdict": "changes_requested",',
+      '      "summary": "One issue remains.",',
+      '      "reasons": [',
+      '        "Missing test coverage"',
+      "      ]",
+      "    }",
+      "  }",
     ]);
   });
 
@@ -620,10 +638,10 @@ describe("cli formatting", () => {
         detail: "verification.result",
         severity: "success",
       }),
-      "       Status: failed",
-      "       Command: bun test packages/cli (exit 1)",
-      "       Counts: 1 passed, 2 failed",
-      "       Error: error: expected value to be true",
+      "  Status: failed",
+      "  Command: bun test packages/cli (exit 1)",
+      "  Counts: 1 passed, 2 failed",
+      "  Error: error: expected value to be true",
     ]);
   });
 
@@ -639,24 +657,31 @@ describe("cli formatting", () => {
     const formatter = createAcpRoleProgressFormatter();
     const base = { roleId: "developer", issueId: "LIN-9", runtimeId: "codex-acp" };
 
-    expect(formatter.format({ type: "tool_start", ...base, tool: "Bash" })).toEqual([
-      formatDisplayEvent({
-        type: "row",
-        issueKey: "LIN-9",
-        source: "developer",
-        action: "tool started",
-        detail: "Bash",
-        severity: "info",
+    expect(
+      formatter.format({
+        type: "tool_start",
+        ...base,
+        tool: "Bash",
+        detail: "bun test packages/cli/src/main.test.ts",
       }),
-    ]);
-    expect(formatter.format({ type: "tool_end", ...base, tool: "Bash" })).toEqual([
+    ).toEqual([]);
+    expect(
+      formatter.format({
+        type: "tool_end",
+        ...base,
+        tool: "Bash",
+        detail: "bun test packages/cli/src/main.test.ts",
+      }),
+    ).toEqual([]);
+    expect(formatter.format({ type: "runtime_stopped", ...base })).toEqual([
+      "  tools 1 Bash bun test packages/cli/src/main.test.ts",
       formatDisplayEvent({
         type: "row",
         issueKey: "LIN-9",
         source: "developer",
-        action: "tool finished",
-        detail: "Bash",
-        severity: "success",
+        action: "stopped",
+        detail: "codex-acp",
+        severity: "info",
       }),
     ]);
   });
@@ -2088,9 +2113,7 @@ describe("cli formatting", () => {
         { pollIntervalMs: 30_000 },
       ),
     ).toBe(
-      ["aigile  daemon started", "       products: web, api", "       poll interval: 30000ms"].join(
-        "\n",
-      ),
+      ["aigile  daemon started", "  products: web, api", "  poll interval: 30000ms"].join("\n"),
     );
   });
 
