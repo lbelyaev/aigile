@@ -496,8 +496,6 @@ describe("engine command handlers", () => {
       "refute_pass:removed-behavior",
       "angle_pass:cross-file",
       "refute_finding:cross-file",
-      "angle_pass:tests-faithful-to-reality",
-      "refute_pass:tests-faithful-to-reality",
     ]);
     // A deep reviewer's change-request routes to its own event so the FSM grants
     // it the larger deep-review retry budget.

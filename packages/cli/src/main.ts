@@ -50,6 +50,7 @@ import type {
 import {
   createAcpRoleRunner,
   type AcpRoleProgressEvent,
+  type DeepReviewAngle,
   type DeepReviewProgressEvent,
 } from "@aigile/roles";
 import {
@@ -161,7 +162,7 @@ export const formatDemoResult = (result: DemoResult): string => {
   ].join("\n");
 };
 
-export type DisplaySeverity = "info" | "success" | "warn" | "error";
+export type DisplaySeverity = "info" | "success" | "warn" | "error" | "muted";
 
 export type DisplaySourceLabel =
   | "architect"
@@ -203,18 +204,20 @@ export interface DisplayFormatterOptions {
   env?: Record<string, string | undefined> | undefined;
 }
 
-const DISPLAY_COLUMNS = {
-  issueKey: 7,
-  productId: 7,
-  source: 13,
-  action: 16,
-} as const;
+const DISPLAY_MARKER_BY_SEVERITY: Record<DisplaySeverity, string> = {
+  info: "●",
+  success: "✓",
+  warn: "!",
+  error: "×",
+  muted: "·",
+};
 
 const ANSI_BY_SEVERITY: Record<DisplaySeverity, string> = {
   info: "\x1b[36m",
   success: "\x1b[32m",
   warn: "\x1b[33m",
   error: "\x1b[31m",
+  muted: "\x1b[2;90m",
 };
 
 const ANSI_RESET = "\x1b[0m";
@@ -228,8 +231,13 @@ const colorizeDisplay = (
   options: DisplayFormatterOptions,
 ): string => (shouldUseColor(options) ? `${ANSI_BY_SEVERITY[severity]}${line}${ANSI_RESET}` : line);
 
-const padDisplay = (value: string | undefined, width: number): string =>
-  (value ?? "").padEnd(width);
+const DETAIL_PREFIX = "  ";
+
+const formatDetailBlock = (lines: readonly string[]): string[] =>
+  lines.flatMap((line) => {
+    const splitLines = line.split(/\r?\n/);
+    return splitLines.map((splitLine) => `${DETAIL_PREFIX}${splitLine}`);
+  });
 
 const ANSI_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 
@@ -242,27 +250,41 @@ export const formatDisplayEvent = (
   if (event.type === "daemon_startup") {
     const header = colorizeDisplay("aigile  daemon started", event.severity, options);
     const detailLines = [
-      `       products: ${event.products.length === 0 ? "none" : event.products.join(", ")}`,
+      `products: ${event.products.length === 0 ? "none" : event.products.join(", ")}`,
       ...(event.globalMaxConcurrentRuns === undefined
         ? []
-        : [`       concurrency: global=${event.globalMaxConcurrentRuns}`]),
-      ...(event.detail === undefined ? [] : [`       ${event.detail}`]),
+        : [`concurrency: global=${event.globalMaxConcurrentRuns}`]),
+      ...(event.detail === undefined ? [] : [event.detail]),
     ];
-    return [header, ...detailLines].join("\n");
+    return [header, ...formatDetailBlock(detailLines)].join("\n");
   }
 
-  const base = `${padDisplay(event.issueKey, DISPLAY_COLUMNS.issueKey)}  ${padDisplay(
-    event.productId,
-    DISPLAY_COLUMNS.productId,
-  )}  ${padDisplay(event.source, DISPLAY_COLUMNS.source)}  ${padDisplay(
-    event.action,
-    DISPLAY_COLUMNS.action,
-  )}${event.detail === undefined ? "" : ` ${event.detail}`}`.trimEnd();
+  const scope = [event.issueKey, event.productId === undefined ? undefined : `[${event.productId}]`]
+    .filter((value): value is string => value !== undefined && value.length > 0)
+    .join(" ");
+  const base = [
+    DISPLAY_MARKER_BY_SEVERITY[event.severity],
+    scope,
+    `${event.source} › ${event.action}`,
+    event.detail,
+  ]
+    .filter((value): value is string => value !== undefined && value.length > 0)
+    .join("  ");
   return colorizeDisplay(base, event.severity, options);
 };
 
 const formatDisplayLine = (event: DisplayEvent, options: DisplayFormatterOptions = {}): string =>
   formatDisplayEvent(event, options);
+
+const DEEP_REVIEW_ANGLE_DESCRIPTIONS: Record<DeepReviewAngle, string> = {
+  correctness: "Functional correctness; bugs, wrong edge cases, invalid assumptions.",
+  "removed-behavior":
+    "Removed behavior; existing behavior, compatibility, or operator guarantees lost by the change.",
+  "cross-file":
+    "Cross-file consistency; related files, contracts, callers, and schemas updated together.",
+  "tests-faithful-to-reality":
+    "Test realism; tests exercise realistic behavior and would catch the defect.",
+};
 
 const deepReviewProgressDisplayEvent = (event: DeepReviewProgressEvent): DisplayRowEvent => {
   const action =
@@ -276,6 +298,10 @@ const deepReviewProgressDisplayEvent = (event: DeepReviewProgressEvent): Display
     event.angle,
     `call ${event.sequence}`,
   ];
+  if (event.completedSubcalls !== undefined && event.totalSubcalls !== undefined) {
+    detailParts.push(`done ${event.completedSubcalls}/${event.totalSubcalls}`);
+  }
+  if (event.elapsedMs !== undefined) detailParts.push(`+${event.elapsedMs}ms`);
   if (event.findingId !== undefined) detailParts.push(event.findingId);
   return {
     type: "row",
@@ -290,7 +316,11 @@ const deepReviewProgressDisplayEvent = (event: DeepReviewProgressEvent): Display
 export const formatDeepReviewProgress = (
   event: DeepReviewProgressEvent,
   options: DisplayFormatterOptions = {},
-): string => formatDisplayLine(deepReviewProgressDisplayEvent(event), options);
+): string => {
+  const row = formatDisplayLine(deepReviewProgressDisplayEvent(event), options);
+  if (event.mode !== "angle_pass") return row;
+  return [row, ...formatDetailBlock([DEEP_REVIEW_ANGLE_DESCRIPTIONS[event.angle]])].join("\n");
+};
 
 const roleProgressDisplayEvent = (event: AcpRoleProgressEvent): DisplayRowEvent => {
   const source = event.roleId as DisplaySourceLabel;
@@ -350,8 +380,9 @@ const roleProgressDisplayEvent = (event: AcpRoleProgressEvent): DisplayRowEvent 
       issueKey: event.issueId,
       source,
       action: "tool started",
-      detail: event.tool,
-      severity: "info",
+      detail:
+        event.detail === undefined ? event.tool : `${event.tool} ${boundedText(event.detail, 140)}`,
+      severity: "muted",
     };
   }
   if (event.type === "tool_end") {
@@ -360,8 +391,9 @@ const roleProgressDisplayEvent = (event: AcpRoleProgressEvent): DisplayRowEvent 
       issueKey: event.issueId,
       source,
       action: "tool finished",
-      detail: event.tool,
-      severity: "success",
+      detail:
+        event.detail === undefined ? event.tool : `${event.tool} ${boundedText(event.detail, 140)}`,
+      severity: "muted",
     };
   }
   return {
@@ -386,8 +418,12 @@ export const formatAcpRoleProgress = (event: AcpRoleProgressEvent): string => {
   if (event.type === "text_delta") return `${prefix} text: ${event.delta.trimEnd()}`;
   if (event.type === "thinking_delta") return `${prefix} thinking`;
   if (event.type === "token_usage") return "";
-  if (event.type === "tool_start") return `${prefix} tool started: ${event.tool}`;
-  if (event.type === "tool_end") return `${prefix} tool finished: ${event.tool}`;
+  if (event.type === "tool_start") {
+    return `${prefix} tool started: ${event.tool}${event.detail === undefined ? "" : ` ${event.detail}`}`;
+  }
+  if (event.type === "tool_end") {
+    return `${prefix} tool finished: ${event.tool}${event.detail === undefined ? "" : ` ${event.detail}`}`;
+  }
   if (event.type === "policy_violation") {
     return `${prefix} policy violation ${event.reason}: ${event.detail}`;
   }
@@ -453,7 +489,7 @@ const formatBufferedText = (
   return `[${event.issueId} ${event.roleId}] text: ${trimmed}`;
 };
 
-const SUMMARY_PREFIX = "       ";
+const SUMMARY_PREFIX = DETAIL_PREFIX;
 
 const isRecordValue = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -468,6 +504,49 @@ const formatStringList = (values: readonly string[], maxItems = 5): string => {
   const visible = values.slice(0, maxItems).map((value) => boundedText(value, 120));
   const remaining = values.length - visible.length;
   return remaining > 0 ? `${visible.join(", ")} (+${remaining} more)` : visible.join(", ");
+};
+
+const wrapDetailText = (
+  prefix: string,
+  continuationPrefix: string,
+  value: string,
+  maxWidth = 118,
+): string[] => {
+  const words = value.split(/\s+/).filter((word) => word.length > 0);
+  if (words.length === 0) return [prefix.trimEnd()];
+  const lines: string[] = [];
+  let current = prefix;
+  for (const word of words) {
+    const separator = current === prefix || current === continuationPrefix ? "" : " ";
+    const candidate = `${current}${separator}${word}`;
+    if (stripAnsi(candidate).length <= maxWidth || current === prefix) {
+      current = candidate;
+      continue;
+    }
+    lines.push(current);
+    current = `${continuationPrefix}${word}`;
+  }
+  lines.push(current);
+  return lines;
+};
+
+const formatDetailValue = (label: string, value: string): string[] => {
+  const prefix = `${DETAIL_PREFIX}${label}: `;
+  const continuationPrefix = `${DETAIL_PREFIX}${" ".repeat(label.length + 2)}`;
+  return wrapDetailText(prefix, continuationPrefix, boundedText(value, 420));
+};
+
+const formatDetailList = (label: string, values: readonly string[], maxItems = 5): string[] => {
+  if (values.length === 0) return [];
+  const visible = values.slice(0, maxItems).map((value) => boundedText(value, 180));
+  const remaining = values.length - visible.length;
+  return [
+    `${DETAIL_PREFIX}${label}:`,
+    ...visible.flatMap((value) =>
+      wrapDetailText(`${DETAIL_PREFIX}  - `, `${DETAIL_PREFIX}    `, value),
+    ),
+    ...(remaining > 0 ? [`${DETAIL_PREFIX}  - +${remaining} more`] : []),
+  ];
 };
 
 const countPattern = (text: string, pattern: RegExp): number | undefined => {
@@ -500,7 +579,8 @@ const actionableLines = (text: string): string[] =>
 const formatVerificationSummary = (payload: unknown): string[] => {
   if (!isRecordValue(payload)) return [];
   const lines: string[] = [];
-  if (typeof payload.status === "string") lines.push(`Status: ${boundedText(payload.status)}`);
+  if (typeof payload.status === "string")
+    lines.push(...formatDetailValue("Status", payload.status));
   const commands = Array.isArray(payload.commands) ? payload.commands : [];
   for (const commandResult of commands) {
     if (!isRecordValue(commandResult) || typeof commandResult.command !== "string") continue;
@@ -511,15 +591,18 @@ const formatVerificationSummary = (payload: unknown): string[] => {
       typeof commandResult.exitCode === "number" ? commandResult.exitCode : undefined;
     const commandLine = [commandResult.command, ...args].join(" ");
     lines.push(
-      `Command: ${boundedText(commandLine)}${exitCode === undefined ? "" : ` (exit ${exitCode})`}`,
+      ...formatDetailValue(
+        "Command",
+        `${commandLine}${exitCode === undefined ? "" : ` (exit ${exitCode})`}`,
+      ),
     );
     const output = [
       typeof commandResult.stdout === "string" ? commandResult.stdout : "",
       typeof commandResult.stderr === "string" ? commandResult.stderr : "",
     ].join("\n");
     const counts = verificationCounts(output);
-    if (counts !== undefined) lines.push(`Counts: ${counts}`);
-    for (const line of actionableLines(output)) lines.push(`Error: ${boundedText(line)}`);
+    if (counts !== undefined) lines.push(...formatDetailValue("Counts", counts));
+    for (const line of actionableLines(output)) lines.push(...formatDetailValue("Error", line));
     break;
   }
   return lines;
@@ -530,28 +613,34 @@ const formatArtifactSummaryLines = (event: AcpRoleProgressEvent): string[] => {
   const payload = event.artifactPayload;
   const lines: string[] = [];
   if (isCheckerVerdictPayload(payload)) {
-    lines.push(`Verdict: ${payload.verdict}`);
-    lines.push(`Summary: ${boundedText(payload.summary)}`);
-    if (payload.reasons.length > 0) lines.push(`Reasons: ${formatStringList(payload.reasons)}`);
+    lines.push(...formatDetailValue("Verdict", payload.verdict));
+    lines.push(...formatDetailValue("Summary", payload.summary));
+    lines.push(...formatDetailList("Reasons", payload.reasons));
   } else if (isDeveloperAttemptPayload(payload)) {
-    lines.push(`Summary: ${boundedText(payload.summary)}`);
+    lines.push(...formatDetailValue("Summary", payload.summary));
     if (payload.changedFiles.length > 0) {
-      lines.push(`Changed files: ${formatStringList(payload.changedFiles)}`);
+      lines.push(...formatDetailValue("Changed files", formatStringList(payload.changedFiles)));
     }
-    lines.push(`Verification: ${boundedText(payload.verificationNotes)}`);
+    lines.push(...formatDetailValue("Verification", payload.verificationNotes));
   } else if (isArchitectPlanPayload(payload)) {
-    lines.push(`Summary: ${boundedText(payload.summary)}`);
-    if (payload.scope.length > 0) lines.push(`Scope: ${formatStringList(payload.scope, 3)}`);
-    if (payload.verificationCommands.length > 0) {
-      lines.push(`Verification: ${formatStringList(payload.verificationCommands, 3)}`);
+    lines.push(...formatDetailValue("Summary", payload.summary));
+    if (payload.scope.length > 0) {
+      lines.push(...formatDetailValue("Scope", formatStringList(payload.scope, 3)));
     }
-    if (payload.risks.length > 0) lines.push(`Risks: ${formatStringList(payload.risks, 3)}`);
+    if (payload.verificationCommands.length > 0) {
+      lines.push(
+        ...formatDetailValue("Verification", formatStringList(payload.verificationCommands, 3)),
+      );
+    }
+    if (payload.risks.length > 0) {
+      lines.push(...formatDetailValue("Risks", formatStringList(payload.risks, 3)));
+    }
   } else if (event.artifactKind === "verification.result") {
     lines.push(...formatVerificationSummary(payload));
   } else if (isRecordValue(payload) && typeof payload.summary === "string") {
-    lines.push(`Summary: ${boundedText(payload.summary)}`);
+    lines.push(...formatDetailValue("Summary", payload.summary));
   }
-  return lines.map((line) => `${SUMMARY_PREFIX}${line}`);
+  return lines;
 };
 
 const formatVerboseArtifactJson = (event: AcpRoleProgressEvent): string[] => {
@@ -571,6 +660,7 @@ export const createAcpRoleProgressFormatter = (
   const level = options.level ?? "normal";
   const displayOptions = options.display ?? {};
   const buffers = new Map<string, { issueId: string; roleId: string; text: string }>();
+  const toolCounts = new Map<string, Map<string, number>>();
 
   const flushKey = (key: string): string[] => {
     const buffer = buffers.get(key);
@@ -578,6 +668,27 @@ export const createAcpRoleProgressFormatter = (
     buffers.delete(key);
     const line = formatBufferedText(buffer, buffer.text);
     return line === undefined ? [] : [line];
+  };
+
+  const recordTool = (event: Extract<AcpRoleProgressEvent, { type: "tool_start" }>): void => {
+    const key = progressKey(event);
+    const counts = toolCounts.get(key) ?? new Map<string, number>();
+    const label =
+      event.detail === undefined ? event.tool : `${event.tool} ${boundedText(event.detail, 120)}`;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+    toolCounts.set(key, counts);
+  };
+
+  const flushToolSummary = (
+    event: Pick<AcpRoleProgressEvent, "issueId" | "roleId" | "runtimeId">,
+  ): string[] => {
+    const key = progressKey(event);
+    const counts = toolCounts.get(key);
+    if (counts === undefined || counts.size === 0) return [];
+    toolCounts.delete(key);
+    const summary = [...counts.entries()].map(([tool, count]) => `${count} ${tool}`).join(" · ");
+    const line = `${DETAIL_PREFIX}tools ${summary}`;
+    return [colorizeDisplay(line, "muted", displayOptions)];
   };
 
   return {
@@ -588,9 +699,17 @@ export const createAcpRoleProgressFormatter = (
       if (!isEventVisible(level, event.type)) {
         return flushKey(key);
       }
+      if (level === "normal" && event.type === "tool_start") {
+        recordTool(event);
+        return flushKey(key);
+      }
+      if (level === "normal" && event.type === "tool_end") {
+        return flushKey(key);
+      }
       if (level !== "verbose") {
         return [
           ...flushKey(key),
+          ...flushToolSummary(event),
           formatDisplayLine(roleProgressDisplayEvent(event), displayOptions),
           ...(level === "normal" ? formatArtifactSummaryLines(event) : []),
         ].filter((line) => line.trim().length > 0);
@@ -630,6 +749,10 @@ export const createAcpRoleProgressFormatter = (
       const lines: string[] = [];
       for (const key of [...buffers.keys()]) {
         lines.push(...flushKey(key));
+      }
+      for (const key of [...toolCounts.keys()]) {
+        const [issueId = "", roleId = "", runtimeId = ""] = key.split("\0");
+        lines.push(...flushToolSummary({ issueId, roleId, runtimeId }));
       }
       return lines;
     },

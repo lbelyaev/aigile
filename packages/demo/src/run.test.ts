@@ -227,8 +227,6 @@ describe("demo orchestration", () => {
       "refute_pass:removed-behavior",
       "angle_pass:cross-file",
       "refute_finding:cross-file",
-      "angle_pass:tests-faithful-to-reality",
-      "refute_pass:tests-faithful-to-reality",
     ]);
     expect(result.finalState).toBe("developing");
   });

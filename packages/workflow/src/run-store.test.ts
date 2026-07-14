@@ -44,6 +44,16 @@ describe("in-memory run store", () => {
     expect(run?.events).toHaveLength(2);
   });
 
+  it("checkpoints artifacts without appending a workflow event", async () => {
+    const store = createInMemoryRunStore();
+    await store.appendEvent("LIN-1", event("issue_received"));
+    await store.appendArtifacts("LIN-1", [artifact("checkpoint-1")]);
+
+    const run = await store.load("LIN-1");
+    expect(run?.events.map((entry) => entry.type)).toEqual(["issue_received"]);
+    expect(run?.artifacts.map((entry) => entry.id)).toEqual(["checkpoint-1"]);
+  });
+
   it("isolates stored data from later mutation of inputs and reads", async () => {
     const store = createInMemoryRunStore();
     const stored = artifact("a1");

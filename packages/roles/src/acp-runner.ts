@@ -48,8 +48,22 @@ export type AcpRoleProgressEvent =
       runtimeId: string;
       usage: RuntimeTokenUsage;
     }
-  | { type: "tool_start"; roleId: string; issueId: string; runtimeId: string; tool: string }
-  | { type: "tool_end"; roleId: string; issueId: string; runtimeId: string; tool: string }
+  | {
+      type: "tool_start";
+      roleId: string;
+      issueId: string;
+      runtimeId: string;
+      tool: string;
+      detail?: string | undefined;
+    }
+  | {
+      type: "tool_end";
+      roleId: string;
+      issueId: string;
+      runtimeId: string;
+      tool: string;
+      detail?: string | undefined;
+    }
   | {
       type: "policy_violation";
       roleId: string;
@@ -270,6 +284,15 @@ const toolCommand = (tool: string, params: unknown): string => {
   return tool;
 };
 
+const toolProgressDetail = (params: unknown): string | undefined => {
+  if (!isRecord(params)) return undefined;
+  for (const key of ["command", "file_path", "path", "pattern", "query", "url"]) {
+    const value = params[key];
+    if (typeof value === "string" && value.trim().length > 0) return value;
+  }
+  return undefined;
+};
+
 const isWriteLikePermission = (request: AcpPermissionRequest): boolean => {
   const tool = request.tool.toLowerCase();
   const command = extractCommand(request).trim().toLowerCase();
@@ -471,6 +494,7 @@ export const createAcpRoleRunner = (options: AcpRoleRunnerOptions = {}): RoleRun
         let streamedText = "";
         let fileReadCount = 0;
         let tokenUsage: RuntimeTokenUsage | undefined;
+        const toolDetailsByCallId = new Map<string, string>();
         let policyViolation:
           | { reason: "broad_discovery" | "file_read_budget"; detail: string }
           | undefined;
@@ -506,7 +530,16 @@ export const createAcpRoleRunner = (options: AcpRoleRunnerOptions = {}): RoleRun
             return;
           }
           if (event.type === "tool_start") {
-            options.onProgress?.({ type: "tool_start", ...progressBase(input), tool: event.tool });
+            const detail = toolProgressDetail(event.params);
+            if (event.toolCallId !== undefined && detail !== undefined) {
+              toolDetailsByCallId.set(event.toolCallId, detail);
+            }
+            options.onProgress?.({
+              type: "tool_start",
+              ...progressBase(input),
+              tool: event.tool,
+              detail,
+            });
             const command = toolCommand(event.tool, event.params);
             const mode = executionPolicyMode(input);
             if (mode !== undefined && mode !== "review" && isBroadDiscoveryCommand(command)) {
@@ -542,7 +575,17 @@ export const createAcpRoleRunner = (options: AcpRoleRunnerOptions = {}): RoleRun
           }
           if (event.type === "tool_end") {
             tokenUsage = mergeTokenUsage(tokenUsage, event.usage);
-            options.onProgress?.({ type: "tool_end", ...progressBase(input), tool: event.tool });
+            const detail =
+              event.toolCallId === undefined
+                ? undefined
+                : toolDetailsByCallId.get(event.toolCallId);
+            if (event.toolCallId !== undefined) toolDetailsByCallId.delete(event.toolCallId);
+            options.onProgress?.({
+              type: "tool_end",
+              ...progressBase(input),
+              tool: event.tool,
+              detail,
+            });
             return;
           }
           if (event.type === "permission_decision") {

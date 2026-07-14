@@ -79,6 +79,34 @@ describe("workflow engine", () => {
     expect(persisted?.events.at(-1)?.reason).toContain("broad_discovery");
   });
 
+  it("persists checkpointed artifacts when a command handler later fails", async () => {
+    const store = createInMemoryRunStore();
+    const checkpoint = art(
+      "deep-review:LIN-1:angle-pass:correctness:pass",
+      "deep_review.checkpoint",
+    );
+    const handlers: WorkflowCommandHandlers = {
+      ...baseHandlers(async () => ({ event: ev("verification_passed") })),
+      start_developer_attempt: async ({ checkpointArtifacts }) => {
+        await checkpointArtifacts?.([checkpoint]);
+        throw new Error("network dropped after checkpoint");
+      },
+      request_human_attention: async () => ({}),
+    };
+
+    const result = await runWorkflowEngine({ issueId: "LIN-1", store, handlers });
+
+    expect(result.outcome).toBe("escalated");
+    const persisted = await store.load("LIN-1");
+    expect(persisted?.events.map((entry) => entry.type)).toEqual([
+      "issue_received",
+      "plan_drafted",
+      "plan_approved",
+      "handler_failed",
+    ]);
+    expect(persisted?.artifacts.map((entry) => entry.id)).toContain(checkpoint.id);
+  });
+
   it("dispatches the terminal command once before returning and skips it on terminal resume", async () => {
     const store = createInMemoryRunStore();
     const terminalCommands: string[] = [];

@@ -104,6 +104,108 @@ describe("ACP role runner", () => {
     });
   });
 
+  it("emits tool progress with raw input details", async () => {
+    const toolProgress: Array<{ type: "tool_start" | "tool_end"; tool: string; detail?: string }> =
+      [];
+    let eventHandler:
+      | ((
+          event:
+            | {
+                type: "tool_start";
+                sessionId: string;
+                tool: string;
+                toolCallId?: string;
+                params?: unknown;
+              }
+            | {
+                type: "tool_end";
+                sessionId: string;
+                tool: string;
+                toolCallId?: string;
+              },
+        ) => void)
+      | undefined;
+    const connector: AcpRuntimeConnector = async () => ({
+      session: {
+        sessionId: "role-session-1",
+        acpSessionId: "acp-session-1",
+        prompt: async () => {
+          eventHandler?.({
+            type: "tool_start",
+            sessionId: "role-session-1",
+            tool: "Bash",
+            toolCallId: "tool-1",
+            params: { command: "bun test packages/cli/src/main.test.ts" },
+          });
+          eventHandler?.({
+            type: "tool_end",
+            sessionId: "role-session-1",
+            tool: "Bash",
+            toolCallId: "tool-1",
+          });
+          return {
+            artifactKind: "developer.attempt",
+            payload: {
+              summary: "Tool detail emitted.",
+              changedFiles: [],
+              verificationNotes: "No verification needed.",
+            },
+          };
+        },
+        cancel: () => undefined,
+        onEvent: (handler) => {
+          eventHandler = handler as typeof eventHandler;
+          return () => {
+            eventHandler = undefined;
+          };
+        },
+      },
+      process: {
+        kill: async () => undefined,
+      },
+    });
+    const runner = createAcpRoleRunner({
+      connector,
+      onProgress: (event) => {
+        if (event.type === "tool_start" || event.type === "tool_end") {
+          toolProgress.push({
+            type: event.type,
+            tool: event.tool,
+            ...(event.detail === undefined ? {} : { detail: event.detail }),
+          });
+        }
+      },
+    });
+
+    await runner.run({
+      roleId: "developer",
+      issueId: "LIN-123",
+      runtime: {
+        id: "runtime-developer",
+        transport: "stdio",
+        command: ["agent-acp"],
+      },
+      assignment: {
+        roleId: "developer",
+        runtimeProfileId: "runtime-developer",
+      },
+      inputArtifacts: [],
+    });
+
+    expect(toolProgress).toEqual([
+      {
+        type: "tool_start",
+        tool: "Bash",
+        detail: "bun test packages/cli/src/main.test.ts",
+      },
+      {
+        type: "tool_end",
+        tool: "Bash",
+        detail: "bun test packages/cli/src/main.test.ts",
+      },
+    ]);
+  });
+
   it("builds ACP-standard initialize and session params for stdio runtimes", () => {
     const connectInput = buildAcpRuntimeConnectInput({
       roleId: "architect",
