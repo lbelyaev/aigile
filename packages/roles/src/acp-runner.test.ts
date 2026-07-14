@@ -8,6 +8,7 @@ import {
 describe("ACP role runner", () => {
   it("emits progress while connecting, prompting, streaming, and stopping", async () => {
     const progress: string[] = [];
+    let parsedPayload: unknown;
     let eventHandler:
       | ((
           event:
@@ -61,7 +62,10 @@ describe("ACP role runner", () => {
     });
     const runner = createAcpRoleRunner({
       connector,
-      onProgress: (event) => progress.push(event.type),
+      onProgress: (event) => {
+        progress.push(event.type);
+        if (event.type === "artifact_parsed") parsedPayload = event.artifactPayload;
+      },
     });
 
     await runner.run({
@@ -91,6 +95,13 @@ describe("ACP role runner", () => {
       "artifact_parsed",
       "runtime_stopped",
     ]);
+    expect(parsedPayload).toEqual({
+      summary: "Plan from ACP",
+      scope: ["role runner"],
+      acceptanceCriteria: ["artifact is parsed"],
+      verificationCommands: ["bun run check"],
+      risks: [],
+    });
   });
 
   it("builds ACP-standard initialize and session params for stdio runtimes", () => {

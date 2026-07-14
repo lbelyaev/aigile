@@ -21,6 +21,7 @@ import {
   formatDisplayEvent,
   formatDemoResult,
   formatDuration,
+  formatIssueWorkspaceStatus,
   runCli,
   parseDurationMs,
   parseGitHubRepoFromRemoteUrl,
@@ -524,12 +525,140 @@ describe("cli formatting", () => {
     expect(formatter.flush()).toEqual([]);
   });
 
+  it("formats normal artifact summaries without raw artifact JSON", () => {
+    const formatter = createAcpRoleProgressFormatter();
+    const base = { roleId: "developer", issueId: "LIN-9", runtimeId: "codex-acp" };
+
+    expect(
+      formatter.format({
+        type: "artifact_parsed",
+        ...base,
+        artifactKind: "developer.attempt",
+        artifactPayload: {
+          summary: "Updated pretty logs.",
+          changedFiles: ["packages/cli/src/main.ts", "packages/cli/src/main.test.ts"],
+          verificationNotes: "bun test packages/cli is expected to pass.",
+        },
+      }),
+    ).toEqual([
+      formatDisplayEvent({
+        type: "row",
+        issueKey: "LIN-9",
+        source: "developer",
+        action: "artifact parsed",
+        detail: "developer.attempt",
+        severity: "success",
+      }),
+      "       Summary: Updated pretty logs.",
+      "       Changed files: packages/cli/src/main.ts, packages/cli/src/main.test.ts",
+      "       Verification: bun test packages/cli is expected to pass.",
+    ]);
+  });
+
+  it("formats verbose artifact summaries with full artifact JSON", () => {
+    const formatter = createAcpRoleProgressFormatter({ level: "verbose" });
+    const base = { roleId: "checker", issueId: "LIN-9", runtimeId: "codex-acp" };
+
+    expect(
+      formatter.format({
+        type: "artifact_parsed",
+        ...base,
+        artifactKind: "checker.verdict",
+        artifactPayload: {
+          verdict: "changes_requested",
+          summary: "One issue remains.",
+          reasons: ["Missing test coverage"],
+        },
+      }),
+    ).toEqual([
+      "[LIN-9 checker] artifact parsed: checker.verdict",
+      "       Verdict: changes_requested",
+      "       Summary: One issue remains.",
+      "       Reasons: Missing test coverage",
+      "       Artifact JSON:",
+      "       {",
+      '         "artifactKind": "checker.verdict",',
+      '         "payload": {',
+      '           "verdict": "changes_requested",',
+      '           "summary": "One issue remains.",',
+      '           "reasons": [',
+      '             "Missing test coverage"',
+      "           ]",
+      "         }",
+      "       }",
+    ]);
+  });
+
+  it("formats verification result summaries with actionable errors", () => {
+    const formatter = createAcpRoleProgressFormatter();
+    const base = { roleId: "verifier", issueId: "LIN-9", runtimeId: "local" };
+
+    expect(
+      formatter.format({
+        type: "artifact_parsed",
+        ...base,
+        artifactKind: "verification.result",
+        artifactPayload: {
+          status: "failed",
+          commands: [
+            {
+              command: "bun",
+              args: ["test", "packages/cli"],
+              exitCode: 1,
+              stdout: "1 pass\n2 fail\n",
+              stderr: "error: expected value to be true\nstack trace omitted\n",
+            },
+          ],
+        },
+      }),
+    ).toEqual([
+      formatDisplayEvent({
+        type: "row",
+        issueKey: "LIN-9",
+        source: "verifier",
+        action: "artifact parsed",
+        detail: "verification.result",
+        severity: "success",
+      }),
+      "       Status: failed",
+      "       Command: bun test packages/cli (exit 1)",
+      "       Counts: 1 passed, 2 failed",
+      "       Error: error: expected value to be true",
+    ]);
+  });
+
   it("normal level (default) drops raw stream noise", () => {
     const formatter = createAcpRoleProgressFormatter();
     const base = { roleId: "developer", issueId: "LIN-9", runtimeId: "codex-acp" };
     expect(formatter.format({ type: "thinking_delta", ...base, delta: "x" })).toEqual([]);
     expect(formatter.format({ type: "runtime_stderr", ...base, chunk: "noise\n" })).toEqual([]);
-    expect(formatter.format({ type: "tool_start", ...base, tool: "Bash" })).toEqual([]);
+    expect(formatter.format({ type: "text_delta", ...base, delta: "raw text" })).toEqual([]);
+  });
+
+  it("normal level summarizes tool progress without raw text", () => {
+    const formatter = createAcpRoleProgressFormatter();
+    const base = { roleId: "developer", issueId: "LIN-9", runtimeId: "codex-acp" };
+
+    expect(formatter.format({ type: "tool_start", ...base, tool: "Bash" })).toEqual([
+      formatDisplayEvent({
+        type: "row",
+        issueKey: "LIN-9",
+        source: "developer",
+        action: "tool started",
+        detail: "Bash",
+        severity: "info",
+      }),
+    ]);
+    expect(formatter.format({ type: "tool_end", ...base, tool: "Bash" })).toEqual([
+      formatDisplayEvent({
+        type: "row",
+        issueKey: "LIN-9",
+        source: "developer",
+        action: "tool finished",
+        detail: "Bash",
+        severity: "success",
+      }),
+    ]);
   });
 
   it("verbose level emits raw streams suppressed at normal", () => {
@@ -546,11 +675,10 @@ describe("cli formatting", () => {
   it("parses --quiet and --verbose into a progress level", () => {
     expect(parseCliArgs(["run", "LIN-1", "--quiet"]).progressLevel).toBe("quiet");
     expect(parseCliArgs(["run", "LIN-1", "--verbose"]).progressLevel).toBe("verbose");
+    expect(parseCliArgs(["run", "LIN-1", "--debug"]).progressLevel).toBe("verbose");
     expect(parseCliArgs(["run", "LIN-1", "--no-color"]).noColor).toBe(true);
     expect(parseCliArgs(["run", "LIN-1"]).progressLevel).toBeUndefined();
-    expect(() => parseCliArgs(["run", "LIN-1", "--quiet", "--verbose"])).toThrow(
-      /only one of --quiet/,
-    );
+    expect(() => parseCliArgs(["run", "LIN-1", "--quiet", "--debug"])).toThrow(/only one of/);
   });
 
   it("requires issue keys for run and status", () => {
@@ -3643,6 +3771,73 @@ describe("cli formatting", () => {
     ]);
   });
 
+  it("formats workspace diff summaries and gates unified diff to verbose", () => {
+    const status = {
+      workspace: {
+        issueKey: "LIN-795",
+        branchName: "aigile/LIN-795",
+        baseBranch: "main",
+        worktreePath: "/repo/aigile/.worktrees/LIN-795",
+      },
+      state: "dirty" as const,
+      currentBranch: "aigile/LIN-795",
+      changedFiles: [" M packages/roles/src/acp-runner.ts", "?? scratch.md"],
+    };
+    const unifiedDiff = [
+      "diff --git a/packages/roles/src/acp-runner.ts b/packages/roles/src/acp-runner.ts",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+
+    expect(formatIssueWorkspaceStatus(status)).toContain(
+      ["Workspace diff:", "- M packages/roles/src/acp-runner.ts", "- ?? scratch.md"].join("\n"),
+    );
+    expect(formatIssueWorkspaceStatus(status)).not.toContain("diff --git");
+    expect(formatIssueWorkspaceStatus(status, { level: "verbose", unifiedDiff })).toContain(
+      ["Unified diff:", unifiedDiff].join("\n"),
+    );
+  });
+
+  it("loads unified workspace diffs only for verbose status output", async () => {
+    const calls: Array<{ command: string; args: string[]; cwd: string }> = [];
+
+    const output = await runIssueWorkspaceStatus({
+      issueKey: "LIN-795",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
+      baseBranch: "main",
+      progressLevel: "verbose",
+      exec: async (command, args, options) => {
+        calls.push({ command, args: [...args], cwd: options.cwd });
+        if (command === "test") return { stdout: "", stderr: "", exitCode: 0 };
+        if (command === "git" && args[0] === "rev-parse") {
+          return { stdout: "aigile/LIN-795\n", stderr: "", exitCode: 0 };
+        }
+        if (command === "git" && args[0] === "status") {
+          return { stdout: " M packages/cli/src/main.ts\n", stderr: "", exitCode: 0 };
+        }
+        if (command === "git" && args[0] === "diff") {
+          return {
+            stdout: "diff --git a/packages/cli/src/main.ts b/packages/cli/src/main.ts\n",
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    });
+
+    expect(output).toContain("Unified diff:");
+    expect(output).toContain("diff --git a/packages/cli/src/main.ts b/packages/cli/src/main.ts");
+    expect(calls.map((call) => [call.command, ...call.args])).toEqual([
+      ["test", "-e", "/repo/aigile/.worktrees/LIN-795"],
+      ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+      ["git", "status", "--short"],
+      ["git", "diff"],
+    ]);
+  });
+
   it("formats issue workspace status for missing worktrees", async () => {
     const output = await runIssueWorkspaceStatus({
       issueKey: "LIN-404",
@@ -3656,7 +3851,7 @@ describe("cli formatting", () => {
     });
 
     expect(output).toContain("State: missing");
-    expect(output).toContain("Changed files: none");
+    expect(output).toContain("Workspace diff: none");
     expect(output).toContain("run LIN-404 --agent-write");
   });
 
