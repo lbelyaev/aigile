@@ -155,6 +155,7 @@ describe("deep review", () => {
       issueId: "LIN-1",
       inputArtifacts: [],
       reviewerModel: "independent-review-model",
+      deepReviewMode: "full",
       onProgress: (event) =>
         progress.push(
           `${event.mode}:${event.angle}:${event.angleIndex}/${event.angleCount}:${event.sequence}:${event.completedSubcalls}/${event.totalSubcalls}`,
@@ -232,6 +233,7 @@ describe("deep review", () => {
       inputArtifacts: [],
       reviewerModel: "independent-review-model",
       angles: ["correctness", "removed-behavior", "cross-file"],
+      deepReviewMode: "full",
       angleConcurrency: 2,
       runRole: async (_roleId, artifacts) => {
         const request = artifacts.at(-1);
@@ -271,6 +273,120 @@ describe("deep review", () => {
     const artifact = await artifactPromise;
     expect(artifact.payload).toMatchObject({ verdict: "pass" });
     expect(maxActive).toBe(2);
+  });
+
+  it("fail-fast stops before remaining angles after a surviving actionable defect", async () => {
+    const requestModes: string[] = [];
+    const artifact = await runAssignedDeepReview({
+      issueId: "LIN-1",
+      inputArtifacts: [],
+      reviewerModel: "independent-review-model",
+      angles: ["correctness", "removed-behavior", "cross-file"],
+      deepReviewMode: "fail-fast",
+      runRole: async (_roleId, artifacts) => {
+        const request = artifacts.at(-1);
+        const payload = request?.payload as {
+          mode: string;
+          angle?: DeepReviewPassResult["angle"];
+        };
+        requestModes.push(`${payload.mode}:${payload.angle ?? "none"}`);
+        return {
+          id: `agent:LIN-1:deep_reviewer:${payload.mode}:${payload.angle}`,
+          kind: "checker.verdict",
+          source: "agent",
+          producerRoleId: "deep_reviewer",
+          payload: {
+            verdict: payload.mode === "angle_pass" ? "changes_requested" : "pass",
+            summary: `${payload.mode} ${payload.angle}`,
+            reasons: payload.mode === "angle_pass" ? ["real defect"] : [],
+          },
+        };
+      },
+    });
+
+    expect(requestModes).toEqual(["angle_pass:correctness", "refute_finding:correctness"]);
+    expect(artifact.payload).toMatchObject({
+      verdict: "changes_requested",
+      reasons: [
+        "correctness: real defect",
+        "correctness: Deep review stopped early: fail-fast after 1 surviving finding(s)",
+      ],
+    });
+  });
+
+  it("budget exhaustion returns a conservative non-pass verdict", async () => {
+    const requestModes: string[] = [];
+    const artifact = await runAssignedDeepReview({
+      issueId: "LIN-1",
+      inputArtifacts: [],
+      reviewerModel: "independent-review-model",
+      angles: ["correctness", "removed-behavior"],
+      maxDeepReviewCalls: 1,
+      runRole: async (_roleId, artifacts) => {
+        const request = artifacts.at(-1);
+        const payload = request?.payload as {
+          mode: string;
+          angle?: DeepReviewPassResult["angle"];
+        };
+        requestModes.push(`${payload.mode}:${payload.angle ?? "none"}`);
+        return {
+          id: `agent:LIN-1:deep_reviewer:${payload.mode}:${payload.angle}`,
+          kind: "checker.verdict",
+          source: "agent",
+          producerRoleId: "deep_reviewer",
+          payload: {
+            verdict: "pass",
+            summary: `${payload.mode} ${payload.angle}`,
+            reasons: [],
+          },
+        };
+      },
+    });
+
+    expect(requestModes).toEqual(["angle_pass:correctness"]);
+    expect(artifact.payload).toMatchObject({
+      verdict: "changes_requested",
+      reasons: ["correctness: Deep review stopped early: budget reached: maxDeepReviewCalls=1"],
+    });
+  });
+
+  it("bounds finding refutations globally", async () => {
+    const requestModes: string[] = [];
+    const artifact = await runAssignedDeepReview({
+      issueId: "LIN-1",
+      inputArtifacts: [],
+      reviewerModel: "independent-review-model",
+      angles: ["correctness", "removed-behavior"],
+      maxRefutationsTotal: 1,
+      maxSurvivingFindings: 10,
+      runRole: async (_roleId, artifacts) => {
+        const request = artifacts.at(-1);
+        const payload = request?.payload as {
+          mode: string;
+          angle?: DeepReviewPassResult["angle"];
+        };
+        requestModes.push(`${payload.mode}:${payload.angle ?? "none"}`);
+        return {
+          id: `agent:LIN-1:deep_reviewer:${payload.mode}:${payload.angle}`,
+          kind: "checker.verdict",
+          source: "agent",
+          producerRoleId: "deep_reviewer",
+          payload: {
+            verdict: payload.mode === "angle_pass" ? "changes_requested" : "pass",
+            summary: `${payload.mode} ${payload.angle}`,
+            reasons: payload.mode === "angle_pass" ? ["first defect", "second defect"] : [],
+          },
+        };
+      },
+    });
+
+    expect(requestModes).toEqual(["angle_pass:correctness", "refute_finding:correctness"]);
+    expect(artifact.payload).toMatchObject({
+      verdict: "changes_requested",
+    });
+    expect((artifact.payload as { reasons: string[] }).reasons).toContain(
+      "correctness: Deep review stopped early: budget reached: maxRefutationsTotal=1",
+    );
   });
 
   it("checkpoints assigned subcalls and reuses them on resume", async () => {
