@@ -204,12 +204,13 @@ export interface DisplayFormatterOptions {
   env?: Record<string, string | undefined> | undefined;
 }
 
-const DISPLAY_COLUMNS = {
-  issueKey: 7,
-  productId: 7,
-  source: 13,
-  action: 16,
-} as const;
+const DISPLAY_MARKER_BY_SEVERITY: Record<DisplaySeverity, string> = {
+  info: "●",
+  success: "✓",
+  warn: "!",
+  error: "×",
+  muted: "·",
+};
 
 const ANSI_BY_SEVERITY: Record<DisplaySeverity, string> = {
   info: "\x1b[36m",
@@ -238,9 +239,6 @@ const formatDetailBlock = (lines: readonly string[]): string[] =>
     return splitLines.map((splitLine) => `${DETAIL_PREFIX}${splitLine}`);
   });
 
-const padDisplay = (value: string | undefined, width: number): string =>
-  (value ?? "").padEnd(width);
-
 const ANSI_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 
 export const stripAnsi = (value: string): string => value.replace(ANSI_PATTERN, "");
@@ -261,13 +259,17 @@ export const formatDisplayEvent = (
     return [header, ...formatDetailBlock(detailLines)].join("\n");
   }
 
-  const base = `${padDisplay(event.issueKey, DISPLAY_COLUMNS.issueKey)}  ${padDisplay(
-    event.productId,
-    DISPLAY_COLUMNS.productId,
-  )}  ${padDisplay(event.source, DISPLAY_COLUMNS.source)}  ${padDisplay(
-    event.action,
-    DISPLAY_COLUMNS.action,
-  )}${event.detail === undefined ? "" : ` ${event.detail}`}`.trimEnd();
+  const scope = [event.issueKey, event.productId === undefined ? undefined : `[${event.productId}]`]
+    .filter((value): value is string => value !== undefined && value.length > 0)
+    .join(" ");
+  const base = [
+    DISPLAY_MARKER_BY_SEVERITY[event.severity],
+    scope,
+    `${event.source} › ${event.action}`,
+    event.detail,
+  ]
+    .filter((value): value is string => value !== undefined && value.length > 0)
+    .join("  ");
   return colorizeDisplay(base, event.severity, options);
 };
 
@@ -504,14 +506,46 @@ const formatStringList = (values: readonly string[], maxItems = 5): string => {
   return remaining > 0 ? `${visible.join(", ")} (+${remaining} more)` : visible.join(", ");
 };
 
-const formatBullets = (label: string, values: readonly string[], maxItems = 5): string[] => {
+const wrapDetailText = (
+  prefix: string,
+  continuationPrefix: string,
+  value: string,
+  maxWidth = 118,
+): string[] => {
+  const words = value.split(/\s+/).filter((word) => word.length > 0);
+  if (words.length === 0) return [prefix.trimEnd()];
+  const lines: string[] = [];
+  let current = prefix;
+  for (const word of words) {
+    const separator = current === prefix || current === continuationPrefix ? "" : " ";
+    const candidate = `${current}${separator}${word}`;
+    if (stripAnsi(candidate).length <= maxWidth || current === prefix) {
+      current = candidate;
+      continue;
+    }
+    lines.push(current);
+    current = `${continuationPrefix}${word}`;
+  }
+  lines.push(current);
+  return lines;
+};
+
+const formatDetailValue = (label: string, value: string): string[] => {
+  const prefix = `${DETAIL_PREFIX}${label}: `;
+  const continuationPrefix = `${DETAIL_PREFIX}${" ".repeat(label.length + 2)}`;
+  return wrapDetailText(prefix, continuationPrefix, boundedText(value, 420));
+};
+
+const formatDetailList = (label: string, values: readonly string[], maxItems = 5): string[] => {
   if (values.length === 0) return [];
   const visible = values.slice(0, maxItems).map((value) => boundedText(value, 180));
   const remaining = values.length - visible.length;
   return [
-    label,
-    ...visible.map((value) => `- ${value}`),
-    ...(remaining > 0 ? [`- +${remaining} more`] : []),
+    `${DETAIL_PREFIX}${label}:`,
+    ...visible.flatMap((value) =>
+      wrapDetailText(`${DETAIL_PREFIX}  - `, `${DETAIL_PREFIX}    `, value),
+    ),
+    ...(remaining > 0 ? [`${DETAIL_PREFIX}  - +${remaining} more`] : []),
   ];
 };
 
@@ -545,7 +579,8 @@ const actionableLines = (text: string): string[] =>
 const formatVerificationSummary = (payload: unknown): string[] => {
   if (!isRecordValue(payload)) return [];
   const lines: string[] = [];
-  if (typeof payload.status === "string") lines.push(`Status: ${boundedText(payload.status)}`);
+  if (typeof payload.status === "string")
+    lines.push(...formatDetailValue("Status", payload.status));
   const commands = Array.isArray(payload.commands) ? payload.commands : [];
   for (const commandResult of commands) {
     if (!isRecordValue(commandResult) || typeof commandResult.command !== "string") continue;
@@ -556,15 +591,18 @@ const formatVerificationSummary = (payload: unknown): string[] => {
       typeof commandResult.exitCode === "number" ? commandResult.exitCode : undefined;
     const commandLine = [commandResult.command, ...args].join(" ");
     lines.push(
-      `Command: ${boundedText(commandLine)}${exitCode === undefined ? "" : ` (exit ${exitCode})`}`,
+      ...formatDetailValue(
+        "Command",
+        `${commandLine}${exitCode === undefined ? "" : ` (exit ${exitCode})`}`,
+      ),
     );
     const output = [
       typeof commandResult.stdout === "string" ? commandResult.stdout : "",
       typeof commandResult.stderr === "string" ? commandResult.stderr : "",
     ].join("\n");
     const counts = verificationCounts(output);
-    if (counts !== undefined) lines.push(`Counts: ${counts}`);
-    for (const line of actionableLines(output)) lines.push(`Error: ${boundedText(line)}`);
+    if (counts !== undefined) lines.push(...formatDetailValue("Counts", counts));
+    for (const line of actionableLines(output)) lines.push(...formatDetailValue("Error", line));
     break;
   }
   return lines;
@@ -575,28 +613,34 @@ const formatArtifactSummaryLines = (event: AcpRoleProgressEvent): string[] => {
   const payload = event.artifactPayload;
   const lines: string[] = [];
   if (isCheckerVerdictPayload(payload)) {
-    lines.push(`verdict ${payload.verdict}`);
-    lines.push(`summary ${boundedText(payload.summary)}`);
-    lines.push(...formatBullets("reasons", payload.reasons));
+    lines.push(...formatDetailValue("Verdict", payload.verdict));
+    lines.push(...formatDetailValue("Summary", payload.summary));
+    lines.push(...formatDetailList("Reasons", payload.reasons));
   } else if (isDeveloperAttemptPayload(payload)) {
-    lines.push(`summary ${boundedText(payload.summary)}`);
+    lines.push(...formatDetailValue("Summary", payload.summary));
     if (payload.changedFiles.length > 0) {
-      lines.push(`changed files ${formatStringList(payload.changedFiles)}`);
+      lines.push(...formatDetailValue("Changed files", formatStringList(payload.changedFiles)));
     }
-    lines.push(`verification ${boundedText(payload.verificationNotes)}`);
+    lines.push(...formatDetailValue("Verification", payload.verificationNotes));
   } else if (isArchitectPlanPayload(payload)) {
-    lines.push(`summary ${boundedText(payload.summary)}`);
-    if (payload.scope.length > 0) lines.push(`scope ${formatStringList(payload.scope, 3)}`);
-    if (payload.verificationCommands.length > 0) {
-      lines.push(`verification ${formatStringList(payload.verificationCommands, 3)}`);
+    lines.push(...formatDetailValue("Summary", payload.summary));
+    if (payload.scope.length > 0) {
+      lines.push(...formatDetailValue("Scope", formatStringList(payload.scope, 3)));
     }
-    if (payload.risks.length > 0) lines.push(`risks ${formatStringList(payload.risks, 3)}`);
+    if (payload.verificationCommands.length > 0) {
+      lines.push(
+        ...formatDetailValue("Verification", formatStringList(payload.verificationCommands, 3)),
+      );
+    }
+    if (payload.risks.length > 0) {
+      lines.push(...formatDetailValue("Risks", formatStringList(payload.risks, 3)));
+    }
   } else if (event.artifactKind === "verification.result") {
     lines.push(...formatVerificationSummary(payload));
   } else if (isRecordValue(payload) && typeof payload.summary === "string") {
-    lines.push(`summary ${boundedText(payload.summary)}`);
+    lines.push(...formatDetailValue("Summary", payload.summary));
   }
-  return lines.map((line) => `${SUMMARY_PREFIX}${line}`);
+  return lines;
 };
 
 const formatVerboseArtifactJson = (event: AcpRoleProgressEvent): string[] => {
