@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type {
   ProductChangedFileGuard,
+  ProductMergePolicy,
   ProductRunMode,
   ProductVerificationCommand,
   ProductVerificationPolicy,
@@ -20,6 +21,7 @@ export interface InRepoConfig {
     repo?: string;
     baseBranch?: string;
   };
+  mergePolicy?: ProductMergePolicy;
   defaultRun?: {
     startRun: boolean;
     mode: ProductRunMode;
@@ -120,6 +122,14 @@ const parseDefaultRun = (
   };
 };
 
+const parseMergePolicy = (value: unknown, context: string): ProductMergePolicy | undefined => {
+  if (value === undefined) return undefined;
+  if (value !== "auto" && value !== "manual") {
+    throw new Error(`Repo config ${context}.mergePolicy must be auto or manual`);
+  }
+  return value;
+};
+
 const parseCommand = (value: unknown, context: string): ProductVerificationCommand => {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error(`Repo config ${context} must be a non-empty string array`);
@@ -209,6 +219,7 @@ export const loadRepoConfigFromJson = (json: string): InRepoConfig => {
   const packageManager = optionalStringField(value, "packageManager", "");
   const linear = parseLinear(value.linear, "");
   const github = parseGithub(value.github, "");
+  const mergePolicy = parseMergePolicy(value.mergePolicy, "");
   const defaultRun = parseDefaultRun(value.defaultRun, "");
   const verification = parseVerification(value.verification, "");
   return {
@@ -217,6 +228,7 @@ export const loadRepoConfigFromJson = (json: string): InRepoConfig => {
     ...(packageManager === undefined ? {} : { packageManager }),
     ...(linear === undefined ? {} : { linear }),
     ...(github === undefined ? {} : { github }),
+    ...(mergePolicy === undefined ? {} : { mergePolicy }),
     ...(defaultRun === undefined ? {} : { defaultRun }),
     ...(verification === undefined ? {} : { verification }),
   };
@@ -248,6 +260,7 @@ export const repoConfigToProduct = (config: InRepoConfig, repoPath: string): Run
       baseBranch: config.github?.baseBranch ?? "main",
     } as RuntimeProduct["github"],
     repoPath,
+    mergePolicy: config.mergePolicy ?? "auto",
     defaultRun: config.defaultRun ?? { startRun: false, mode: "dry_run", publish: false },
   };
   if (config.packageManager !== undefined) product.packageManager = config.packageManager;

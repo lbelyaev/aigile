@@ -16,6 +16,7 @@ describe("product config", () => {
             id: "aigile",
             linear: { team: "LBE", project: "Aigile" },
             github: { repo: "lbelyaev/aigile", baseBranch: "main" },
+            mergePolicy: "manual",
             maxConcurrentRuns: 2,
             packageManager: "bun",
             worktreesPath: "~/.aigile/worktrees/lbelyaev/aigile",
@@ -40,6 +41,7 @@ describe("product config", () => {
       id: "aigile",
       linear: { team: "LBE", project: "Aigile" },
       github: { repo: "lbelyaev/aigile", baseBranch: "main" },
+      mergePolicy: "manual",
       maxConcurrentRuns: 2,
       packageManager: "bun",
       worktreesPath: "~/.aigile/worktrees/lbelyaev/aigile",
@@ -75,6 +77,43 @@ describe("product config", () => {
 
     expect(config.maxConcurrentRuns).toBe(DEFAULT_MAX_CONCURRENT_RUNS);
     expect(config.products[0]?.maxConcurrentRuns).toBeUndefined();
+    expect(config.products[0]?.mergePolicy).toBe("auto");
+  });
+
+  it("parses explicit merge policy values and rejects invalid values", () => {
+    for (const mergePolicy of ["auto", "manual"] as const) {
+      const config = loadProductConfigFromJson(
+        JSON.stringify({
+          products: [
+            {
+              id: "aigile",
+              linear: { team: "LBE", project: "Aigile" },
+              github: { repo: "lbelyaev/aigile" },
+              mergePolicy,
+              defaultRun: { startRun: true, mode: "agent_write", publish: true },
+            },
+          ],
+        }),
+      );
+
+      expect(config.products[0]?.mergePolicy).toBe(mergePolicy);
+    }
+
+    expect(() =>
+      loadProductConfigFromJson(
+        JSON.stringify({
+          products: [
+            {
+              id: "aigile",
+              linear: { team: "LBE", project: "Aigile" },
+              github: { repo: "lbelyaev/aigile" },
+              mergePolicy: "sometimes",
+              defaultRun: { startRun: true, mode: "agent_write", publish: true },
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/mergePolicy.*auto or manual/i);
   });
 
   it("rejects malformed product config", () => {

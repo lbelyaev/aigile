@@ -570,9 +570,7 @@ describe("reconcileProducts", () => {
   it("keeps a passing checked PR in review when merge policy is manual", async () => {
     const store = createInMemoryRunStore();
     await appendRun(store, "LIN-1");
-    const tracker = createFakeIssueTrackerAdapter([
-      { ...issue("LIN-1", "In Progress"), description: "aigile-merge: manual" },
-    ]);
+    const tracker = createFakeIssueTrackerAdapter([issue("LIN-1", "In Progress")]);
     const codeHost = createFakeCodeHostAdapter({
       mergeability: "mergeable",
       checks: {
@@ -598,6 +596,7 @@ describe("reconcileProducts", () => {
             id: "product",
             linear: { team: "ENG", project: "Project" },
             github: { repo: "org/repo", baseBranch: "main" },
+            mergePolicy: "manual" as const,
             defaultRun: { startRun: true, mode: "agent_write", publish: true },
           },
         ],
@@ -609,7 +608,11 @@ describe("reconcileProducts", () => {
     });
 
     expect(result.outcomes).toEqual([
-      expect.objectContaining({ kind: "updated", to: "In Review" }),
+      expect.objectContaining({
+        kind: "updated",
+        to: "In Review",
+        reason: expect.stringContaining("manual merge policy"),
+      }),
     ]);
     expect((await codeHost.getPullRequestMergeState(pr.id)).status).toBe("unknown");
     expect((await tracker.getIssue("LIN-1")).status).toBe("In Review");

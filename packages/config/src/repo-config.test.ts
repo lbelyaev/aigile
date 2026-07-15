@@ -19,6 +19,7 @@ describe("in-repo config", () => {
           packageManager: "bun",
           linear: { team: "LBE", project: "Aigile" },
           github: { repo: "lbelyaev/aigile", baseBranch: "trunk" },
+          mergePolicy: "manual",
           defaultRun: { startRun: true, mode: "agent_write", publish: false },
           verification: {
             install: [["bun", "install", "--frozen-lockfile"]],
@@ -32,6 +33,7 @@ describe("in-repo config", () => {
       packageManager: "bun",
       linear: { team: "LBE", project: "Aigile" },
       github: { repo: "lbelyaev/aigile", baseBranch: "trunk" },
+      mergePolicy: "manual",
       defaultRun: { startRun: true, mode: "agent_write", publish: false },
       verification: {
         install: [["bun", "install", "--frozen-lockfile"]],
@@ -105,6 +107,7 @@ describe("in-repo config", () => {
       github: { repo: "lbelyaev/aigile", baseBranch: "main" },
       packageManager: "bun",
       repoPath: "/repo/aigile",
+      mergePolicy: "auto",
       defaultRun: { startRun: false, mode: "dry_run", publish: false },
       verification: { checks: [["bun", "test"]] },
     });

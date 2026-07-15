@@ -19,7 +19,7 @@ import type { IssueStatusLabels } from "@aigile/config";
 import { runAssignedDeepReview, type DeepReviewProgressEvent } from "@aigile/roles";
 import { reviewRoleForChangedFiles, type WorkflowCommandHandlers } from "@aigile/workflow";
 import { withPublishRetry, type PublishRetryOptions } from "@aigile/workspace";
-import { resolveMergePolicy, type MergePolicy } from "./merge-policy.js";
+import { effectiveMergePolicy, type MergePolicy } from "./merge-policy.js";
 import { syncIssueStatusForState } from "./status-sync.js";
 
 export interface EngineHandlerDeps {
@@ -259,8 +259,10 @@ const pullRequestBody = (
   plan: WorkflowArtifact | undefined,
   attempt: WorkflowArtifact | undefined,
   verdict: WorkflowArtifact | undefined,
+  mergePolicy: MergePolicy,
 ): string => {
   const lines = [`Aigile run for ${issue.key}: ${issue.title}`, ""];
+  lines.push(`Merge policy: ${mergePolicy}`, "");
   if (plan !== undefined && isArchitectPlanPayload(plan.payload)) {
     lines.push(`Plan: ${plan.payload.summary}`, "");
   }
@@ -305,6 +307,46 @@ const branchPullRequestArtifact = (
   return pullRequestToArtifact(record);
 };
 
+const hasManualMergePolicyComment = (comments: readonly string[]): boolean =>
+  comments.some(
+    (comment) =>
+      comment.includes("Merge policy: manual") && comment.includes("manual merge policy"),
+  );
+
+const artifactsHaveManualMergePolicyComment = (artifacts: readonly WorkflowArtifact[]): boolean =>
+  artifacts.some((artifact) => {
+    if (artifact.kind !== "github.pull_request") return false;
+    const payload = artifact.payload;
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+    const comments = (payload as { comments?: unknown }).comments;
+    return Array.isArray(comments) && hasManualMergePolicyComment(comments);
+  });
+
+const addPullRequestCommentToArtifact = (
+  artifact: WorkflowArtifact,
+  comment: string,
+): WorkflowArtifact => {
+  const cloned = structuredClone(artifact);
+  const payload = cloned.payload;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return cloned;
+  const comments = (payload as { comments?: unknown }).comments;
+  if (!Array.isArray(comments) || hasManualMergePolicyComment(comments)) return cloned;
+  (payload as { comments: string[] }).comments = [...comments, comment];
+  return cloned;
+};
+
+const issueHasManualMergePolicyComment = async (
+  issueTracker: IssueTrackerAdapter | undefined,
+  issueKey: string,
+): Promise<boolean> => {
+  if (issueTracker === undefined) return false;
+  try {
+    return hasManualMergePolicyComment((await issueTracker.getIssue(issueKey)).comments);
+  } catch {
+    return false;
+  }
+};
+
 const eventFor = (
   type: WorkflowEvent["type"],
   issueId: string,
@@ -325,7 +367,9 @@ const eventFor = (
  */
 export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCommandHandlers => {
   const { issue, codeHost, branchName, pullRequestTarget } = deps;
-  const mergePolicy = deps.mergePolicy ?? resolveMergePolicy(issue.description);
+  const mergePolicy = effectiveMergePolicy(deps.mergePolicy, issue.description);
+  const manualMergePolicyReason =
+    "held by manual merge policy; PR remains open in review until a human merges it.";
 
   return {
     start_architect_plan: async (ctx) => {
@@ -439,7 +483,7 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
                 branch: branchName,
                 baseBranch: pullRequestTarget.baseBranch,
                 title: `${issue.key} ${issue.title}`,
-                body: pullRequestBody(issue, plan, attempt, verdict),
+                body: pullRequestBody(issue, plan, attempt, verdict, mergePolicy),
               }),
             deps.publishRetry,
           );
@@ -463,15 +507,32 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
 
         // Manual override: publish the PR and pause for a human/CI to merge.
         if (mergePolicy === "manual") {
-          await syncIssueStatusForState({
-            issueTracker: deps.issueTracker,
-            issueKey: issue.key,
-            state: ctx.snapshot.state,
-            issueStatusLabels: deps.issueStatusLabels,
-            originalStatus: issue.status,
-            artifacts: [...ctx.artifacts, prArtifact],
-          });
-          return { artifact: prArtifact };
+          const manualPolicyComment = [
+            `Merge policy: manual`,
+            `Reason: ${manualMergePolicyReason}`,
+          ].join("\n");
+          const alreadyRecordedManualPolicy =
+            artifactsHaveManualMergePolicyComment(ctx.artifacts) ||
+            (await issueHasManualMergePolicyComment(deps.issueTracker, issue.key));
+          if (!alreadyRecordedManualPolicy) {
+            await codeHost.appendPullRequestComment(prId, manualPolicyComment);
+          }
+          if (!alreadyRecordedManualPolicy) {
+            await syncIssueStatusForState({
+              issueTracker: deps.issueTracker,
+              issueKey: issue.key,
+              state: ctx.snapshot.state,
+              issueStatusLabels: deps.issueStatusLabels,
+              originalStatus: issue.status,
+              artifacts: [...ctx.artifacts, prArtifact],
+              reason: `Merge policy: manual; ${manualMergePolicyReason}`,
+            });
+          }
+          return {
+            artifact: alreadyRecordedManualPolicy
+              ? prArtifact
+              : addPullRequestCommentToArtifact(prArtifact, manualPolicyComment),
+          };
         }
 
         const state = await codeHost.getPullRequestMergeState(prId);

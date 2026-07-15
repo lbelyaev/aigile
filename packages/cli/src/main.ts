@@ -24,6 +24,7 @@ import {
   resolveProductPaths,
   runtimeConfigToRegistry,
   splitGithubRepo,
+  type ProductMergePolicy,
   type ProductVerificationPolicy,
   type RuntimeProduct,
   type RuntimeProductConfig,
@@ -238,6 +239,7 @@ export const formatDemoResult = (result: DemoResult): string => {
   return [
     `Aigile demo run: ${result.issueKey}`,
     ...(mode === undefined ? [] : [`Mode: ${isDryRun ? "dry_run (simulated)" : mode}`]),
+    ...(result.mergePolicy === undefined ? [] : [`Merge policy: ${result.mergePolicy}`]),
     `${isDryRun ? "Workflow state" : "Final state"}: ${result.finalState}`,
     ...(isDryRun
       ? ["External side effects: none (workspace, GitHub, and source-of-truth updates simulated)"]
@@ -940,6 +942,7 @@ export interface ResolvedProductCliContext {
   agentWrite: boolean;
   publish: boolean;
   startRun: boolean;
+  mergePolicy?: ProductMergePolicy;
   maxConcurrentRuns?: number;
   packageManager?: string;
   verification?: ProductVerificationPolicy;
@@ -1034,6 +1037,7 @@ const resolveProductCliContextForProduct = async (
     agentWrite: mode === "agent_write",
     publish: args.publish ?? product?.defaultRun.publish ?? false,
     startRun: args.startRun ?? product?.defaultRun.startRun ?? false,
+    mergePolicy: product?.mergePolicy ?? "auto",
     ...(product?.maxConcurrentRuns === undefined
       ? {}
       : { maxConcurrentRuns: product.maxConcurrentRuns }),
@@ -1531,6 +1535,7 @@ export interface LinearIssueWorkflowCliInput {
   onProgressLine?: (line: string) => void;
   runWorkspace?: (input: DemoWorkspaceInput) => Promise<DemoResult>;
   verification?: ProductVerificationPolicy;
+  mergePolicy?: ProductMergePolicy;
   runStatePath?: string;
   retryEscalated?: boolean;
   resumePublish?: boolean;
@@ -1670,6 +1675,7 @@ export const runLinearIssueWorkflowCli = async (
   if (input.verification?.changedFileGuards !== undefined) {
     runInput.changedFileGuards = input.verification.changedFileGuards;
   }
+  if (input.mergePolicy !== undefined) runInput.mergePolicy = input.mergePolicy;
   if (input.runStatePath !== undefined) runInput.runStatePath = input.runStatePath;
   if (input.retryEscalated === true) runInput.retryEscalated = true;
   if (input.resumePublish === true) runInput.resumePublish = true;
@@ -2064,12 +2070,19 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
 };
 
 const daemonValue = (value: string | undefined): string => value ?? "(unset)";
+const daemonMergePolicy = (context: ResolvedProductCliContext): string | undefined =>
+  context.mergePolicy === undefined
+    ? undefined
+    : `${daemonValue(context.productId)}=${context.mergePolicy}`;
 
 export const formatDaemonStartupSummary = (
   contexts: readonly ResolvedProductCliContext[],
   input: { pollIntervalMs: number; display?: DisplayFormatterOptions | undefined },
-): string =>
-  formatDisplayLine(
+): string => {
+  const mergePolicies = contexts
+    .map(daemonMergePolicy)
+    .filter((policy): policy is string => policy !== undefined);
+  return formatDisplayLine(
     {
       type: "daemon_startup",
       source: "daemon",
@@ -2077,10 +2090,14 @@ export const formatDaemonStartupSummary = (
       severity: "success",
       products: contexts.map((context) => daemonValue(context.productId)),
       globalMaxConcurrentRuns: contexts[0]?.globalMaxConcurrentRuns,
-      detail: `poll interval: ${input.pollIntervalMs}ms`,
+      detail: [
+        ...(mergePolicies.length === 0 ? [] : [`merge policy: ${mergePolicies.join(", ")}`]),
+        `poll interval: ${input.pollIntervalMs}ms`,
+      ].join("\n       "),
     },
     input.display,
   );
+};
 
 export interface LinearDaemonSupervisorCliInput {
   contexts: readonly ResolvedProductCliContext[];
@@ -2113,6 +2130,7 @@ const productConfigForDaemonStartup = (
         id: context.productId,
         linear: { team: context.linearTeam, project: context.linearProject },
         github: { repo: context.githubRepo, baseBranch: context.baseBranch },
+        mergePolicy: context.mergePolicy ?? "auto",
         repoPath: context.repoPath,
         worktreesPath: context.worktreesPath,
         ...(context.maxConcurrentRuns === undefined
@@ -2260,11 +2278,12 @@ const formatReconcileOutcome = (outcome: ReconcileProductOutcome): string => {
     "issueKey" in outcome && outcome.issueKey !== undefined
       ? `${outcome.productId}/${outcome.issueKey}`
       : outcome.productId;
+  const reason = "reason" in outcome && outcome.reason !== undefined ? ` (${outcome.reason})` : "";
   switch (outcome.kind) {
     case "updated":
-      return `- ${prefix}: updated ${outcome.from} -> ${outcome.to}`;
+      return `- ${prefix}: updated ${outcome.from} -> ${outcome.to}${reason}`;
     case "unchanged":
-      return `- ${prefix}: unchanged ${outcome.status}`;
+      return `- ${prefix}: unchanged ${outcome.status}${reason}`;
     case "no_pull_request":
       return `- ${prefix}: no pull request`;
     case "blocked":
@@ -2934,8 +2953,12 @@ const main = async (): Promise<void> => {
     repoPath: runContext?.repoPath ?? args.repoPath ?? process.cwd(),
     worktreesPath: runContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`,
   };
-  if (runContext !== undefined) runInput.baseBranch = runContext.baseBranch;
-  else if (args.baseBranch !== undefined) runInput.baseBranch = args.baseBranch;
+  if (runContext !== undefined) {
+    runInput.baseBranch = runContext.baseBranch;
+    if (runContext.mergePolicy !== undefined) runInput.mergePolicy = runContext.mergePolicy;
+  } else if (args.baseBranch !== undefined) {
+    runInput.baseBranch = args.baseBranch;
+  }
   if (args.mode === "watch" || args.mode === "daemon") {
     const command = args.mode;
     const watchContexts = await resolveProductCliContexts(args);
@@ -3193,6 +3216,7 @@ const main = async (): Promise<void> => {
                 ...(context.verification === undefined
                   ? {}
                   : { verification: context.verification }),
+                ...(context.mergePolicy === undefined ? {} : { mergePolicy: context.mergePolicy }),
                 ...(options.retryEscalated === true ? { retryEscalated: true } : {}),
                 ...(options.resumePublish === true ? { resumePublish: true } : {}),
                 ...(args.progressLevel === undefined ? {} : { progressLevel: args.progressLevel }),

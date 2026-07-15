@@ -8,8 +8,10 @@ import type {
   PullRequestReviewComment,
 } from "@aigile/adapters";
 import {
+  effectiveMergePolicy,
   resolveProductPaths,
   splitGithubRepo,
+  type MergePolicy,
   type ProductPathResolutionOptions,
   type RuntimeProduct,
   type RuntimeProductConfig,
@@ -63,6 +65,7 @@ export type ReconcileProductOutcome =
       productId: string;
       issueKey: string;
       status: string;
+      reason?: string;
       branchName: string;
       target: { owner: string; repo: string };
     }
@@ -72,6 +75,7 @@ export type ReconcileProductOutcome =
       issueKey: string;
       from: string;
       to: string;
+      reason?: string;
       branchName: string;
       target: { owner: string; repo: string };
     }
@@ -159,20 +163,6 @@ const safeIdPart = (value: string): string => value.replace(/[^A-Za-z0-9._-]+/g,
 
 const issueBranch = (issueKey: string): string => `aigile/${issueKey}`;
 
-type MergePolicy = "auto" | "manual";
-
-const EXPLICIT_MERGE_DIRECTIVE = /aigile-merge:\s*(auto|manual)\b/i;
-const MANUAL_MERGE_SHORTHAND = /\bno[-\s]?automerge\b|\bautomerge:\s*off\b/i;
-
-const resolveMergePolicy = (description: string | undefined): MergePolicy => {
-  if (!description) return "auto";
-  const explicit = EXPLICIT_MERGE_DIRECTIVE.exec(description);
-  if (explicit?.[1] !== undefined)
-    return explicit[1].toLowerCase() === "manual" ? "manual" : "auto";
-  if (MANUAL_MERGE_SHORTHAND.test(description)) return "manual";
-  return "auto";
-};
-
 const processedReviewFeedback = (
   artifacts: readonly WorkflowArtifact[],
 ): Map<string, WorkflowArtifact> => {
@@ -190,7 +180,7 @@ const processedReviewFeedback = (
 type BlockedPrState = "closed" | "conflicting" | "checks_failed" | "missing_review" | "unknown";
 
 type ProductPrStatus =
-  | { kind: "status"; status: string }
+  | { kind: "status"; status: string; reason?: string }
   | { kind: "merge"; status: string }
   | { kind: "blocked"; state: BlockedPrState; reason: string };
 
@@ -248,6 +238,17 @@ const prStatusForProduct = async (
         kind: "blocked",
         state: "unknown",
         reason: `pull request mergeability is unknown: ${pullRequest.url}`,
+      };
+    }
+    if (
+      checks.status === "passing" &&
+      mergeability.status === "mergeable" &&
+      mergePolicy === "manual"
+    ) {
+      return {
+        kind: "status",
+        status: labels.inReview,
+        reason: `held by manual merge policy; green pull request remains open for human merge: ${pullRequest.url}`,
       };
     }
     if (
@@ -327,7 +328,7 @@ const reconcileProductRun = async (input: {
     input.codeHost,
     pullRequest,
     input.labels,
-    resolveMergePolicy(issue.description),
+    effectiveMergePolicy(input.product.mergePolicy, issue.description),
   );
   if (prStatus.kind === "blocked") {
     const note = blockedProductNote(
@@ -382,12 +383,24 @@ const reconcileProductRun = async (input: {
     }
   }
 
+  const prStatusReason = prStatus.kind === "status" ? prStatus.reason : undefined;
   if (prStatus.status === issue.status) {
-    return { kind: "unchanged", ...base, status: prStatus.status };
+    return {
+      kind: "unchanged",
+      ...base,
+      status: prStatus.status,
+      ...(prStatusReason === undefined ? {} : { reason: prStatusReason }),
+    };
   }
 
   await input.tracker.updateIssueStatus(input.issueKey, prStatus.status);
-  return { kind: "updated", ...base, from: issue.status, to: prStatus.status };
+  return {
+    kind: "updated",
+    ...base,
+    from: issue.status,
+    to: prStatus.status,
+    ...(prStatusReason === undefined ? {} : { reason: prStatusReason }),
+  };
 };
 
 export const reconcileProducts = async (
