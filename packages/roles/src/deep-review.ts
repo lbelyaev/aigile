@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   isCheckerVerdictPayload,
   type CheckerVerdictPayload,
@@ -253,6 +254,7 @@ const requestArtifact = (
 const DEEP_REVIEW_CHECKPOINT_KIND = "deep_review.checkpoint";
 
 interface DeepReviewCheckpointPayload {
+  reviewScope: string;
   mode: "angle_pass" | "refute_finding" | "refute_pass";
   angle: DeepReviewAngle;
   findingId?: string;
@@ -260,10 +262,19 @@ interface DeepReviewCheckpointPayload {
 }
 
 const checkpointKey = (
+  reviewScope: string,
   mode: DeepReviewCheckpointPayload["mode"],
   angle: DeepReviewAngle,
   findingId?: string,
-): string => `${mode}:${angle}:${findingId ?? "pass"}`;
+): string => `${reviewScope}:${mode}:${angle}:${findingId ?? "pass"}`;
+
+const deepReviewScope = (artifacts: readonly WorkflowArtifact[]): string => {
+  const scopedIds = artifacts
+    .filter((artifact) => artifact.kind !== DEEP_REVIEW_CHECKPOINT_KIND)
+    .map((artifact) => artifact.id)
+    .sort();
+  return createHash("sha256").update(JSON.stringify(scopedIds)).digest("hex").slice(0, 16);
+};
 
 const isDeepReviewCheckpointPayload = (value: unknown): value is DeepReviewCheckpointPayload => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -273,6 +284,7 @@ const isDeepReviewCheckpointPayload = (value: unknown): value is DeepReviewCheck
       payload.mode === "refute_finding" ||
       payload.mode === "refute_pass") &&
     DEEP_REVIEW_ANGLES.includes(payload.angle as DeepReviewAngle) &&
+    typeof payload.reviewScope === "string" &&
     typeof payload.result === "object" &&
     payload.result !== null &&
     !Array.isArray(payload.result)
@@ -283,7 +295,12 @@ const checkpointArtifact = (
   issueId: string,
   payload: DeepReviewCheckpointPayload,
 ): WorkflowArtifact<DeepReviewCheckpointPayload> => ({
-  id: `deep-review:${issueId}:${checkpointKey(payload.mode, payload.angle, payload.findingId)}`,
+  id: `deep-review:${issueId}:${checkpointKey(
+    payload.reviewScope,
+    payload.mode,
+    payload.angle,
+    payload.findingId,
+  )}`,
   kind: DEEP_REVIEW_CHECKPOINT_KIND,
   source: "system",
   payload,
@@ -370,13 +387,20 @@ export const runAssignedDeepReview = async (
       ? undefined
       : Date.now() + input.maxDeepReviewMinutes * 60_000;
   const anglePassConcurrency = boundedConcurrency(input.angleConcurrency, angles.length);
+  const reviewScope = deepReviewScope(input.inputArtifacts);
   const checkpoints = new Map<string, WorkflowArtifact>();
   for (const artifact of input.inputArtifacts) {
     if (artifact.kind !== DEEP_REVIEW_CHECKPOINT_KIND) continue;
     if (!isDeepReviewCheckpointPayload(artifact.payload)) continue;
+    if (artifact.payload.reviewScope !== reviewScope) continue;
     if (!isCheckerVerdictPayload(artifact.payload.result.payload)) continue;
     checkpoints.set(
-      checkpointKey(artifact.payload.mode, artifact.payload.angle, artifact.payload.findingId),
+      checkpointKey(
+        artifact.payload.reviewScope,
+        artifact.payload.mode,
+        artifact.payload.angle,
+        artifact.payload.findingId,
+      ),
       artifact.payload.result,
     );
   }
@@ -412,7 +436,7 @@ export const runAssignedDeepReview = async (
     totalSubcalls: number,
     findingId?: string,
   ): Promise<WorkflowArtifact> => {
-    const key = checkpointKey(mode, angle, findingId);
+    const key = checkpointKey(reviewScope, mode, angle, findingId);
     const existing = checkpoints.get(key);
     if (existing !== undefined) {
       completedSubcalls += 1;
@@ -424,7 +448,9 @@ export const runAssignedDeepReview = async (
       requestArtifact(input.issueId, ++sequence, payload),
     ]);
     const checkpointPayload =
-      findingId === undefined ? { mode, angle, result } : { mode, angle, findingId, result };
+      findingId === undefined
+        ? { reviewScope, mode, angle, result }
+        : { reviewScope, mode, angle, findingId, result };
     const checkpoint = checkpointArtifact(input.issueId, checkpointPayload);
     await input.checkpointArtifact?.(checkpoint);
     checkpoints.set(key, result);

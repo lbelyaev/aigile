@@ -443,6 +443,76 @@ describe("deep review", () => {
     expect(resumed.payload).toEqual(first.payload);
   });
 
+  it("does not reuse checkpointed subcalls after reviewed artifacts change", async () => {
+    const attemptOne: WorkflowArtifact = {
+      id: "agent:LIN-1:developer:developer.attempt:attempt-1",
+      kind: "developer.attempt",
+      source: "agent",
+      producerRoleId: "developer",
+      payload: {
+        summary: "first attempt",
+        changedFiles: ["packages/demo/src/run.ts"],
+        verificationNotes: "not yet fixed",
+      },
+    };
+    const attemptTwo: WorkflowArtifact = {
+      ...attemptOne,
+      id: "agent:LIN-1:developer:developer.attempt:attempt-2",
+      payload: {
+        summary: "second attempt",
+        changedFiles: ["packages/demo/src/run.ts"],
+        verificationNotes: "fixed reviewer finding",
+      },
+    };
+    const checkpointed: WorkflowArtifact[] = [];
+    let runRoleCalls = 0;
+    const runRole = async (
+      _roleId: "deep_reviewer",
+      artifacts: readonly WorkflowArtifact[],
+    ): Promise<WorkflowArtifact> => {
+      runRoleCalls += 1;
+      const request = artifacts.at(-1);
+      const payload = request?.payload as {
+        mode: string;
+        angle?: DeepReviewPassResult["angle"];
+      };
+      return {
+        id: `agent:LIN-1:deep_reviewer:${payload.mode}:${payload.angle}:${runRoleCalls}`,
+        kind: "checker.verdict",
+        source: "agent",
+        producerRoleId: "deep_reviewer",
+        payload: {
+          verdict: "pass",
+          summary: `${payload.mode} ${payload.angle}`,
+          reasons: [],
+        },
+      };
+    };
+
+    await runAssignedDeepReview({
+      issueId: "LIN-1",
+      inputArtifacts: [attemptOne],
+      reviewerModel: "independent-review-model",
+      angles: ["correctness", "cross-file"],
+      checkpointArtifact: async (artifact) => {
+        checkpointed.push(artifact);
+      },
+      runRole,
+    });
+    expect(runRoleCalls).toBe(4);
+
+    runRoleCalls = 0;
+    await runAssignedDeepReview({
+      issueId: "LIN-1",
+      inputArtifacts: [attemptTwo, ...checkpointed],
+      reviewerModel: "independent-review-model",
+      angles: ["correctness", "cross-file"],
+      runRole,
+    });
+
+    expect(runRoleCalls).toBe(4);
+  });
+
   // Pipeline test: proves production orchestration aggregates synthetic per-angle
   // reviewer findings into the expected verdict over real recorded diffs. It does NOT
   // prove a real reviewer detects the defect — that is deep-review.smoke.test.ts.
