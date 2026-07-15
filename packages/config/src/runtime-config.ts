@@ -5,11 +5,14 @@ import {
   type AcpRuntimeProfile,
   type RoleAssignment,
 } from "@aigile/types";
+import { loadReviewStrategyConfig, type ReviewStrategyConfig } from "./review-strategy.js";
 
 export interface RuntimeConfig {
   runtimes: AcpRuntimeProfile[];
   assignments: RoleAssignment[];
   issueStatusLabels: IssueStatusLabels;
+  reviewStrategies: ReviewStrategyConfig;
+  reviewStrategiesConfigured: boolean;
 }
 
 export interface IssueStatusLabels {
@@ -84,7 +87,13 @@ export const loadRuntimeConfigFromJson = (json: string): RuntimeConfig => {
     return assignment;
   });
 
-  return { runtimes, assignments, issueStatusLabels: loadIssueStatusLabels(value) };
+  return {
+    runtimes,
+    assignments,
+    issueStatusLabels: loadIssueStatusLabels(value),
+    reviewStrategies: loadReviewStrategyConfig(value.reviewStrategies),
+    reviewStrategiesConfigured: value.reviewStrategies !== undefined,
+  };
 };
 
 export const runtimeConfigToRegistry = (config: RuntimeConfig): RoleRuntimeRegistry =>

@@ -46,6 +46,8 @@ describe("runtime config", () => {
       runtimeProfileId: "architect-runtime",
       instructionRef: "roles/architect.md",
     });
+    expect(config.reviewStrategies.defaultMode).toBe("light");
+    expect(config.reviewStrategiesConfigured).toBe(false);
   });
 
   it("builds a role runtime registry from config", () => {
@@ -122,6 +124,51 @@ describe("runtime config", () => {
     expect(configured.issueStatusLabels.inReview).toBe("Ready for QA");
     expect(configured.issueStatusLabels.done).toBe("Shipped");
     expect(configured.issueStatusLabels.developing).toBe(DEFAULT_ISSUE_STATUS_LABELS.developing);
+  });
+
+  it("loads review strategy config from runtime config", () => {
+    const config = loadRuntimeConfigFromJson(
+      JSON.stringify({
+        runtimes: [
+          {
+            id: "checker-runtime",
+            transport: "stdio",
+            command: ["agent-acp", "--checker"],
+          },
+        ],
+        assignments: [
+          {
+            roleId: "checker",
+            runtimeProfileId: "checker-runtime",
+          },
+        ],
+        reviewStrategies: {
+          defaultMode: "light",
+          highRiskMode: "full",
+          strategies: {
+            "deep-parallel": {
+              reviewers: ["deep_reviewer"],
+              angles: ["correctness", "cross-file"],
+              maxFindings: 4,
+              validationBudget: { maxCalls: 9, maxMinutes: 15 },
+              concurrency: 2,
+              skillHints: ["code_review"],
+            },
+          },
+        },
+      }),
+    );
+
+    expect(config.reviewStrategies.highRiskMode).toBe("full");
+    expect(config.reviewStrategiesConfigured).toBe(true);
+    expect(config.reviewStrategies.strategies["deep-parallel"]).toMatchObject({
+      mode: "deep-parallel",
+      angles: ["correctness", "cross-file"],
+      maxFindings: 4,
+      validationBudget: { maxCalls: 9, maxMinutes: 15 },
+      concurrency: 2,
+      skillHints: ["code_review"],
+    });
   });
 
   it("rejects invalid runtime config", () => {

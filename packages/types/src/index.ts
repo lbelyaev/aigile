@@ -12,6 +12,8 @@ export {
   isArchitectPlanPayload,
   isCheckerVerdictPayload,
   isDeveloperAttemptPayload,
+  isReviewFinding,
+  isReviewPunchListPayload,
   parseRoleArtifactResponse,
 } from "./artifacts.js";
 
@@ -34,5 +36,8 @@ export type {
   CheckerVerdict,
   CheckerVerdictPayload,
   DeveloperAttemptPayload,
+  ReviewFinding,
+  ReviewFindingSeverity,
+  ReviewPunchListPayload,
   RoleArtifactResponse,
 } from "./artifacts.js";

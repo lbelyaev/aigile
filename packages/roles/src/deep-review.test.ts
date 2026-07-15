@@ -219,6 +219,104 @@ describe("deep review", () => {
       verdict: "changes_requested",
       summary: "Deep review found 1 surviving issue(s) after refutation.",
       reasons: ["cross-file: missing engine-path wiring"],
+      findings: [
+        {
+          file: "unknown",
+          line: 1,
+          scenario: "missing engine-path wiring",
+          severity: "medium",
+          confidence: 0.7,
+          whyItMatters: "cross-file checked",
+          minimalFix: "Address: missing engine-path wiring",
+        },
+      ],
+      developerPunchList: {
+        findings: [
+          {
+            file: "unknown",
+            line: 1,
+            scenario: "missing engine-path wiring",
+            severity: "medium",
+            confidence: 0.7,
+            whyItMatters: "cross-file checked",
+            minimalFix: "Address: missing engine-path wiring",
+          },
+        ],
+      },
+    });
+  });
+
+  it("preserves structured checker findings in assigned deep-review output", async () => {
+    const artifact = await runAssignedDeepReview({
+      issueId: "LIN-1",
+      inputArtifacts: [
+        {
+          id: "workspace:LIN-1:diff",
+          kind: "workspace.diff",
+          source: "system",
+          payload: {
+            changedFiles: ["packages/workflow/src/review-routing.ts"],
+          },
+        },
+      ],
+      angles: ["correctness", "cross-file"],
+      maxSurvivingFindings: 10,
+      runRole: async (_roleId, artifacts) => {
+        const request = artifacts.at(-1);
+        const payload = request?.payload as {
+          mode: string;
+          angle?: DeepReviewPassResult["angle"];
+        };
+        return {
+          id: `agent:LIN-1:deep_reviewer:${payload.mode}:${payload.angle}`,
+          kind: "checker.verdict",
+          source: "agent",
+          producerRoleId: "deep_reviewer",
+          payload: {
+            verdict: payload.mode === "angle_pass" ? "changes_requested" : "pass",
+            summary: "structured issue",
+            reasons: payload.mode === "angle_pass" ? ["fallback reason"] : [],
+            findings:
+              payload.mode === "angle_pass"
+                ? [
+                    {
+                      file: "packages/workflow/src/review-routing.ts",
+                      line: 15,
+                      scenario: "Configured high-risk mode is ignored.",
+                      severity: "high",
+                      confidence: 0.9,
+                      whyItMatters: "Workflow changes would avoid the selected review strategy.",
+                      minimalFix: "Select the configured strategy before choosing the review role.",
+                    },
+                  ]
+                : [],
+          },
+        };
+      },
+    });
+
+    expect(artifact.payload).toMatchObject({
+      verdict: "changes_requested",
+      findings: [
+        {
+          file: "packages/workflow/src/review-routing.ts",
+          line: 15,
+          scenario: "Configured high-risk mode is ignored.",
+          severity: "high",
+          confidence: 0.9,
+        },
+      ],
+      developerPunchList: {
+        findings: [
+          {
+            file: "packages/workflow/src/review-routing.ts",
+            line: 15,
+            scenario: "Configured high-risk mode is ignored.",
+            severity: "high",
+            confidence: 0.9,
+          },
+        ],
+      },
     });
   });
 

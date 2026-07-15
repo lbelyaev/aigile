@@ -6,6 +6,8 @@ export { buildRolePrompt, getDefaultRoleInstruction } from "./prompts.js";
 
 export { DEEP_REVIEW_ANGLES, runAssignedDeepReview, runDeepReview } from "./deep-review.js";
 
+export { createDeveloperPunchList, deduplicateReviewFindings } from "./review-coordinator.js";
+
 export type {
   RoleRunInput,
   RoleRunner,

@@ -8,6 +8,7 @@ import type {
   ProductVerificationPolicy,
   RuntimeProduct,
 } from "./product-config.js";
+import { loadReviewStrategyConfig, type ReviewStrategyConfig } from "./review-strategy.js";
 
 export interface InRepoConfig {
   version: 1;
@@ -28,6 +29,7 @@ export interface InRepoConfig {
     publish: boolean;
   };
   verification?: ProductVerificationPolicy;
+  reviewStrategies?: ReviewStrategyConfig;
 }
 
 export interface RepoConfigDiscoveryResult {
@@ -222,6 +224,10 @@ export const loadRepoConfigFromJson = (json: string): InRepoConfig => {
   const mergePolicy = parseMergePolicy(value.mergePolicy, "");
   const defaultRun = parseDefaultRun(value.defaultRun, "");
   const verification = parseVerification(value.verification, "");
+  const reviewStrategies =
+    value.reviewStrategies === undefined
+      ? undefined
+      : loadReviewStrategyConfig(value.reviewStrategies);
   return {
     version: 1,
     ...(id === undefined ? {} : { id }),
@@ -231,6 +237,7 @@ export const loadRepoConfigFromJson = (json: string): InRepoConfig => {
     ...(mergePolicy === undefined ? {} : { mergePolicy }),
     ...(defaultRun === undefined ? {} : { defaultRun }),
     ...(verification === undefined ? {} : { verification }),
+    ...(reviewStrategies === undefined ? {} : { reviewStrategies }),
   };
 };
 
@@ -265,5 +272,6 @@ export const repoConfigToProduct = (config: InRepoConfig, repoPath: string): Run
   };
   if (config.packageManager !== undefined) product.packageManager = config.packageManager;
   if (config.verification !== undefined) product.verification = config.verification;
+  if (config.reviewStrategies !== undefined) product.reviewStrategies = config.reviewStrategies;
   return product;
 };
