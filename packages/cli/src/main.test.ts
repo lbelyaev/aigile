@@ -373,7 +373,129 @@ describe("cli formatting", () => {
       durationMs: 0,
     });
 
-    expect(output).toContain("Token usage: 2,100 total (1,500 input, 600 output)");
+    expect(output).toContain("Token usage: partial, 1,000,399 total (1,500 input, 600 output)");
+    expect(output).toContain(
+      "- claude-acp/runtime-default: partial, 999,999 total (1,200 input, 500 output)",
+    );
+    expect(output).toContain("- codex-acp/runtime-default: 400 total (300 input, 100 output)");
+  });
+
+  it("formats stage timing with retry counts and unavailable stages", () => {
+    const output = formatDemoResult({
+      issueKey: "LIN-123",
+      finalState: "merged",
+      artifacts: [],
+      timeline: [],
+      durationMs: 8_250,
+      stageTimings: [
+        { stage: "planning", attempts: 1, durationMs: 1_250 },
+        { stage: "development", attempts: 3, durationMs: 6_000 },
+        { stage: "verification", attempts: 0 },
+      ],
+    });
+
+    expect(output).toContain("Stage timing:");
+    expect(output).toContain("- planning/architect: 1 attempt, 1 second");
+    expect(output).toContain("- development: 3 attempts, 6 seconds");
+    expect(output).toContain("- verification: unavailable");
+    expect(output).toContain("- checker/deep-review: unavailable");
+    expect(output).toContain("- publish/PR: unavailable");
+    expect(output).toContain("- reconciliation/status-sync: unavailable");
+  });
+
+  it("formats token usage by model/runtime and marks partial usage", () => {
+    const output = formatDemoResult({
+      issueKey: "LIN-123",
+      finalState: "merged",
+      artifacts: [
+        {
+          id: "agent:LIN-123:architect:architect.plan",
+          kind: "architect.plan",
+          source: "agent",
+          producerRoleId: "architect",
+          provenance: {
+            runtime: {
+              runtimeId: "claude-acp",
+              transport: "stdio",
+              model: "claude-4.8",
+              tokenUsage: {
+                inputTokens: 100,
+                outputTokens: 50,
+              },
+            },
+          },
+          payload: {},
+        },
+        {
+          id: "agent:LIN-123:developer:developer.attempt",
+          kind: "developer.attempt",
+          source: "agent",
+          producerRoleId: "developer",
+          provenance: {
+            runtime: {
+              runtimeId: "codex-acp",
+              transport: "stdio",
+              model: "gpt-5.5",
+              tokenUsage: {
+                totalTokens: 1_000,
+              },
+            },
+          },
+          payload: {},
+        },
+      ],
+      timeline: [],
+      durationMs: 0,
+    });
+
+    expect(output).toContain("Token usage: partial, 1,150 total (100 input, 50 output)");
+    expect(output).toContain("- claude-acp/claude-4.8: 150 total (100 input, 50 output)");
+    expect(output).toContain("- codex-acp/gpt-5.5: partial, 1,000 total");
+  });
+
+  it("marks token usage partial when a runtime artifact has no usage metadata", () => {
+    const output = formatDemoResult({
+      issueKey: "LIN-123",
+      finalState: "merged",
+      artifacts: [
+        {
+          id: "agent:LIN-123:architect:architect.plan",
+          kind: "architect.plan",
+          source: "agent",
+          producerRoleId: "architect",
+          provenance: {
+            runtime: {
+              runtimeId: "claude-acp",
+              transport: "stdio",
+              model: "claude-4.8",
+              tokenUsage: {
+                inputTokens: 100,
+                outputTokens: 50,
+              },
+            },
+          },
+          payload: {},
+        },
+        {
+          id: "agent:LIN-123:developer:developer.attempt",
+          kind: "developer.attempt",
+          source: "agent",
+          producerRoleId: "developer",
+          provenance: {
+            runtime: {
+              runtimeId: "codex-acp",
+              transport: "stdio",
+              model: "gpt-5.5",
+            },
+          },
+          payload: {},
+        },
+      ],
+      timeline: [],
+      durationMs: 0,
+    });
+
+    expect(output).toContain("Token usage: partial, 150 total (100 input, 50 output)");
   });
 
   it("humanizes durations for operator output", () => {

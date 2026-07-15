@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
 import { createFakeCodeHostAdapter } from "@aigile/adapters";
 import type { CodeHostAdapter, IssueTrackerAdapter, PullRequestRecord } from "@aigile/adapters";
@@ -6,7 +9,8 @@ import {
   createScriptedRoleRunner,
   type RoleRunner,
 } from "@aigile/roles";
-import { runDemoIssue, runDemoIssueWithRoles } from "./index.js";
+import type { ExecCommand } from "@aigile/workspace";
+import { runDemoIssue, runDemoIssueWithRoles, runWorkspaceIssueWithEngine } from "./index.js";
 
 const issue = {
   id: "issue-1",
@@ -679,5 +683,199 @@ describe("demo orchestration", () => {
     ).rejects.toThrow("Linear comment failed");
 
     expect(order).toEqual(["run:architect", "publish:failed"]);
+  });
+
+  it("reports live engine wall-clock duration, retries, stage timing, and runtime provenance", async () => {
+    const runStatePath = await mkdtemp(join(tmpdir(), "aigile-engine-run-"));
+    let current = 10_000;
+    let verificationCalls = 0;
+    let developerCalls = 0;
+    const advance = (durationMs: number) => {
+      current += durationMs;
+    };
+    const exec: ExecCommand = async (command, args) => {
+      if (command === "test" && args.join(" ") === "-e /tmp/aigile-worktrees/LIN-123") {
+        return { stdout: "", stderr: "", exitCode: 1 };
+      }
+      if (command === "verify-once") {
+        verificationCalls += 1;
+        advance(verificationCalls === 1 ? 1_000 : 1_500);
+        return {
+          stdout: verificationCalls === 1 ? "" : "passed",
+          stderr: verificationCalls === 1 ? "failed" : "",
+          exitCode: verificationCalls === 1 ? 1 : 0,
+        };
+      }
+      if (command !== "git") throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
+      const line = args.join(" ");
+      if (
+        line === "fetch origin main" ||
+        line === "merge-base --is-ancestor refs/heads/main refs/remotes/origin/main" ||
+        line ===
+          "worktree add -b aigile/LIN-123 /tmp/aigile-worktrees/LIN-123 refs/remotes/origin/main" ||
+        line === "add -A" ||
+        line === "diff --cached --quiet"
+      ) {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (line === "rev-parse --verify refs/remotes/origin/main") {
+        return { stdout: "base-sha\n", stderr: "", exitCode: 0 };
+      }
+      if (line === "rev-parse --verify refs/heads/main") {
+        return { stdout: "main-sha\n", stderr: "", exitCode: 0 };
+      }
+      if (line === "show-ref --verify --quiet refs/heads/aigile/LIN-123") {
+        return { stdout: "", stderr: "", exitCode: 1 };
+      }
+      throw new Error(`unexpected git command: ${line}`);
+    };
+    const engineRegistry = createRoleRuntimeRegistry({
+      runtimes: [
+        {
+          id: "claude-acp",
+          transport: "stdio",
+          command: ["claude-acp"],
+          defaultModel: "claude-4.8",
+        },
+        {
+          id: "codex-acp",
+          transport: "stdio",
+          command: ["codex-acp"],
+          defaultModel: "gpt-5.5",
+        },
+      ],
+      assignments: [
+        { roleId: "architect", runtimeProfileId: "claude-acp" },
+        { roleId: "developer", runtimeProfileId: "codex-acp" },
+        { roleId: "checker", runtimeProfileId: "claude-acp" },
+      ],
+    });
+    const runner: RoleRunner = {
+      run: async (input) => {
+        const model = input.runtime.defaultModel ?? "runtime-default";
+        if (input.roleId === "architect") {
+          advance(1_500);
+          return {
+            id: "agent:LIN-123:architect:architect.plan",
+            kind: "architect.plan",
+            source: "agent",
+            producerRoleId: "architect",
+            provenance: {
+              runtime: {
+                runtimeId: input.runtime.id,
+                transport: input.runtime.transport,
+                model,
+                tokenUsage: { inputTokens: 100, outputTokens: 50 },
+              },
+            },
+            payload: {
+              summary: "Plan",
+              scope: ["engine timing"],
+              acceptanceCriteria: ["timing is real"],
+              verificationCommands: ["verify-once"],
+              risks: [],
+            },
+          };
+        }
+        if (input.roleId === "developer") {
+          developerCalls += 1;
+          advance(developerCalls === 1 ? 2_000 : 3_000);
+          return {
+            id: `agent:LIN-123:developer:developer.attempt:${developerCalls}`,
+            kind: "developer.attempt",
+            source: "agent",
+            producerRoleId: "developer",
+            provenance: {
+              runtime: {
+                runtimeId: input.runtime.id,
+                transport: input.runtime.transport,
+                model,
+                tokenUsage: { totalTokens: 1_000 },
+              },
+            },
+            payload: {
+              summary: `Attempt ${developerCalls}`,
+              changedFiles: [],
+              verificationNotes: "verify-once controls retry timing.",
+            },
+          };
+        }
+        if (input.roleId === "checker") {
+          advance(1_250);
+          return {
+            id: "agent:LIN-123:checker:checker.verdict",
+            kind: "checker.verdict",
+            source: "agent",
+            producerRoleId: "checker",
+            provenance: {
+              runtime: {
+                runtimeId: input.runtime.id,
+                transport: input.runtime.transport,
+                model,
+                tokenUsage: { inputTokens: 25, outputTokens: 25 },
+              },
+            },
+            payload: {
+              verdict: "pass",
+              summary: "Checker accepts no-op verified work.",
+              reasons: [],
+            },
+          };
+        }
+        throw new Error(`unexpected role ${input.roleId}`);
+      },
+    };
+    const issueTracker: IssueTrackerAdapter = {
+      getIssue: async () => structuredClone(issue),
+      updateIssueStatus: async () => {
+        advance(500);
+      },
+      appendIssueComment: async () => {
+        advance(250);
+      },
+    };
+
+    try {
+      const result = await runWorkspaceIssueWithEngine({
+        issue,
+        repoPath: "/tmp/aigile-repo",
+        worktreesPath: "/tmp/aigile-worktrees",
+        baseBranch: "main",
+        exec,
+        registry: engineRegistry,
+        runner,
+        issueTracker,
+        now: () => current,
+        runStatePath,
+        verificationCommands: [["verify-once"]],
+        autofixCommands: [],
+      });
+
+      expect(result.finalState).toBe("satisfied");
+      expect(result.durationMs).toBe(11_000);
+      expect(result.timeline.map((entry) => entry.label)).toEqual([
+        "issue_received -> planning",
+        "plan_drafted -> awaiting_plan_approval",
+        "plan_approved -> developing",
+        "developer_finished -> verifying",
+        "verification_failed -> developing",
+        "developer_finished -> verifying",
+        "verification_passed -> checking",
+        "work_satisfied -> satisfied",
+      ]);
+      expect(result.stageTimings).toEqual([
+        { stage: "planning", attempts: 1, durationMs: 1_500 },
+        { stage: "development", attempts: 2, durationMs: 5_000 },
+        { stage: "verification", attempts: 2, durationMs: 2_500 },
+        { stage: "checker", attempts: 1, durationMs: 1_250 },
+        { stage: "publish", attempts: 0 },
+        { stage: "reconciliation", attempts: 1, durationMs: 750 },
+      ]);
+      expect(
+        result.artifacts.map((artifact) => artifact.provenance?.runtime?.model).filter(Boolean),
+      ).toEqual(["claude-4.8", "gpt-5.5", "gpt-5.5", "claude-4.8"]);
+    } finally {
+      await rm(runStatePath, { recursive: true, force: true });
+    }
   });
 });

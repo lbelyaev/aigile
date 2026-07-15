@@ -906,6 +906,14 @@ describe("durable engine-backed workspace run", () => {
 
   it("drives a run to merged through the engine and persists the event log", async () => {
     const directory = await mkdtemp(join(tmpdir(), "aigile-engine-run-"));
+    let current = 0;
+    const runner = scriptedRunner();
+    const timedRunner: RoleRunner = {
+      run: async (input) => {
+        current += 1_500;
+        return runner.run(input);
+      },
+    };
     try {
       const result = await runWorkspaceIssueWithEngine({
         issue: {
@@ -920,9 +928,10 @@ describe("durable engine-backed workspace run", () => {
         repoPath: "/repo/aigile",
         worktreesPath: "/repo/aigile/.worktrees",
         runStatePath: directory,
-        runner: scriptedRunner(),
+        runner: timedRunner,
         codeHost: createFakeCodeHostAdapter({ mergeability: "mergeable", merged: false }),
         exec: async (command, args) => {
+          current += 100;
           if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
           if (command === "git" && args[0] === "show-ref")
             return { stdout: "", stderr: "", exitCode: 1 };
@@ -931,11 +940,17 @@ describe("durable engine-backed workspace run", () => {
             return { stdout: "", stderr: "", exitCode: 1 };
           return { stdout: "", stderr: "", exitCode: 0 };
         },
+        now: () => current,
       });
 
       expect(result.finalState).toBe("merged");
       expect(result.pullRequest).toBeDefined();
       expect(result.artifacts.map((artifact) => artifact.kind)).toContain("github.pull_request");
+      expect(result.durationMs).toBeGreaterThan(1_000);
+      expect(result.timeline.length).toBeGreaterThan(0);
+      expect(result.stageTimings).toContainEqual(
+        expect.objectContaining({ stage: "development", attempts: 1 }),
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

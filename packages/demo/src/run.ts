@@ -56,6 +56,7 @@ import {
   runWorkflowEngine,
   transitionWorkflow,
   type WorkflowEngineInput,
+  type WorkflowStageTiming,
   type WorkflowSnapshot,
 } from "@aigile/workflow";
 import { join } from "node:path";
@@ -144,6 +145,7 @@ export interface DemoResult {
   artifacts: WorkflowArtifact[];
   timeline: DemoTimelineEntry[];
   durationMs: number;
+  stageTimings?: WorkflowStageTiming[];
 }
 
 export interface DemoTimelineEntry {
@@ -1147,6 +1149,7 @@ export const runWorkspaceIssueWithEngine = async (
     issueId: input.issue.key,
     store,
     handlers: createEngineCommandHandlers(deps),
+    ...(input.now === undefined ? {} : { now: input.now }),
     initialArtifacts: [
       issueToArtifact(input.issue),
       workspaceToArtifact(workspaceRolePayload(workspace, input), input.issue.key),
@@ -1163,8 +1166,9 @@ export const runWorkspaceIssueWithEngine = async (
     issueKey: input.issue.key,
     finalState: result.snapshot.state,
     artifacts: result.artifacts,
-    timeline: [],
-    durationMs: 0,
+    timeline: result.timeline,
+    durationMs: result.durationMs,
+    stageTimings: result.stageTimings,
   };
   if (pullRequestArtifact !== undefined) {
     demoResult.pullRequest = pullRequestArtifact.payload as PullRequestRecord;
