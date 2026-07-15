@@ -18,7 +18,12 @@ export { createFileRunStore, createInMemoryRunStore } from "./run-store.js";
 
 export type { PersistedRun, RunStore } from "./run-store.js";
 
-export { listResumableRuns, requestPublishRetry, runWorkflowEngine } from "./engine.js";
+export {
+  listResumableRuns,
+  requestPublishRetry,
+  runWorkflowEngine,
+  summarizePersistedRun,
+} from "./engine.js";
 
 export { reviewDepthForChangedFiles, reviewRoleForChangedFiles } from "./review-routing.js";
 
@@ -32,6 +37,7 @@ export type {
   WorkflowEngineInput,
   WorkflowEngineResult,
   WorkflowOutcome,
+  WorkflowRunStatusSummary,
   WorkflowStageTiming,
   WorkflowStateChangeContext,
   WorkflowStateChangeErrorContext,
