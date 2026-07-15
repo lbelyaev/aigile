@@ -8,8 +8,8 @@ import {
   type CodeHostAdapter,
 } from "@aigile/adapters";
 import type { DemoWorkspaceInput } from "@aigile/demo";
-import type { WorkflowArtifact } from "@aigile/types";
-import { createInMemoryRunStore } from "@aigile/workflow";
+import type { WorkflowArtifact, WorkflowEvent } from "@aigile/types";
+import { createFileRunStore, createInMemoryRunStore } from "@aigile/workflow";
 import { loadProductConfigFromJson } from "@aigile/config";
 import {
   createAcpRoleProgressFormatter,
@@ -39,6 +39,7 @@ import {
   runRunModePreflight,
   runPublishPreflight,
   runIssueWorkspaceStatus,
+  runWorkflowRunStatus,
   resolveProductCliContext,
   resolveProductCliContexts,
   selectDemoMode,
@@ -833,9 +834,9 @@ describe("cli formatting", () => {
     expect(() => parseCliArgs(["run", "LIN-1", "--quiet", "--debug"])).toThrow(/only one of/);
   });
 
-  it("requires issue keys for run and status", () => {
+  it("requires issue keys for run and allows keyless status listing", () => {
     expect(() => parseCliArgs(["run"])).toThrow(/run requires an issue key/);
-    expect(() => parseCliArgs(["status"])).toThrow(/status requires an issue key/);
+    expect(parseCliArgs(["status"])).toEqual({ mode: "status" });
   });
 
   it("parses the standalone reconcile subcommand", () => {
@@ -1127,6 +1128,16 @@ describe("cli formatting", () => {
       repoPath: "/repo/aigile",
       worktreesPath: "/repo/aigile/.worktrees",
       baseBranch: "develop",
+    });
+  });
+
+  it("parses keyless status arguments", () => {
+    expect(
+      parseCliArgs(["status", "--repo", "/repo/aigile", "--worktrees", "/repo/aigile/.worktrees"]),
+    ).toEqual({
+      mode: "status",
+      repoPath: "/repo/aigile",
+      worktreesPath: "/repo/aigile/.worktrees",
     });
   });
 
@@ -4003,6 +4014,199 @@ describe("cli formatting", () => {
     expect(output).toContain("State: missing");
     expect(output).toContain("Workspace diff: none");
     expect(output).toContain("run LIN-404 --agent-write");
+  });
+
+  it("includes persisted merged workflow run status when available", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aigile-status-run-"));
+    try {
+      const store = createFileRunStore({ directory });
+      const seed = async (
+        type: WorkflowEvent["type"],
+        artifact?: WorkflowArtifact,
+      ): Promise<void> => {
+        await store.appendEvent(
+          "LIN-900",
+          {
+            type,
+            issueId: "LIN-900",
+            ...(artifact === undefined ? {} : { artifactId: artifact.id }),
+          },
+          artifact === undefined ? [] : [artifact],
+        );
+      };
+      await seed("issue_received");
+      await seed("plan_drafted", {
+        id: "plan",
+        kind: "architect.plan",
+        source: "agent",
+        provenance: {
+          runtime: {
+            runtimeId: "architect-runtime",
+            transport: "stdio",
+            model: "planner",
+            tokenUsage: { totalTokens: 100 },
+          },
+        },
+        payload: {},
+      });
+      await seed("plan_approved");
+      await seed("developer_finished", {
+        id: "dev-1",
+        kind: "developer.attempt",
+        source: "agent",
+        provenance: {
+          runtime: {
+            runtimeId: "developer-runtime",
+            transport: "stdio",
+            model: "coder",
+            tokenUsage: { inputTokens: 20, outputTokens: 30 },
+          },
+        },
+        payload: {},
+      });
+      await seed("verification_passed");
+      await seed("checker_passed");
+      await seed("merge_completed", {
+        id: "github-pr:acme/aigile#17",
+        kind: "github.pull_request",
+        source: "github",
+        payload: { url: "https://github.local/acme/aigile/pull/17" },
+      });
+
+      const output = await runIssueWorkspaceStatus({
+        issueKey: "LIN-900",
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        baseBranch: "main",
+        runStatePath: directory,
+        exec: async (command, args) => {
+          if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+          throw new Error(`unexpected ${command} ${args.join(" ")}`);
+        },
+      });
+
+      expect(output).toContain("Workflow run:");
+      expect(output).toContain("Workflow state: merged");
+      expect(output).toContain("Outcome: merged");
+      expect(output).toContain("Pull request: https://github.local/acme/aigile/pull/17");
+      expect(output).toContain("Developer attempts: 1");
+      expect(output).toContain("Token usage: partial, 150 total (20 input, 30 output)");
+      expect(output).toContain("State: missing");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("includes persisted escalated workflow run reason and attempt count", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aigile-status-escalated-"));
+    try {
+      const store = createFileRunStore({ directory });
+      const events: WorkflowEvent[] = [
+        { type: "issue_received", issueId: "LIN-901" },
+        { type: "plan_drafted", issueId: "LIN-901" },
+        { type: "plan_approved", issueId: "LIN-901" },
+        { type: "developer_finished", issueId: "LIN-901" },
+        { type: "verification_passed", issueId: "LIN-901" },
+        { type: "checker_passed", issueId: "LIN-901" },
+        { type: "publish_failed", issueId: "LIN-901", reason: "pull request has merge conflicts" },
+      ];
+      for (const event of events) await store.appendEvent("LIN-901", event);
+
+      const output = await runIssueWorkspaceStatus({
+        issueKey: "LIN-901",
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        baseBranch: "main",
+        runStatePath: directory,
+        exec: async (command) => {
+          if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+          throw new Error("unexpected command");
+        },
+      });
+
+      expect(output).toContain("Workflow state: escalated");
+      expect(output).toContain("Outcome: escalated");
+      expect(output).toContain("Escalation reason: pull request has merge conflicts");
+      expect(output).toContain("Developer attempts: 1");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("prints a clear no-run-state message for issue status with no persisted run", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aigile-status-empty-"));
+    try {
+      const output = await runIssueWorkspaceStatus({
+        issueKey: "LIN-902",
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        baseBranch: "main",
+        runStatePath: directory,
+        exec: async (command) => {
+          if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+          throw new Error("unexpected command");
+        },
+      });
+
+      expect(output).toContain("Workflow run:");
+      expect(output).toContain("No persisted run state found for LIN-902.");
+      expect(output).toContain("State: missing");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves workspace status when a persisted run file is corrupt", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aigile-status-corrupt-"));
+    try {
+      writeFileSync(join(directory, "LIN-905.json"), "{not-json");
+
+      const output = await runIssueWorkspaceStatus({
+        issueKey: "LIN-905",
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        baseBranch: "main",
+        runStatePath: directory,
+        exec: async (command) => {
+          if (command === "test") return { stdout: "", stderr: "", exitCode: 1 };
+          throw new Error("unexpected command");
+        },
+      });
+
+      expect(output).toContain("Workflow run:");
+      expect(output).toContain("No persisted run state found for LIN-905.");
+      expect(output).toContain("Aigile status: LIN-905");
+      expect(output).toContain("State: missing");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("lists resumable runs when workflow status has no issue key", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aigile-status-list-"));
+    try {
+      const store = createFileRunStore({ directory });
+      await store.appendEvent("LIN-903", { type: "issue_received", issueId: "LIN-903" });
+      for (const type of [
+        "issue_received",
+        "plan_drafted",
+        "plan_approved",
+        "developer_finished",
+        "verification_passed",
+        "checker_passed",
+        "merge_completed",
+      ] as const) {
+        await store.appendEvent("LIN-904", { type, issueId: "LIN-904" });
+      }
+
+      const output = await runWorkflowRunStatus({ runStatePath: directory });
+
+      expect(output).toContain("Resumable workflow runs:");
+      expect(output).toContain("- LIN-903");
+      expect(output).not.toContain("LIN-904");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("preflights real publish dependencies before live role work", async () => {

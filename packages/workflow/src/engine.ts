@@ -9,6 +9,7 @@ import {
   type WorkflowSnapshot,
 } from "./reducer.js";
 import type { RunStore } from "./run-store.js";
+import type { PersistedRun } from "./run-store.js";
 
 export interface WorkflowCommandContext {
   command: WorkflowCommand;
@@ -103,6 +104,16 @@ export interface WorkflowEngineResult {
   stageTimings: WorkflowStageTiming[];
   // Why the run ended where it did (e.g. the escalation reason), when available.
   reason?: string;
+}
+
+export interface WorkflowRunStatusSummary {
+  issueId: string;
+  state: WorkflowState;
+  outcome: WorkflowOutcome;
+  developerAttempts: number;
+  artifacts: WorkflowArtifact[];
+  escalationReason?: string;
+  pullRequestUrl?: string;
 }
 
 const buildResult = (
@@ -206,6 +217,57 @@ const outcomeForState = (state: WorkflowState): WorkflowOutcome => {
     default:
       return "stalled";
   }
+};
+
+const latestPullRequestUrl = (artifacts: readonly WorkflowArtifact[]): string | undefined => {
+  for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+    const artifact = artifacts[index];
+    if (artifact?.kind !== "github.pull_request") continue;
+    const payload = artifact.payload;
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) continue;
+    const url = (payload as { url?: unknown }).url;
+    if (typeof url === "string" && url.length > 0) return url;
+  }
+  return undefined;
+};
+
+const escalationReasonForRun = (
+  issueId: string,
+  events: readonly WorkflowEvent[],
+  policy?: WorkflowPolicy,
+): string | undefined => {
+  let snapshot = initialWorkflowSnapshot(issueId);
+  for (const event of events) {
+    const previousState = snapshot.state;
+    const result = transitionWorkflow(snapshot, event, policy);
+    snapshot = result.snapshot;
+    if (previousState !== "escalated" && snapshot.state === "escalated") {
+      return event.reason;
+    }
+  }
+  return undefined;
+};
+
+export const summarizePersistedRun = (
+  run: PersistedRun,
+  policy?: WorkflowPolicy,
+): WorkflowRunStatusSummary => {
+  const { snapshot } = replayWorkflow(initialWorkflowSnapshot(run.issueId), run.events, policy);
+  const summary: WorkflowRunStatusSummary = {
+    issueId: run.issueId,
+    state: snapshot.state,
+    outcome: outcomeForState(snapshot.state),
+    developerAttempts: snapshot.developerAttempts,
+    artifacts: structuredClone(run.artifacts),
+  };
+  const escalationReason =
+    snapshot.state === "escalated"
+      ? escalationReasonForRun(run.issueId, run.events, policy)
+      : undefined;
+  if (escalationReason !== undefined) summary.escalationReason = escalationReason;
+  const pullRequestUrl = latestPullRequestUrl(run.artifacts);
+  if (pullRequestUrl !== undefined) summary.pullRequestUrl = pullRequestUrl;
+  return summary;
 };
 
 const mergeArtifact = (

@@ -82,7 +82,12 @@ import {
   type ExecResult,
   type IssueWorkspaceStatus,
 } from "@aigile/workspace";
-import { createFileRunStore, listResumableRuns } from "@aigile/workflow";
+import {
+  createFileRunStore,
+  listResumableRuns,
+  summarizePersistedRun,
+  type WorkflowRunStatusSummary,
+} from "@aigile/workflow";
 import { dirname, join } from "node:path";
 
 const demoCliEnabled = (): boolean => process.env.AIGILE_ENABLE_DEMO_CLI === "1";
@@ -148,7 +153,7 @@ const formatAggregatedTokenUsage = (usage: AggregatedTokenUsage): string => {
   return `${prefix}${formattedNumber(usage.totalTokens)} total${inputOutput}`;
 };
 
-const formatTokenUsage = (result: DemoResult): string => {
+const formatArtifactTokenUsage = (artifacts: readonly WorkflowArtifact[]): string => {
   const total: AggregatedTokenUsage = {
     inputTokens: 0,
     outputTokens: 0,
@@ -157,7 +162,7 @@ const formatTokenUsage = (result: DemoResult): string => {
   };
   const byRuntime = new Map<string, AggregatedTokenUsage>();
   let missingRuntimeUsage = false;
-  for (const artifact of result.artifacts) {
+  for (const artifact of artifacts) {
     const runtime = artifact.provenance?.runtime;
     const usage = runtime?.tokenUsage;
     if (!usage) {
@@ -187,6 +192,8 @@ const formatTokenUsage = (result: DemoResult): string => {
   }
   return lines.join("\n");
 };
+
+const formatTokenUsage = (result: DemoResult): string => formatArtifactTokenUsage(result.artifacts);
 
 const STAGE_LABELS: Record<string, string> = {
   planning: "planning/architect",
@@ -1208,8 +1215,14 @@ export interface IssueWorkspaceStatusInput {
   repoPath: string;
   worktreesPath: string;
   baseBranch: string;
+  runStatePath?: string;
   progressLevel?: ProgressLevel;
   exec?: ExecCommand;
+}
+
+export interface WorkflowRunStatusInput {
+  issueKey?: string;
+  runStatePath: string;
 }
 
 const workspaceStateLabel = (status: IssueWorkspaceStatus): string => {
@@ -1257,6 +1270,45 @@ export const formatIssueWorkspaceStatus = (
   return details.join("\n");
 };
 
+const formatWorkflowRunStatusSummary = (
+  issueKey: string,
+  summary: WorkflowRunStatusSummary | undefined,
+): string => {
+  if (summary === undefined) {
+    return ["Workflow run:", `No persisted run state found for ${issueKey}.`].join("\n");
+  }
+  return [
+    "Workflow run:",
+    `Workflow state: ${summary.state}`,
+    `Outcome: ${summary.outcome}`,
+    ...(summary.escalationReason === undefined
+      ? []
+      : [`Escalation reason: ${summary.escalationReason}`]),
+    ...(summary.pullRequestUrl === undefined ? [] : [`Pull request: ${summary.pullRequestUrl}`]),
+    `Developer attempts: ${formattedNumber(summary.developerAttempts)}`,
+    `Token usage: ${formatArtifactTokenUsage(summary.artifacts)}`,
+  ].join("\n");
+};
+
+export const runWorkflowRunStatus = async (input: WorkflowRunStatusInput): Promise<string> => {
+  const store = createFileRunStore({ directory: input.runStatePath });
+  if (input.issueKey === undefined) {
+    const runs = (await listResumableRuns(store)).sort((left, right) => left.localeCompare(right));
+    return [
+      "Resumable workflow runs:",
+      ...(runs.length === 0 ? ["none"] : runs.map((run) => `- ${run}`)),
+    ].join("\n");
+  }
+  const run = await store.load(input.issueKey).catch(() => undefined);
+  return formatWorkflowRunStatusSummary(
+    input.issueKey,
+    run === undefined ? undefined : summarizePersistedRun(run),
+  );
+};
+
+const defaultRunStatePathForWorktrees = (worktreesPath: string): string =>
+  join(worktreesPath, "..", "runs");
+
 export const runIssueWorkspaceStatus = async (
   input: IssueWorkspaceStatusInput,
 ): Promise<string> => {
@@ -1273,12 +1325,18 @@ export const runIssueWorkspaceStatus = async (
     input.progressLevel === "verbose" && status.state !== "missing"
       ? await exec("git", ["diff"], { cwd: status.workspace.worktreePath })
       : undefined;
-  return formatIssueWorkspaceStatus(status, {
+  const workspaceStatus = formatIssueWorkspaceStatus(status, {
     ...(input.progressLevel === undefined ? {} : { level: input.progressLevel }),
     ...(diffResult !== undefined && diffResult.exitCode === 0
       ? { unifiedDiff: diffResult.stdout }
       : {}),
   });
+  if (input.runStatePath === undefined) return workspaceStatus;
+  return [
+    await runWorkflowRunStatus({ issueKey: input.issueKey, runStatePath: input.runStatePath }),
+    "",
+    workspaceStatus,
+  ].join("\n");
 };
 
 export const runRunModePreflight = async (input: RunModePreflightInput): Promise<string> => {
@@ -2452,15 +2510,20 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     return parsed;
   }
   if (args[0] === "status") {
-    const issueKey = args[1];
-    if (!issueKey) throw new Error("status requires an issue key");
-    const parsed: CliArgs = { mode: "status", issueKey };
+    const issueKey = args[1]?.startsWith("--") === false ? args[1] : undefined;
+    const parsed: CliArgs =
+      issueKey === undefined ? { mode: "status" } : { mode: "status", issueKey };
     const repoPath = optionValue(args, "--repo");
     const worktreesPath = optionValue(args, "--worktrees");
     const baseBranch = optionValue(args, "--base-branch");
+    const productsConfigPath = optionValue(args, "--products-config");
+    const product = optionValue(args, "--product");
     if (repoPath !== undefined) parsed.repoPath = repoPath;
     if (worktreesPath !== undefined) parsed.worktreesPath = worktreesPath;
     if (baseBranch !== undefined) parsed.baseBranch = baseBranch;
+    if (productsConfigPath !== undefined) parsed.productsConfigPath = productsConfigPath;
+    if (product !== undefined) parsed.product = product;
+    if (progressLevel !== undefined) parsed.progressLevel = progressLevel;
     if (noColor) parsed.noColor = true;
     return parsed;
   }
@@ -2810,12 +2873,25 @@ const main = async (): Promise<void> => {
     return apiKey;
   };
   if (args.mode === "status") {
-    if (args.issueKey === undefined) throw new Error("status requires an issue key");
+    const statusContext =
+      args.product !== undefined || args.productsConfigPath !== undefined
+        ? await resolveProductCliContext(args)
+        : undefined;
+    const repoPath = statusContext?.repoPath ?? args.repoPath ?? process.cwd();
+    const worktreesPath =
+      statusContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`;
+    const runStatePath = defaultRunStatePathForWorktrees(worktreesPath);
+    if (args.issueKey === undefined) {
+      const output = await runWorkflowRunStatus({ runStatePath });
+      process.stdout.write(`${output}\n`);
+      return;
+    }
     const output = await runIssueWorkspaceStatus({
       issueKey: args.issueKey,
-      repoPath: args.repoPath ?? process.cwd(),
-      worktreesPath: args.worktreesPath ?? `${process.cwd()}/.worktrees`,
-      baseBranch: args.baseBranch ?? "main",
+      repoPath,
+      worktreesPath,
+      baseBranch: statusContext?.baseBranch ?? args.baseBranch ?? "main",
+      runStatePath,
       ...(args.progressLevel === undefined ? {} : { progressLevel: args.progressLevel }),
     });
     process.stdout.write(`${output}\n`);
