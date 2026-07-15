@@ -104,7 +104,7 @@ const run = (deps: EngineHandlerDeps) =>
   });
 
 const strictStatusTracker = (statuses: string[], comments: string[] = []): IssueTrackerAdapter => ({
-  getIssue: async () => makeIssue(),
+  getIssue: async () => makeIssue({ comments: [...comments] }),
   updateIssueStatus: async (_key, status) => {
     if (!["Todo", "In Review", "Done", "Blocked"].includes(status)) {
       throw new Error(`unresolved state name: ${status}`);
@@ -149,6 +149,8 @@ describe("engine command handlers", () => {
   });
 
   it("keeps a green PR in review when merge policy is manual", async () => {
+    const statuses: string[] = [];
+    const comments: string[] = [];
     const codeHost = createFakeCodeHostAdapter({
       mergeability: "mergeable",
       merged: false,
@@ -156,14 +158,132 @@ describe("engine command handlers", () => {
     });
     const result = await run(
       buildDeps({
-        issue: makeIssue({ description: "aigile-merge: manual" }),
+        issue: makeIssue({ description: "Ready to publish." }),
         codeHost,
+        mergePolicy: "manual",
+        issueTracker: strictStatusTracker(statuses, comments),
       }),
     );
 
     expect(result.outcome).toBe("paused");
     expect(result.snapshot.state).toBe("merge_ready");
     expect((await codeHost.getPullRequestMergeState("o/r#1")).status).toBe("unmerged");
+    const pullRequest = await codeHost.getPullRequest("o/r#1");
+    expect(pullRequest.body).toContain("Merge policy: manual");
+    expect(pullRequest.comments).toContainEqual(expect.stringContaining("manual merge policy"));
+    expect(statuses).toEqual(["In Review"]);
+    expect(comments.at(-1)).toContain("Merge policy: manual");
+    expect(comments.at(-1)).toContain("manual merge policy");
+  });
+
+  it("does not repeat manual merge-policy comments when a paused run resumes", async () => {
+    const statuses: string[] = [];
+    const comments: string[] = [];
+    const codeHost = createFakeCodeHostAdapter({
+      mergeability: "mergeable",
+      merged: false,
+      checks: { "o/r#1": { status: "passing", checks: [{ name: "ci", state: "passing" }] } },
+    });
+    const deps = buildDeps({
+      issue: makeIssue({ description: "Ready to publish." }),
+      codeHost,
+      mergePolicy: "manual",
+      issueTracker: strictStatusTracker(statuses, comments),
+    });
+    const store = createInMemoryRunStore();
+    const input = {
+      issueId: deps.issue.key,
+      store,
+      handlers: createEngineCommandHandlers(deps),
+      initialArtifacts: [issueToArtifact(deps.issue)],
+    };
+
+    await runWorkflowEngine(input);
+    await runWorkflowEngine(input);
+
+    const pullRequest = await codeHost.getPullRequest("o/r#1");
+    expect(
+      pullRequest.comments.filter((comment) => comment.includes("Merge policy: manual")),
+    ).toHaveLength(1);
+    expect(comments.filter((comment) => comment.includes("Merge policy: manual"))).toHaveLength(1);
+  });
+
+  it("resumes a manual merge-policy hold without requiring an in-memory PR record", async () => {
+    const statuses: string[] = [];
+    const comments: string[] = [];
+    const firstHost = createFakeCodeHostAdapter({
+      mergeability: "mergeable",
+      merged: false,
+      checks: { "o/r#1": { status: "passing", checks: [{ name: "ci", state: "passing" }] } },
+    });
+    const store = createInMemoryRunStore();
+    const baseDeps = buildDeps({
+      issue: makeIssue({ description: "Ready to publish." }),
+      codeHost: firstHost,
+      mergePolicy: "manual",
+      issueTracker: strictStatusTracker(statuses, comments),
+    });
+
+    await runWorkflowEngine({
+      issueId: baseDeps.issue.key,
+      store,
+      handlers: createEngineCommandHandlers(baseDeps),
+      initialArtifacts: [issueToArtifact(baseDeps.issue)],
+    });
+
+    let appendedPullRequestComments = 0;
+    const freshResumeHost: CodeHostAdapter = {
+      createPullRequest: async () => {
+        throw new Error("unexpected create");
+      },
+      getPullRequest: async () => {
+        throw new Error("Pull request not found: o/r#1");
+      },
+      getPullRequestMergeability: async () => {
+        throw new Error("unexpected mergeability read");
+      },
+      getPullRequestMergeState: async () => ({ status: "unmerged" }),
+      getPullRequestChecks: async () => {
+        throw new Error("unexpected checks read");
+      },
+      appendPullRequestComment: async () => {
+        appendedPullRequestComments += 1;
+      },
+      submitPullRequestReview: async () => {
+        throw new Error("unexpected review");
+      },
+      recordCheckResult: async () => {
+        throw new Error("unexpected check record");
+      },
+      mergePullRequest: async () => {
+        throw new Error("unexpected merge");
+      },
+      findPullRequestForBranch: async () => ({
+        id: "o/r#1",
+        number: 1,
+        url: "https://github.local/o/r/pull/1",
+        mergeState: "unmerged",
+        open: true,
+      }),
+    };
+    const resumeDeps = buildDeps({
+      issue: baseDeps.issue,
+      codeHost: freshResumeHost,
+      mergePolicy: "manual",
+      issueTracker: strictStatusTracker(statuses, comments),
+    });
+
+    const resumed = await runWorkflowEngine({
+      issueId: resumeDeps.issue.key,
+      store,
+      handlers: createEngineCommandHandlers(resumeDeps),
+      initialArtifacts: [issueToArtifact(resumeDeps.issue)],
+    });
+
+    expect(resumed.outcome).toBe("paused");
+    expect(resumed.snapshot.state).toBe("merge_ready");
+    expect(appendedPullRequestComments).toBe(0);
+    expect(comments.filter((comment) => comment.includes("Merge policy: manual"))).toHaveLength(1);
   });
 
   it("does not merge when checks pass but required reviews are missing", async () => {

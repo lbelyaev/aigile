@@ -43,6 +43,7 @@ export const formatPublishedStatusComment = (
   state: WorkflowState,
   pullRequest: PullRequestRecord,
   artifacts: readonly WorkflowArtifact[],
+  reason?: string | undefined,
 ): string =>
   [
     state === "merged"
@@ -51,6 +52,7 @@ export const formatPublishedStatusComment = (
     "",
     `Final state: ${state}`,
     `Pull request: ${pullRequest.url}`,
+    ...(reason === undefined ? [] : [`Reason: ${reason}`]),
     `Verification: ${artifactIdByKind(artifacts, "verification.result")}`,
     `Checker: ${artifactIdByKind(artifacts, "checker.verdict")}`,
   ].join("\n");
@@ -108,7 +110,7 @@ export const syncIssueStatusForState = async (input: {
     } else if ((input.state === "merged" || input.state === "merge_ready") && pullRequest) {
       await tracker.appendIssueComment(
         input.issueKey,
-        formatPublishedStatusComment(input.state, pullRequest, artifacts),
+        formatPublishedStatusComment(input.state, pullRequest, artifacts, input.reason),
       );
     } else if (input.state === "escalated" || input.state === "failed") {
       await tracker.appendIssueComment(

@@ -10,6 +10,7 @@
         "repo": "lbelyaev/aigile",
         "baseBranch": "main"
       },
+      "mergePolicy": "auto",
       "worktreesPath": "~/.aigile/worktrees/lbelyaev/aigile",
       "defaultRun": {
         "startRun": true,

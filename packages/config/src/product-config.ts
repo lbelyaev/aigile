@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export type ProductRunMode = "dry_run" | "agent_write";
+export type ProductMergePolicy = "auto" | "manual";
 
 export const DEFAULT_MAX_CONCURRENT_RUNS = 1;
 
@@ -35,6 +36,7 @@ export interface RuntimeProduct {
     repo: string;
     baseBranch: string;
   };
+  mergePolicy?: ProductMergePolicy;
   repoPath?: string;
   worktreesPath?: string;
   maxConcurrentRuns?: number;
@@ -143,6 +145,14 @@ const parseDefaultRun = (value: unknown, context: string): RuntimeProduct["defau
   };
 };
 
+const parseMergePolicy = (value: unknown, context: string): ProductMergePolicy => {
+  if (value === undefined) return "auto";
+  if (value !== "auto" && value !== "manual") {
+    throw new Error(`Product config ${context}.mergePolicy must be auto or manual`);
+  }
+  return value;
+};
+
 const parseCommand = (value: unknown, context: string): ProductVerificationCommand => {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error(`Product config ${context} must be a non-empty string array`);
@@ -231,6 +241,7 @@ const parseProduct = (value: unknown, index: number): RuntimeProduct => {
     id: stringField(value, "id", context),
     linear: parseLinear(value.linear, context),
     github: parseGithub(value.github, context),
+    mergePolicy: parseMergePolicy(value.mergePolicy, context),
     defaultRun: parseDefaultRun(value.defaultRun, context),
   };
   const repoPath = optionalStringField(value, "repoPath", context);

@@ -19,10 +19,16 @@ export {
   loadRepoConfigFromJson,
   repoConfigToProduct,
 } from "./repo-config.js";
+export {
+  effectiveMergePolicy,
+  issueMergePolicyOverride,
+  resolveMergePolicy,
+} from "./merge-policy.js";
 
 export type { IssueStatusLabels, RuntimeConfig } from "./runtime-config.js";
 export type {
   ProductChangedFileGuard,
+  ProductMergePolicy,
   ProductPathResolutionOptions,
   ProductRunMode,
   ProductVerificationCommand,
@@ -32,3 +38,4 @@ export type {
   RuntimeProductConfig,
 } from "./product-config.js";
 export type { InRepoConfig, RepoConfigDiscoveryResult } from "./repo-config.js";
+export type { MergePolicy } from "./merge-policy.js";

@@ -22,6 +22,7 @@ import {
   formatDemoResult,
   formatDuration,
   formatIssueWorkspaceStatus,
+  formatReconcileProductsResult,
   runCli,
   parseDurationMs,
   parseGitHubRepoFromRemoteUrl,
@@ -277,6 +278,19 @@ describe("cli formatting", () => {
     expect(output).toContain("Mode: agent_write");
     expect(output).toContain("Final state: merge_ready");
     expect(output).toContain("Pull request: none");
+  });
+
+  it("surfaces merge policy in run output", () => {
+    const output = formatDemoResult({
+      issueKey: "LIN-795",
+      finalState: "merge_ready",
+      mergePolicy: "manual",
+      artifacts: [],
+      timeline: [{ label: "checker_passed -> merge_ready", elapsedMs: 1_000 }],
+      durationMs: 1_000,
+    });
+
+    expect(output).toContain("Merge policy: manual");
   });
 
   it("formats timeline durations and unavailable token usage", () => {
@@ -1385,6 +1399,7 @@ describe("cli formatting", () => {
       agentWrite: true,
       publish: true,
       startRun: true,
+      mergePolicy: "auto",
     });
   });
 
@@ -1527,6 +1542,7 @@ describe("cli formatting", () => {
             id: "aigile",
             linear: { team: "LBE", project: "Aigile" },
             github: { repo: "lbelyaev/aigile", baseBranch: "main" },
+            mergePolicy: "manual",
             repoPath: "/repo/aigile",
             worktreesPath: "/worktrees/aigile",
             defaultRun: { startRun: true, mode: "agent_write", publish: true },
@@ -1568,6 +1584,7 @@ describe("cli formatting", () => {
       agentWrite: true,
       publish: true,
       startRun: true,
+      mergePolicy: "manual",
       verification: {
         install: [["bun", "install", "--frozen-lockfile"]],
         checks: [["bun", "run", "check"]],
@@ -2230,6 +2247,7 @@ describe("cli formatting", () => {
             agentWrite: true,
             publish: true,
             startRun: true,
+            mergePolicy: "auto",
           },
           {
             productId: "api",
@@ -2246,12 +2264,18 @@ describe("cli formatting", () => {
             agentWrite: false,
             publish: false,
             startRun: false,
+            mergePolicy: "manual",
           },
         ],
         { pollIntervalMs: 30_000 },
       ),
     ).toBe(
-      ["aigile  daemon started", "  products: web, api", "  poll interval: 30000ms"].join("\n"),
+      [
+        "aigile  daemon started",
+        "  products: web, api",
+        "  merge policy: web=auto, api=manual",
+        "         poll interval: 30000ms",
+      ].join("\n"),
     );
   });
 
@@ -4313,5 +4337,22 @@ describe("cli formatting", () => {
     expect(output).toContain("Aigile reconcile: products");
     expect(output).toContain("product/LIN-321: updated In Review -> Done");
     expect(await tracker.getIssue("LIN-321")).toMatchObject({ status: "Done" });
+  });
+
+  it("prints reconcile reasons for manual policy holds", () => {
+    const output = formatReconcileProductsResult([
+      {
+        kind: "unchanged",
+        productId: "product",
+        issueKey: "LIN-321",
+        status: "In Review",
+        reason: "held by manual merge policy",
+        branchName: "aigile/LIN-321",
+        target: { owner: "org", repo: "repo" },
+      },
+    ]);
+
+    expect(output).toContain("product/LIN-321: unchanged In Review");
+    expect(output).toContain("held by manual merge policy");
   });
 });

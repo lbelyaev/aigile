@@ -15,8 +15,10 @@ import {
 } from "@aigile/adapters";
 import {
   DEFAULT_ISSUE_STATUS_LABELS,
+  effectiveMergePolicy,
   type IssueStatusLabels,
   type ProductChangedFileGuard,
+  type ProductMergePolicy,
   type ProductVerificationCommand,
 } from "@aigile/config";
 import {
@@ -109,6 +111,7 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   publishPlan?: (plan: WorkflowArtifact) => Promise<void>;
   verificationCommands?: ProductVerificationCommand[];
   autofixCommands?: ProductVerificationCommand[];
+  mergePolicy?: ProductMergePolicy;
   changedFileGuards?: ProductChangedFileGuard[];
   runStatePath?: string;
   retryEscalated?: boolean;
@@ -142,6 +145,7 @@ export interface DemoResult {
     message: string;
     pullRequestUrl?: string;
   };
+  mergePolicy?: ProductMergePolicy;
   artifacts: WorkflowArtifact[];
   timeline: DemoTimelineEntry[];
   durationMs: number;
@@ -1055,6 +1059,7 @@ export const runWorkspaceIssueWithEngine = async (
     ...DEFAULT_ISSUE_STATUS_LABELS,
     ...(input.issueStatusLabels ?? {}),
   };
+  const mergePolicy = effectiveMergePolicy(input.mergePolicy, input.issue.description);
 
   const deps: EngineHandlerDeps = {
     issue: input.issue,
@@ -1065,6 +1070,7 @@ export const runWorkspaceIssueWithEngine = async (
       baseBranch: target.baseBranch ?? input.baseBranch ?? "main",
     },
     codeHost,
+    mergePolicy,
     runRole: (roleId, inputArtifacts) =>
       runAssignedRole({
         roleId,
@@ -1165,6 +1171,7 @@ export const runWorkspaceIssueWithEngine = async (
   const demoResult: DemoResult = {
     issueKey: input.issue.key,
     finalState: result.snapshot.state,
+    mergePolicy,
     artifacts: result.artifacts,
     timeline: result.timeline,
     durationMs: result.durationMs,
