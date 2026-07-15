@@ -57,6 +57,7 @@ import {
   isArchitectPlanPayload,
   isCheckerVerdictPayload,
   isDeveloperAttemptPayload,
+  type RuntimeTokenUsage,
   type WorkflowArtifact,
 } from "@aigile/types";
 import {
@@ -113,25 +114,115 @@ export const formatDuration = (durationMs: number): string => {
 
 const formattedNumber = (value: number): string => new Intl.NumberFormat("en-US").format(value);
 
+interface AggregatedTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  partial: boolean;
+}
+
+const tokenUsageTotal = (usage: RuntimeTokenUsage): number =>
+  usage.totalTokens ??
+  (usage.inputTokens !== undefined && usage.outputTokens !== undefined
+    ? usage.inputTokens + usage.outputTokens
+    : 0);
+
+const isPartialTokenUsage = (usage: RuntimeTokenUsage): boolean =>
+  usage.inputTokens === undefined ||
+  usage.outputTokens === undefined ||
+  (usage.totalTokens !== undefined && usage.inputTokens + usage.outputTokens !== usage.totalTokens);
+
+const addTokenUsage = (target: AggregatedTokenUsage, usage: RuntimeTokenUsage): void => {
+  target.inputTokens += usage.inputTokens ?? 0;
+  target.outputTokens += usage.outputTokens ?? 0;
+  target.totalTokens += tokenUsageTotal(usage);
+  target.partial = target.partial || isPartialTokenUsage(usage);
+};
+
+const formatAggregatedTokenUsage = (usage: AggregatedTokenUsage): string => {
+  const prefix = usage.partial ? "partial, " : "";
+  const inputOutput =
+    usage.inputTokens > 0 || usage.outputTokens > 0
+      ? ` (${formattedNumber(usage.inputTokens)} input, ${formattedNumber(usage.outputTokens)} output)`
+      : "";
+  return `${prefix}${formattedNumber(usage.totalTokens)} total${inputOutput}`;
+};
+
 const formatTokenUsage = (result: DemoResult): string => {
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let totalTokens = 0;
-  let hasUsage = false;
+  const total: AggregatedTokenUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    partial: false,
+  };
+  const byRuntime = new Map<string, AggregatedTokenUsage>();
+  let missingRuntimeUsage = false;
   for (const artifact of result.artifacts) {
-    const usage = artifact.provenance?.runtime?.tokenUsage;
-    if (!usage) continue;
-    hasUsage = true;
-    inputTokens += usage.inputTokens ?? 0;
-    outputTokens += usage.outputTokens ?? 0;
-    if (usage.inputTokens !== undefined && usage.outputTokens !== undefined) {
-      totalTokens += usage.inputTokens + usage.outputTokens;
-    } else {
-      totalTokens += usage.totalTokens ?? 0;
+    const runtime = artifact.provenance?.runtime;
+    const usage = runtime?.tokenUsage;
+    if (!usage) {
+      if (runtime !== undefined) missingRuntimeUsage = true;
+      continue;
+    }
+    addTokenUsage(total, usage);
+    if (runtime !== undefined) {
+      const key = `${runtime.runtimeId}/${runtime.model}`;
+      const aggregate = byRuntime.get(key) ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        partial: false,
+      };
+      addTokenUsage(aggregate, usage);
+      byRuntime.set(key, aggregate);
     }
   }
-  if (!hasUsage) return "unavailable";
-  return `${formattedNumber(totalTokens)} total (${formattedNumber(inputTokens)} input, ${formattedNumber(outputTokens)} output)`;
+  if (byRuntime.size === 0) return "unavailable";
+  total.partial = total.partial || missingRuntimeUsage;
+  const lines = [formatAggregatedTokenUsage(total), "Token usage by model/runtime:"];
+  for (const [runtime, usage] of [...byRuntime.entries()].sort(([left], [right]) =>
+    left.localeCompare(right),
+  )) {
+    lines.push(`- ${runtime}: ${formatAggregatedTokenUsage(usage)}`);
+  }
+  return lines.join("\n");
+};
+
+const STAGE_LABELS: Record<string, string> = {
+  planning: "planning/architect",
+  development: "development",
+  verification: "verification",
+  checker: "checker/deep-review",
+  publish: "publish/PR",
+  reconciliation: "reconciliation/status-sync",
+};
+
+const STAGE_ORDER = [
+  "planning",
+  "development",
+  "verification",
+  "checker",
+  "publish",
+  "reconciliation",
+] as const;
+
+const formatAttempts = (attempts: number): string =>
+  `${formattedNumber(attempts)} ${attempts === 1 ? "attempt" : "attempts"}`;
+
+const formatStageTimings = (result: DemoResult): string[] => {
+  if (result.stageTimings === undefined || result.stageTimings.length === 0) {
+    return ["- unavailable"];
+  }
+  const byStage = new Map(result.stageTimings.map((timing) => [timing.stage, timing]));
+  return STAGE_ORDER.map((stage) => {
+    const timing = byStage.get(stage);
+    const label = STAGE_LABELS[stage] ?? stage;
+    if (timing === undefined || timing.durationMs === undefined || timing.attempts <= 0) {
+      return `- ${label}: unavailable`;
+    }
+    if (timing.durationMs <= 0) return `- ${label}: unavailable`;
+    return `- ${label}: ${formatAttempts(timing.attempts)}, ${formatDuration(timing.durationMs)}`;
+  });
 };
 
 export const formatDemoResult = (result: DemoResult): string => {
@@ -153,6 +244,9 @@ export const formatDemoResult = (result: DemoResult): string => {
         ]),
     `Duration: ${formatDuration(result.durationMs)}`,
     `Token usage: ${formatTokenUsage(result)}`,
+    "",
+    "Stage timing:",
+    ...formatStageTimings(result),
     "",
     "Timeline:",
     ...result.timeline.map((entry) => `- ${entry.label} (+${formatDuration(entry.elapsedMs)})`),

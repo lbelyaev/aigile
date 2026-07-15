@@ -194,6 +194,78 @@ describe("workflow engine", () => {
     expect(devAttempts).toEqual([1, 2, 3]); // initial + two retries
   });
 
+  it("reports controlled total duration, timeline deltas, stage timing, and retry counts", async () => {
+    const store = createInMemoryRunStore();
+    let current = 0;
+    const advance = (durationMs: number) => {
+      current += durationMs;
+    };
+    let verifyCalls = 0;
+    const handlers = baseHandlers(async () => {
+      advance(1_000);
+      verifyCalls += 1;
+      return { event: ev(verifyCalls < 2 ? "verification_failed" : "verification_passed") };
+    });
+    handlers.start_architect_plan = async () => {
+      advance(1_500);
+      return { event: ev("plan_drafted", "plan"), artifact: art("plan", "architect.plan") };
+    };
+    handlers.request_plan_approval = async () => {
+      advance(250);
+      return { event: ev("plan_approved") };
+    };
+    handlers.start_developer_attempt = async ({ snapshot }) => {
+      advance(snapshot.developerAttempts === 1 ? 2_000 : 3_000);
+      return {
+        event: ev("developer_finished", `dev-${snapshot.developerAttempts}`),
+        artifact: art(`dev-${snapshot.developerAttempts}`, "developer.attempt"),
+      };
+    };
+    handlers.start_checker_review = async () => {
+      advance(1_250);
+      return { event: ev("checker_passed") };
+    };
+    handlers.merge_pull_request = async () => {
+      advance(750);
+      return { event: ev("merge_completed") };
+    };
+    handlers.sync_sources_of_truth = async () => {
+      advance(500);
+      return {};
+    };
+
+    const result = await runWorkflowEngine({
+      issueId: "LIN-1",
+      store,
+      handlers,
+      now: () => current,
+    });
+
+    expect(result.durationMs).toBe(11_250);
+    expect(result.timeline.map((entry) => entry.label)).toEqual([
+      "issue_received -> planning",
+      "plan_drafted -> awaiting_plan_approval",
+      "plan_approved -> developing",
+      "developer_finished -> verifying",
+      "verification_failed -> developing",
+      "developer_finished -> verifying",
+      "verification_passed -> checking",
+      "checker_passed -> merge_ready",
+      "merge_completed -> merged",
+    ]);
+    expect(result.timeline.map((entry) => entry.elapsedMs)).toEqual([
+      0, 1_500, 250, 2_000, 1_000, 3_000, 1_000, 1_250, 750,
+    ]);
+    expect(result.stageTimings).toEqual([
+      { stage: "planning", attempts: 1, durationMs: 1_750 },
+      { stage: "development", attempts: 2, durationMs: 5_000 },
+      { stage: "verification", attempts: 2, durationMs: 2_000 },
+      { stage: "checker", attempts: 1, durationMs: 1_250 },
+      { stage: "publish", attempts: 1, durationMs: 750 },
+      { stage: "reconciliation", attempts: 1, durationMs: 500 },
+    ]);
+  });
+
   it("keeps distinct artifact payloads across retries", async () => {
     const store = createInMemoryRunStore();
     let verifyCalls = 0;
