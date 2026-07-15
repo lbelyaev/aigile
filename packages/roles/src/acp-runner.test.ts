@@ -671,6 +671,49 @@ describe("ACP role runner", () => {
     ).toBe("reject_once");
   });
 
+  it("allows broad read-only discovery for architect as warning-only under agent-write", () => {
+    const connectInput = buildAcpRuntimeConnectInput({
+      roleId: "architect",
+      issueId: "LIN-123",
+      runtime: { id: "runtime-architect", transport: "stdio", command: ["agent-acp"] },
+      assignment: { roleId: "architect", runtimeProfileId: "runtime-architect" },
+      inputArtifacts: [
+        {
+          id: "policy:LIN-123:agent-write",
+          kind: "execution.policy",
+          source: "system",
+          payload: {
+            mode: "agent_write",
+            fileWrites: "allowed",
+            commits: "forbidden",
+            shellCommands: "workspace",
+          },
+        },
+      ],
+    });
+
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:architect",
+        requestId: "search-1",
+        tool: "grep",
+        kind: "search",
+        description: "grep",
+        options: [],
+      }),
+    ).toBe("allow_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:architect",
+        requestId: "exec-1",
+        tool: "Terminal",
+        kind: "execute",
+        description: JSON.stringify({ command: "grep TODO" }),
+        options: [],
+      }),
+    ).toBe("allow_once");
+  });
+
   it("rejects writes and non-read execution by ACP tool kind in dry-run", () => {
     const connectInput = buildAcpRuntimeConnectInput({
       roleId: "developer",

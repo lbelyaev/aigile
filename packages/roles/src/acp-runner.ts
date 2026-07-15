@@ -392,6 +392,9 @@ const isReviewAllowedExecution = (request: AcpPermissionRequest): boolean => {
   );
 };
 
+const isDiscoveryWarningOnlyRole = (roleId: string): boolean =>
+  roleId === "architect" || roleId === "checker" || roleId === "deep_reviewer";
+
 // ACP tool-call kinds (agent-defined): file-mutating vs. read-only categories.
 const WRITE_TOOL_KINDS = new Set(["edit", "write", "delete", "move"]);
 const READ_TOOL_KINDS = new Set(["read", "search", "fetch"]);
@@ -403,11 +406,13 @@ const isEditToolName = (tool: string): boolean =>
 // otherwise allow ordinary commands (tests, typecheck, builds, targeted reads).
 const decideExecutePermission = (
   request: AcpPermissionRequest,
+  roleId: string,
   mode: ExecutionPolicyMode,
 ): PermissionDecision => {
   if (isWriteLikePermission(request)) return "reject_once";
   if (mode === "review") return isReviewAllowedExecution(request) ? "allow_once" : "reject_once";
-  if (isBroadDiscoveryPermission(request)) return "reject_once";
+  if (isBroadDiscoveryPermission(request))
+    return isDiscoveryWarningOnlyRole(roleId) ? "allow_once" : "reject_once";
   if (mode === "dry_run") return isReadOnlyPermission(request) ? "allow_once" : "reject_once";
   return "allow_once";
 };
@@ -425,9 +430,11 @@ const buildExecutionPolicyPermissionDecision = (
     const kind = request.kind?.toLowerCase();
     if (kind !== undefined) {
       if (WRITE_TOOL_KINDS.has(kind)) return mode === "agent_write" ? "allow_once" : "reject_once";
-      if (kind === "execute") return decideExecutePermission(request, mode);
+      if (kind === "execute") return decideExecutePermission(request, input.roleId, mode);
       if (READ_TOOL_KINDS.has(kind))
-        return mode === "review" || !isBroadDiscoveryPermission(request)
+        return mode === "review" ||
+          isDiscoveryWarningOnlyRole(input.roleId) ||
+          !isBroadDiscoveryPermission(request)
           ? "allow_once"
           : "reject_once";
       // Unknown kind: fall through to label/command heuristics below.
@@ -435,7 +442,7 @@ const buildExecutionPolicyPermissionDecision = (
 
     // Fallback for agents that omit `kind`: classify by tool label, then by command.
     if (isEditToolName(request.tool)) return mode === "agent_write" ? "allow_once" : "reject_once";
-    return decideExecutePermission(request, mode);
+    return decideExecutePermission(request, input.roleId, mode);
   };
 };
 
