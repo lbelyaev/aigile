@@ -1,4 +1,5 @@
 export type ReviewStrategyMode = "light" | "deep-parallel" | "full";
+export type ReviewStrategyReviewer = "checker" | "deep_reviewer";
 
 export interface ReviewValidationBudget {
   maxCalls: number;
@@ -7,7 +8,7 @@ export interface ReviewValidationBudget {
 
 export interface ReviewStrategy {
   mode: ReviewStrategyMode;
-  reviewers: string[];
+  reviewers: ReviewStrategyReviewer[];
   angles: string[];
   maxFindings: number;
   validationBudget: ReviewValidationBudget;
@@ -22,6 +23,7 @@ export interface ReviewStrategyConfig {
 }
 
 const REVIEW_STRATEGY_MODES = ["light", "deep-parallel", "full"] as const;
+const REVIEW_STRATEGY_REVIEWERS = ["checker", "deep_reviewer"] as const;
 const REVIEW_ANGLES = [
   "correctness",
   "removed-behavior",
@@ -109,6 +111,18 @@ const parseAngleArray = (value: unknown, context: string, fallback: string[]): s
     return angle;
   });
 
+const parseReviewerArray = (
+  value: unknown,
+  context: string,
+  fallback: ReviewStrategyReviewer[],
+): ReviewStrategyReviewer[] =>
+  parseStringArray(value, context, fallback).map((reviewer) => {
+    if (!REVIEW_STRATEGY_REVIEWERS.includes(reviewer as ReviewStrategyReviewer)) {
+      throw new Error(`${context} must contain only checker or deep_reviewer`);
+    }
+    return reviewer as ReviewStrategyReviewer;
+  });
+
 const parseOptionalStringArray = (
   value: unknown,
   context: string,
@@ -144,7 +158,7 @@ const parseStrategy = (
   if (!isRecord(value)) throw new Error(`Review strategy ${mode} must be an object`);
   const strategy: ReviewStrategy = {
     mode,
-    reviewers: parseStringArray(
+    reviewers: parseReviewerArray(
       value.reviewers,
       `Review strategy ${mode}.reviewers`,
       fallback.reviewers,

@@ -31,6 +31,7 @@ export type {
   ReviewStrategy,
   ReviewStrategyConfig,
   ReviewStrategyMode,
+  ReviewStrategyReviewer,
   ReviewValidationBudget,
 } from "./review-strategy.js";
 export type {

@@ -72,6 +72,14 @@ describe("review strategy config", () => {
         },
       }),
     ).toThrow(/unknown review strategy mode/i);
+
+    expect(() =>
+      loadReviewStrategyConfig({
+        strategies: {
+          full: { reviewers: ["deep-reviewer"] },
+        },
+      }),
+    ).toThrow(/reviewers must contain only checker or deep_reviewer/i);
   });
 
   it("rejects deep-reviewer strategies with fewer than two angles", () => {
