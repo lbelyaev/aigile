@@ -245,6 +245,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 type ExecutionPolicyMode = "dry_run" | "agent_write" | "review";
 
 const executionPolicyMode = (input: RoleRunInput): ExecutionPolicyMode | undefined => {
+  let firstPolicyMode: ExecutionPolicyMode | undefined;
+  let deepReviewerReviewMode: ExecutionPolicyMode | undefined;
   for (const artifact of input.inputArtifacts) {
     if (artifact.kind !== "execution.policy" || !isRecord(artifact.payload)) continue;
     if (
@@ -252,10 +254,13 @@ const executionPolicyMode = (input: RoleRunInput): ExecutionPolicyMode | undefin
       artifact.payload.mode === "agent_write" ||
       artifact.payload.mode === "review"
     ) {
-      return artifact.payload.mode;
+      firstPolicyMode ??= artifact.payload.mode;
+      if (input.roleId === "deep_reviewer" && artifact.payload.mode === "review") {
+        deepReviewerReviewMode = artifact.payload.mode;
+      }
     }
   }
-  return undefined;
+  return deepReviewerReviewMode ?? firstPolicyMode;
 };
 
 const extractCommand = (request: AcpPermissionRequest): string => {
@@ -317,6 +322,53 @@ const isPrOpeningPermission = (request: AcpPermissionRequest): boolean => {
   const command = extractCommand(request).trim().toLowerCase();
   return commandSegments(command).some(
     (segment) => /^(gh|hub)\s+pr\s+create\b/.test(segment) || /^hub\s+pull-request\b/.test(segment),
+  );
+};
+
+const isLinearMutationPermission = (request: AcpPermissionRequest): boolean => {
+  const surface = `${request.tool} ${extractCommand(request)}`.toLowerCase();
+  return (
+    surface.includes("linear") &&
+    /(create|update|delete|archive|assign|comment|transition|move|link|unlink|mutat)/.test(surface)
+  );
+};
+
+const isLinearMutationTool = (tool: string): boolean => {
+  const lowered = tool.toLowerCase();
+  return (
+    lowered.includes("linear") &&
+    /(create|update|delete|archive|assign|comment|transition|move|link|unlink|mutat)/.test(lowered)
+  );
+};
+
+const isPullRequestMutationPermission = (request: AcpPermissionRequest): boolean => {
+  const command = extractCommand(request).trim().toLowerCase();
+  if (
+    commandSegments(command).some(
+      (segment) =>
+        /^(gh|hub)\s+pr\s+(create|edit|merge|close|reopen|comment|review|ready|lock|unlock)\b/.test(
+          segment,
+        ) || /^hub\s+pull-request\b/.test(segment),
+    )
+  ) {
+    return true;
+  }
+  const surface = `${request.tool} ${command}`.toLowerCase();
+  return (
+    (surface.includes("github") || /(^|[_\W])(gh|pull[_-]?request|pr)([_\W]|$)/.test(surface)) &&
+    /(create|update|edit|merge|close|reopen|comment|review|approve|request[_-]?review|mutat)/.test(
+      surface,
+    )
+  );
+};
+
+const isPullRequestMutationTool = (tool: string): boolean => {
+  const lowered = tool.toLowerCase();
+  return (
+    (lowered.includes("github") || /(^|[_\W])(gh|pull[_-]?request|pr)([_\W]|$)/.test(lowered)) &&
+    /(create|update|edit|merge|close|reopen|comment|review|approve|request[_-]?review|mutat)/.test(
+      lowered,
+    )
   );
 };
 
@@ -431,6 +483,13 @@ const buildExecutionPolicyPermissionDecision = (
     if (kind !== undefined) {
       if (WRITE_TOOL_KINDS.has(kind)) return mode === "agent_write" ? "allow_once" : "reject_once";
       if (kind === "execute") return decideExecutePermission(request, input.roleId, mode);
+      if (
+        READ_TOOL_KINDS.has(kind) &&
+        mode === "review" &&
+        (isLinearMutationTool(request.tool) || isPullRequestMutationTool(request.tool))
+      ) {
+        return "reject_once";
+      }
       if (READ_TOOL_KINDS.has(kind))
         return mode === "review" ||
           isDiscoveryWarningOnlyRole(input.roleId) ||
@@ -442,6 +501,13 @@ const buildExecutionPolicyPermissionDecision = (
 
     // Fallback for agents that omit `kind`: classify by tool label, then by command.
     if (isEditToolName(request.tool)) return mode === "agent_write" ? "allow_once" : "reject_once";
+    if (mode === "review" && isReviewAllowedExecution(request)) return "allow_once";
+    if (
+      mode === "review" &&
+      (isLinearMutationPermission(request) || isPullRequestMutationPermission(request))
+    ) {
+      return "reject_once";
+    }
     return decideExecutePermission(request, input.roleId, mode);
   };
 };

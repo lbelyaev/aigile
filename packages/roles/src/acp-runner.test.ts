@@ -526,6 +526,11 @@ describe("ACP role runner", () => {
       ["review-sed", "sed -n '1,120p' packages/roles/src/acp-runner.ts"],
       ["review-rg-targeted", "rg TODO packages/roles/src/acp-runner.ts"],
       ["review-rg-broad", "rg TODO"],
+      ["review-rg-pr-mutation-pattern", 'rg "gh pr merge" packages/roles/src/acp-runner.ts'],
+      [
+        "review-rg-linear-mutation-pattern",
+        'rg "mcp__linear__update_issue" packages/roles/src/acp-runner.test.ts',
+      ],
       ["review-grep-broad", "grep -R TODO ."],
       ["review-diff", "git diff"],
       ["review-log", "git log --oneline -5"],
@@ -595,6 +600,16 @@ describe("ACP role runner", () => {
     expect(
       connectInput.decidePermission?.({
         sessionId: "LIN-123:checker",
+        requestId: "review-search-kind-pr-pattern",
+        tool: "Search",
+        kind: "search",
+        description: JSON.stringify({ command: 'rg "gh pr merge"' }),
+        options: [],
+      }),
+    ).toBe("allow_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:checker",
         requestId: "review-write-kind",
         tool: "Write",
         kind: "write",
@@ -602,6 +617,102 @@ describe("ACP role runner", () => {
         options: [],
       }),
     ).toBe("reject_once");
+    for (const [requestId, tool] of [
+      ["review-github-pr-get", "mcp__github__get_pull_request"],
+      ["review-github-pr-list", "mcp__github__list_pull_requests"],
+      ["review-github-pr-files", "mcp__github__get_pull_request_files"],
+    ] as const) {
+      expect(
+        connectInput.decidePermission?.({
+          sessionId: "LIN-123:checker",
+          requestId,
+          tool,
+          kind: "read",
+          description: tool,
+          options: [],
+        }),
+      ).toBe("allow_once");
+    }
+    for (const [requestId, tool] of [
+      ["review-linear-update", "mcp__linear__update_issue"],
+      ["review-linear-comment", "mcp__linear__create_comment"],
+      ["review-github-pr-request-review", "mcp__github__request_pull_request_review"],
+      ["review-github-pr-review", "mcp__github__create_pull_request_review"],
+      ["review-github-pr-merge", "mcp__github__merge_pull_request"],
+    ] as const) {
+      expect(
+        connectInput.decidePermission?.({
+          sessionId: "LIN-123:checker",
+          requestId,
+          tool,
+          kind: "read",
+          description: tool,
+          options: [],
+        }),
+      ).toBe("reject_once");
+    }
+  });
+
+  it("uses an injected deep-review policy over inherited agent-write policy", () => {
+    const connectInput = buildAcpRuntimeConnectInput({
+      roleId: "deep_reviewer",
+      issueId: "LIN-123",
+      runtime: {
+        id: "runtime-deep-reviewer",
+        transport: "stdio",
+        command: ["agent-acp"],
+      },
+      assignment: {
+        roleId: "deep_reviewer",
+        runtimeProfileId: "runtime-deep-reviewer",
+      },
+      inputArtifacts: [
+        {
+          id: "policy:LIN-123:agent-write",
+          kind: "execution.policy",
+          source: "system",
+          payload: {
+            mode: "agent_write",
+            fileWrites: "allowed",
+            commits: "forbidden",
+            shellCommands: "workspace",
+          },
+        },
+        {
+          id: "policy:LIN-123:deep-review",
+          kind: "execution.policy",
+          source: "system",
+          payload: {
+            mode: "review",
+            fileWrites: "forbidden",
+            commits: "forbidden",
+            pushes: "forbidden",
+            shellCommands: "review_read_only",
+          },
+        },
+      ],
+    });
+
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:deep_reviewer",
+        requestId: "deep-review-edit",
+        tool: "Edit",
+        kind: "edit",
+        description: "/repo/aigile/README.md",
+        options: [],
+      }),
+    ).toBe("reject_once");
+    expect(
+      connectInput.decidePermission?.({
+        sessionId: "LIN-123:deep_reviewer",
+        requestId: "deep-review-read",
+        tool: "Bash",
+        kind: "execute",
+        description: JSON.stringify({ command: "git diff" }),
+        options: [],
+      }),
+    ).toBe("allow_once");
   });
 
   it("classifies agent-write permissions by ACP tool kind regardless of tool label", () => {
