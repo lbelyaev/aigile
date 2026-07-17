@@ -293,6 +293,25 @@ const requestArtifact = (
   payload,
 });
 
+const reviewExecutionPolicyArtifact = (issueId: string): WorkflowArtifact => ({
+  id: `policy:${issueId}:deep-review-read-only`,
+  kind: "execution.policy",
+  source: "system",
+  payload: {
+    mode: "review",
+    fileWrites: "forbidden",
+    commits: "forbidden",
+    pushes: "forbidden",
+    linearMutations: "forbidden",
+    pullRequestMutations: "forbidden",
+    shellCommands: "review_read_only",
+    instructions: [
+      "Deep-review angle sessions are read-only.",
+      "Do not edit files, commit, push, mutate Linear, or mutate GitHub pull requests.",
+    ],
+  },
+});
+
 const DEEP_REVIEW_CHECKPOINT_KIND = "deep_review.checkpoint";
 
 interface DeepReviewCheckpointPayload {
@@ -534,7 +553,8 @@ export const runAssignedDeepReview = async (
     }
     emitProgress(mode, angle, totalSubcalls, findingId);
     const result = await input.runRole("deep_reviewer", [
-      ...input.inputArtifacts,
+      ...input.inputArtifacts.filter((artifact) => artifact.kind !== "execution.policy"),
+      reviewExecutionPolicyArtifact(input.issueId),
       requestArtifact(input.issueId, ++sequence, payload),
     ]);
     const checkpointPayload =
@@ -564,25 +584,39 @@ export const runAssignedDeepReview = async (
   let refutationsUsed = 0;
   let stopped = false;
 
-  const runAnglePass = async (angle: DeepReviewAngle, totalSubcalls: number) =>
-    passResultFromArtifact(
-      angle,
-      await runCheckpointed(
-        "angle_pass",
+  const runAnglePass = async (
+    angle: DeepReviewAngle,
+    totalSubcalls: number,
+  ): Promise<DeepReviewPassResult> => {
+    try {
+      return passResultFromArtifact(
         angle,
-        {
-          mode: "angle_pass",
+        await runCheckpointed(
+          "angle_pass",
           angle,
-          reviewerModel,
-          instructions:
-            "Run only this independent deep-review angle. Return checker.verdict: pass only if this angle finds no issues, changes_requested for grounded defects, escalate for uncertainty requiring human attention.",
-          reviewStrategy: input.reviewStrategyMode,
-          skillHints: input.skillHints ?? [],
-        },
-        totalSubcalls,
-      ),
-      changedFiles,
-    );
+          {
+            mode: "angle_pass",
+            angle,
+            reviewerModel,
+            instructions:
+              "Run only this independent deep-review angle. Return checker.verdict: pass only if this angle finds no issues, changes_requested for grounded defects, escalate for uncertainty requiring human attention.",
+            reviewStrategy: input.reviewStrategyMode,
+            skillHints: input.skillHints ?? [],
+          },
+          totalSubcalls,
+        ),
+        changedFiles,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        angle,
+        verdict: "escalate",
+        summary: `Deep-review angle failed before returning a verdict: ${message}`,
+        findings: [],
+      };
+    }
+  };
 
   const refuteFinding = async (
     pass: DeepReviewPassResult,
@@ -656,35 +690,66 @@ export const runAssignedDeepReview = async (
     if (!refutation.survives) findings.push(refutedPassFinding(pass, refutation));
   };
 
-  if (deepReviewMode === "full") {
+  if (deepReviewMode === "full" || deepReviewMode === "bounded") {
+    const angleRunLimit = Number.isFinite(maxDeepReviewCalls)
+      ? Math.max(0, Math.min(angles.length, maxDeepReviewCalls))
+      : angles.length;
+    const anglesToRun = angles.slice(0, angleRunLimit);
+    if (anglesToRun.length === 0) {
+      findings.push(
+        stoppedFinding(angles[0] ?? "correctness", `budget reached: maxDeepReviewCalls=0`),
+      );
+    }
     passResults.push(
-      ...(await mapWithConcurrency(angles, anglePassConcurrency, async (angle) =>
-        runAnglePass(angle, angles.length),
+      ...(await mapWithConcurrency(anglesToRun, anglePassConcurrency, async (angle) =>
+        runAnglePass(angle, anglesToRun.length),
       )),
     );
     const refutationCount = passResults.reduce((count, pass) => {
       const findingRefutations = Math.min(pass.findings.length, maxFindingsPerAngle);
       return count + findingRefutations + (pass.verdict === "pass" ? 1 : 0);
     }, 0);
-    const totalSubcalls = angles.length + refutationCount;
-    for (const pass of passResults) {
+    const totalSubcalls = anglesToRun.length + refutationCount;
+    refutationLoop: for (const pass of passResults) {
       let refutedFindingsForPass = 0;
       for (const finding of pass.findings.slice(0, maxFindingsPerAngle)) {
         if (refutationsUsed >= maxRefutationsTotal) {
-          findings.push(
-            skippedFindingsFinding(pass, pass.findings.length - refutedFindingsForPass),
-          );
+          if (deepReviewMode === "full") {
+            findings.push(
+              skippedFindingsFinding(pass, pass.findings.length - refutedFindingsForPass),
+            );
+          } else {
+            findings.push({ ...finding, angle: pass.angle });
+            findings.push(
+              stoppedFinding(
+                pass.angle,
+                `budget reached: maxRefutationsTotal=${maxRefutationsTotal}`,
+                `refutation-budget:${pass.angle}`,
+              ),
+            );
+          }
           stopped = true;
           break;
         }
         const stopReason = budgetStopReason();
         if (stopReason !== undefined) {
+          if (deepReviewMode === "bounded") findings.push({ ...finding, angle: pass.angle });
           findings.push(stoppedFinding(pass.angle, stopReason, `budget:${pass.angle}`));
           stopped = true;
           break;
         }
         await refuteFinding(pass, finding, totalSubcalls);
         refutedFindingsForPass += 1;
+        if (deepReviewMode === "bounded" && findings.length >= maxSurvivingFindings) {
+          findings.push(
+            stoppedFinding(
+              pass.angle,
+              `fail-fast after ${findings.length} surviving finding(s)`,
+              `fail-fast:${pass.angle}`,
+            ),
+          );
+          break refutationLoop;
+        }
       }
       if (stopped) break;
       const skippedFindings = pass.findings.length - maxFindingsPerAngle;
@@ -709,6 +774,16 @@ export const runAssignedDeepReview = async (
         await refutePass(pass, totalSubcalls);
       } else if (pass.findings.length === 0) {
         findings.push(nonPassWithoutFinding(pass));
+        if (deepReviewMode === "bounded" && findings.length >= maxSurvivingFindings) {
+          findings.push(
+            stoppedFinding(
+              pass.angle,
+              `fail-fast after ${findings.length} surviving finding(s)`,
+              `fail-fast:${pass.angle}`,
+            ),
+          );
+          break;
+        }
       }
     }
   } else {

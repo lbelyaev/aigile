@@ -153,7 +153,20 @@ describe("deep review", () => {
     const progress: string[] = [];
     const artifact = await runAssignedDeepReview({
       issueId: "LIN-1",
-      inputArtifacts: [],
+      inputArtifacts: [
+        {
+          id: "policy:LIN-1:agent-write",
+          kind: "execution.policy",
+          source: "system",
+          payload: {
+            mode: "agent_write",
+            fileWrites: "allowed",
+            commits: "forbidden",
+            pushes: "forbidden",
+            shellCommands: "workspace",
+          },
+        },
+      ],
       reviewerModel: "independent-review-model",
       deepReviewMode: "full",
       onProgress: (event) =>
@@ -162,6 +175,11 @@ describe("deep review", () => {
         ),
       runRole: async (roleId, artifacts) => {
         expect(roleId).toBe("deep_reviewer");
+        expect(
+          artifacts
+            .filter((artifact) => artifact.kind === "execution.policy")
+            .map((artifact) => (artifact.payload as { mode?: string }).mode),
+        ).toEqual(["review"]);
         const request = artifacts.at(-1);
         expect(request?.kind).toBe("deep_review.request");
         const payload = request?.payload as { mode: string; angle?: DeepReviewPassResult["angle"] };
@@ -331,7 +349,7 @@ describe("deep review", () => {
       inputArtifacts: [],
       reviewerModel: "independent-review-model",
       angles: ["correctness", "removed-behavior", "cross-file"],
-      deepReviewMode: "full",
+      deepReviewMode: "bounded",
       angleConcurrency: 2,
       runRole: async (_roleId, artifacts) => {
         const request = artifacts.at(-1);
@@ -371,6 +389,51 @@ describe("deep review", () => {
     const artifact = await artifactPromise;
     expect(artifact.payload).toMatchObject({ verdict: "pass" });
     expect(maxActive).toBe(2);
+  });
+
+  it("aggregates remaining assigned angles when one angle pass throws", async () => {
+    const artifact = await runAssignedDeepReview({
+      issueId: "LIN-1",
+      inputArtifacts: [],
+      reviewerModel: "independent-review-model",
+      angles: ["correctness", "removed-behavior", "cross-file"],
+      deepReviewMode: "bounded",
+      angleConcurrency: 2,
+      maxSurvivingFindings: 10,
+      runRole: async (_roleId, artifacts) => {
+        const request = artifacts.at(-1);
+        const payload = request?.payload as {
+          mode: string;
+          angle?: DeepReviewPassResult["angle"];
+        };
+        if (payload.mode === "angle_pass" && payload.angle === "removed-behavior") {
+          throw new Error("reviewer runtime failed");
+        }
+        return {
+          id: `agent:LIN-1:deep_reviewer:${payload.mode}:${payload.angle}`,
+          kind: "checker.verdict",
+          source: "agent",
+          producerRoleId: "deep_reviewer",
+          payload: {
+            verdict:
+              payload.mode === "angle_pass" && payload.angle === "correctness"
+                ? "changes_requested"
+                : "pass",
+            summary: `${payload.mode} ${payload.angle}`,
+            reasons:
+              payload.mode === "angle_pass" && payload.angle === "correctness"
+                ? ["surviving defect"]
+                : [],
+          },
+        };
+      },
+    });
+
+    expect(artifact.payload).toMatchObject({ verdict: "escalate" });
+    expect((artifact.payload as { reasons: string[] }).reasons).toEqual([
+      "correctness: surviving defect",
+      "removed-behavior: removed-behavior reported escalate without structured findings",
+    ]);
   });
 
   it("fail-fast stops before remaining angles after a surviving actionable defect", async () => {
@@ -478,7 +541,11 @@ describe("deep review", () => {
       },
     });
 
-    expect(requestModes).toEqual(["angle_pass:correctness", "refute_finding:correctness"]);
+    expect(requestModes).toEqual([
+      "angle_pass:correctness",
+      "angle_pass:removed-behavior",
+      "refute_finding:correctness",
+    ]);
     expect(artifact.payload).toMatchObject({
       verdict: "changes_requested",
     });

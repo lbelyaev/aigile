@@ -226,10 +226,11 @@ describe("demo orchestration", () => {
     expect(roles).not.toContain("checker");
     expect(requestModes).toEqual([
       "angle_pass:correctness",
-      "refute_pass:correctness",
       "angle_pass:removed-behavior",
-      "refute_pass:removed-behavior",
       "angle_pass:cross-file",
+      "angle_pass:tests-faithful-to-reality",
+      "refute_pass:correctness",
+      "refute_pass:removed-behavior",
       "refute_finding:cross-file",
     ]);
     expect(result.finalState).toBe("developing");
