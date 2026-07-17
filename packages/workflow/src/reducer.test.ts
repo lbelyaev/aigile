@@ -41,6 +41,7 @@ const expectedTransitions: Record<
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
     review_changes_requested: "illegal",
+    human_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -62,6 +63,7 @@ const expectedTransitions: Record<
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
     review_changes_requested: "illegal",
+    human_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -87,6 +89,7 @@ const expectedTransitions: Record<
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
     review_changes_requested: "illegal",
+    human_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -108,6 +111,7 @@ const expectedTransitions: Record<
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
     review_changes_requested: "illegal",
+    human_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -133,6 +137,7 @@ const expectedTransitions: Record<
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
     review_changes_requested: "illegal",
+    human_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -162,6 +167,11 @@ const expectedTransitions: Record<
       command: "start_developer_attempt",
       developerAttempts: 2,
     },
+    human_changes_requested: {
+      state: "changes_requested",
+      command: "start_developer_attempt",
+      developerAttempts: 2,
+    },
     checker_escalated: { state: "escalated", command: "request_human_attention" },
     work_satisfied: { state: "satisfied", command: "sync_sources_of_truth" },
     publish_failed: "illegal",
@@ -183,6 +193,7 @@ const expectedTransitions: Record<
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
     review_changes_requested: "illegal",
+    human_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -204,6 +215,7 @@ const expectedTransitions: Record<
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
     review_changes_requested: "illegal",
+    human_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -229,6 +241,11 @@ const expectedTransitions: Record<
       command: "start_developer_attempt",
       developerAttempts: 2,
     },
+    human_changes_requested: {
+      state: "changes_requested",
+      command: "start_developer_attempt",
+      developerAttempts: 2,
+    },
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: { state: "escalated", command: "request_human_attention" },
@@ -250,6 +267,7 @@ const expectedTransitions: Record<
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
     review_changes_requested: "illegal",
+    human_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -271,6 +289,7 @@ const expectedTransitions: Record<
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
     review_changes_requested: "illegal",
+    human_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -292,6 +311,7 @@ const expectedTransitions: Record<
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
     review_changes_requested: "illegal",
+    human_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -313,6 +333,7 @@ const expectedTransitions: Record<
     checker_passed: "illegal",
     checker_requested_changes: "illegal",
     review_changes_requested: "illegal",
+    human_changes_requested: "illegal",
     checker_escalated: "illegal",
     work_satisfied: "illegal",
     publish_failed: "illegal",
@@ -385,7 +406,9 @@ describe("workflow reducer", () => {
       { state: "verifying", eventType: "verification_failed" },
       { state: "checking", eventType: "checker_requested_changes" },
       { state: "checking", eventType: "review_changes_requested", deep: true },
+      { state: "checking", eventType: "human_changes_requested", deep: true },
       { state: "merge_ready", eventType: "review_changes_requested", deep: true },
+      { state: "merge_ready", eventType: "human_changes_requested", deep: true },
     ];
 
     for (const { state, eventType, deep } of cappedTransitions) {
@@ -393,7 +416,9 @@ describe("workflow reducer", () => {
       const retryResult = transitionWorkflow(snapshotFor(state, 1), eventFor(eventType), policy);
 
       const retryState =
-        eventType === "review_changes_requested" ? "changes_requested" : "developing";
+        eventType === "review_changes_requested" || eventType === "human_changes_requested"
+          ? "changes_requested"
+          : "developing";
       expect(retryResult.snapshot.state, `${state} x ${eventType} retry state`).toBe(retryState);
       expect(retryResult.snapshot.developerAttempts, `${state} x ${eventType} retry attempts`).toBe(
         2,
@@ -418,7 +443,7 @@ describe("workflow reducer", () => {
     }
   });
 
-  it("gives deep-review change-requests a larger default retry budget than the light checker", () => {
+  it("gives review change-requests a larger default retry budget than the light checker", () => {
     // Light checker: still retrying at attempt 2, escalates after the 3rd (default 3).
     expect(
       transitionWorkflow(snapshotFor("checking", 2), eventFor("checker_requested_changes")).snapshot
@@ -441,6 +466,15 @@ describe("workflow reducer", () => {
     expect(
       transitionWorkflow(snapshotFor("checking", 5), eventFor("review_changes_requested")).snapshot
         .state,
+    ).toBe("escalated");
+
+    expect(
+      transitionWorkflow(snapshotFor("merge_ready", 4), eventFor("human_changes_requested"))
+        .snapshot.state,
+    ).toBe("changes_requested");
+    expect(
+      transitionWorkflow(snapshotFor("merge_ready", 5), eventFor("human_changes_requested"))
+        .snapshot.state,
     ).toBe("escalated");
   });
 
@@ -473,6 +507,51 @@ describe("workflow reducer", () => {
     ]);
   });
 
+  it("routes human PR rework through developer verification and checker on the same run", () => {
+    const issueId = "LIN-123";
+    const result = replayWorkflow(initialWorkflowSnapshot(issueId), [
+      { type: "issue_received", issueId, artifactId: "linear-issue" },
+      { type: "plan_drafted", issueId, artifactId: "plan-1" },
+      { type: "plan_approved", issueId },
+      { type: "developer_finished", issueId, artifactId: "attempt-1" },
+      { type: "verification_passed", issueId, artifactId: "verify-1" },
+      { type: "checker_passed", issueId, artifactId: "verdict-1" },
+      { type: "human_changes_requested", issueId, artifactId: "human-review-1" },
+      { type: "developer_finished", issueId, artifactId: "attempt-2" },
+      { type: "verification_passed", issueId, artifactId: "verify-2" },
+      { type: "checker_passed", issueId, artifactId: "verdict-2" },
+    ]);
+
+    expect(result.snapshot).toEqual({
+      issueId,
+      state: "merge_ready",
+      developerAttempts: 2,
+      artifactIds: [
+        "linear-issue",
+        "plan-1",
+        "attempt-1",
+        "verify-1",
+        "verdict-1",
+        "human-review-1",
+        "attempt-2",
+        "verify-2",
+        "verdict-2",
+      ],
+    });
+    expect(result.commandLog.map(commandTypes)).toEqual([
+      ["start_architect_plan"],
+      ["request_plan_approval"],
+      ["start_developer_attempt"],
+      ["run_verification"],
+      ["start_checker_review"],
+      ["merge_pull_request"],
+      ["start_developer_attempt"],
+      ["run_verification"],
+      ["start_checker_review"],
+      ["merge_pull_request"],
+    ]);
+  });
+
   it("rejects events for the wrong issue", () => {
     expect(() =>
       transitionWorkflow(initialWorkflowSnapshot("LIN-123"), {
@@ -489,6 +568,14 @@ describe("workflow reducer", () => {
         issueId: "LIN-123",
       }),
     ).toThrow(/illegal transition/i);
+  });
+
+  it("keeps terminal states terminal for human change requests", () => {
+    for (const state of ["satisfied", "merged", "cancelled", "failed"] as const) {
+      expect(() =>
+        transitionWorkflow(snapshotFor(state), eventFor("human_changes_requested")),
+      ).toThrow(new RegExp(`Illegal transition from "${state}" on "human_changes_requested"`));
+    }
   });
 
   it("loops verification failures back to development until the attempt cap is reached", () => {

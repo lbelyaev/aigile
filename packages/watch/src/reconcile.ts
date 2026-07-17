@@ -16,7 +16,7 @@ import {
   type RuntimeProduct,
   type RuntimeProductConfig,
 } from "@aigile/config";
-import type { WorkflowArtifact } from "@aigile/types";
+import type { WorkflowArtifact, WorkflowEvent } from "@aigile/types";
 import {
   createFileRunStore,
   initialWorkflowSnapshot,
@@ -168,6 +168,16 @@ const processedReviewFeedback = (
 ): Map<string, WorkflowArtifact> => {
   const processed = new Map<string, WorkflowArtifact>();
   for (const artifact of artifacts) {
+    if (artifact.kind === "human.review") {
+      const payload = artifact.payload;
+      if (typeof payload !== "object" || payload === null || Array.isArray(payload)) continue;
+      const prReview = (payload as { prReview?: unknown }).prReview;
+      if (typeof prReview !== "object" || prReview === null || Array.isArray(prReview)) continue;
+      const reviewId = (prReview as { reviewId?: unknown }).reviewId;
+      if (typeof reviewId === "string" && reviewId.length > 0) processed.set(reviewId, artifact);
+      continue;
+    }
+
     if (artifact.kind !== "review.feedback") continue;
     const payload = artifact.payload;
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) continue;
@@ -474,12 +484,20 @@ const latestUnprocessedChangesRequestedReview = (
     .filter((review) => review.state === "CHANGES_REQUESTED" && !processed.has(review.id))
     .sort((left, right) => submittedAtMs(right) - submittedAtMs(left))[0];
 
-const reviewCommentsPayload = (comments: readonly PullRequestReviewComment[]) =>
+const reviewSummary = (review: PullRequestReview): string => {
+  const body = review.body.trim();
+  return body.length > 0 ? body : "GitHub review requested changes.";
+};
+
+const reviewCommentFindings = (comments: readonly PullRequestReviewComment[]) =>
   comments.map((comment) => ({
-    id: comment.id,
-    body: comment.body,
-    ...(comment.path === undefined ? {} : { path: comment.path }),
-    ...(comment.line === undefined ? {} : { line: comment.line }),
+    file: comment.path ?? "pull request review",
+    line: comment.line ?? 1,
+    scenario: comment.body,
+    severity: "medium" as const,
+    confidence: 1,
+    whyItMatters: "A human reviewer requested this change before merge.",
+    minimalFix: comment.body,
   }));
 
 const githubReviewFeedbackArtifact = (
@@ -487,18 +505,20 @@ const githubReviewFeedbackArtifact = (
   pullRequest: BranchPullRequest,
   review: PullRequestReview,
 ): WorkflowArtifact => ({
-  id: `review-feedback:${safeIdPart(issueKey)}:${safeIdPart(review.id)}`,
-  kind: "review.feedback",
+  id: `human-review:${safeIdPart(issueKey)}:${safeIdPart(review.id)}`,
+  kind: "human.review",
   source: "github",
   payload: {
+    verdict: "changes_requested",
+    summary: reviewSummary(review),
+    findings: reviewCommentFindings(review.comments),
     source: "github",
-    signalId: review.id,
-    pullRequestId: pullRequest.id,
-    pullRequestUrl: pullRequest.url,
-    submittedAt: review.submittedAt,
-    body: review.body,
-    ...(review.author === undefined ? {} : { author: review.author }),
-    comments: reviewCommentsPayload(review.comments),
+    prReview: {
+      reviewId: review.id,
+      pullRequestUrl: pullRequest.url,
+      submittedAt: review.submittedAt,
+      ...(review.author === undefined ? {} : { reviewer: review.author }),
+    },
   },
 });
 
@@ -564,12 +584,15 @@ export const ingestExternalReviewFeedback = async (
     source = "github";
   }
 
+  const payload = artifact.payload as { body?: unknown; summary?: unknown };
   const reason =
-    typeof (artifact.payload as { body?: unknown }).body === "string"
-      ? (artifact.payload as { body: string }).body
-      : undefined;
-  const event = {
-    type: "review_changes_requested" as const,
+    typeof payload.summary === "string"
+      ? payload.summary
+      : typeof payload.body === "string"
+        ? payload.body
+        : undefined;
+  const event: WorkflowEvent = {
+    type: artifact.kind === "human.review" ? "human_changes_requested" : "review_changes_requested",
     issueId: input.issueKey,
     artifactId: artifact.id,
     ...(reason === undefined ? {} : { reason }),

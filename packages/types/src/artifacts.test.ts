@@ -3,6 +3,7 @@ import {
   isArchitectPlanPayload,
   isCheckerVerdictPayload,
   isDeveloperAttemptPayload,
+  isHumanReviewPayload,
   isReviewFinding,
   isReviewPunchListPayload,
   parseRoleArtifactResponse,
@@ -73,6 +74,41 @@ describe("role artifact payloads", () => {
     expect(isReviewPunchListPayload({ findings: [finding] })).toBe(true);
     expect(isReviewFinding({ ...finding, minimalFix: undefined })).toBe(false);
     expect(isReviewFinding({ ...finding, confidence: 1.2 })).toBe(false);
+  });
+
+  it("validates human review artifacts", () => {
+    const finding = {
+      file: "packages/workflow/src/reducer.ts",
+      line: 42,
+      scenario: "A published PR receives a code-owner change request.",
+      severity: "high",
+      confidence: 0.95,
+      whyItMatters: "The workflow must re-enter development before merging.",
+      minimalFix: "Route human changes through the developer loop.",
+    };
+
+    expect(
+      isHumanReviewPayload({
+        verdict: "changes_requested",
+        summary: "Code owner requested a small rework pass.",
+        findings: [finding],
+        source: "github_pr_review",
+        prReview: {
+          reviewer: "octocat",
+          pullRequestUrl: "https://github.com/acme/aigile/pull/12",
+          reviewId: "PRR_kwDOA",
+          submittedAt: "2026-07-17T12:00:00.000Z",
+        },
+      }),
+    ).toBe(true);
+
+    expect(
+      isHumanReviewPayload({
+        verdict: "changes_requested",
+        summary: "Missing findings.",
+        source: "github_pr_review",
+      }),
+    ).toBe(false);
   });
 
   it("parses role artifact responses from objects and JSON strings", () => {
@@ -192,5 +228,40 @@ describe("role artifact payloads", () => {
         payload: { findings: [{ file: "missing required fields" }] },
       }),
     ).toThrow(/invalid review punch-list/i);
+  });
+
+  it("parses and validates human review artifacts", () => {
+    const response = parseRoleArtifactResponse({
+      artifactKind: "human.review",
+      payload: {
+        verdict: "changes_requested",
+        summary: "Code owner requested rework.",
+        findings: [
+          {
+            file: "packages/types/src/domain.ts",
+            line: 44,
+            scenario: "The workflow misses human PR review feedback.",
+            severity: "medium",
+            confidence: 0.85,
+            whyItMatters: "A PR with requested changes could still merge.",
+            minimalFix: "Add a human change-request workflow event.",
+          },
+        ],
+        source: "github_pr_review",
+      },
+    });
+
+    expect(response.artifactKind).toBe("human.review");
+    expect(() =>
+      parseRoleArtifactResponse({
+        artifactKind: "human.review",
+        payload: {
+          verdict: "approved",
+          summary: "Malformed finding.",
+          findings: [{ file: "missing required fields" }],
+          source: "github_pr_review",
+        },
+      }),
+    ).toThrow(/invalid human review/i);
   });
 });
