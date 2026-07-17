@@ -9,7 +9,12 @@ import {
 } from "@aigile/adapters";
 import type { DemoWorkspaceInput } from "@aigile/demo";
 import type { WorkflowArtifact, WorkflowEvent } from "@aigile/types";
-import { createFileRunStore, createInMemoryRunStore } from "@aigile/workflow";
+import {
+  createFileRunStore,
+  createInMemoryRunStore,
+  initialWorkflowSnapshot,
+  replayWorkflow,
+} from "@aigile/workflow";
 import { loadProductConfigFromJson } from "@aigile/config";
 import {
   createAcpRoleProgressFormatter,
@@ -40,6 +45,7 @@ import {
   runRunModePreflight,
   runPublishPreflight,
   runIssueWorkspaceStatus,
+  runReviewRequestChangesCli,
   runWorkflowRunStatus,
   resolveProductCliContext,
   resolveProductCliContexts,
@@ -851,6 +857,33 @@ describe("cli formatting", () => {
   it("requires issue keys for run and allows keyless status listing", () => {
     expect(() => parseCliArgs(["run"])).toThrow(/run requires an issue key/);
     expect(parseCliArgs(["status"])).toEqual({ mode: "status" });
+  });
+
+  it("parses the operator request-changes subcommand", () => {
+    expect(
+      parseCliArgs([
+        "review",
+        "request-changes",
+        "LIN-1",
+        "--summary",
+        "Needs rework",
+        "--finding",
+        "Fix failing test",
+        "--findings-file",
+        "findings.txt",
+        "--force",
+      ]),
+    ).toEqual({
+      mode: "request-changes",
+      issueKey: "LIN-1",
+      summary: "Needs rework",
+      findings: ["Fix failing test"],
+      findingsFile: "findings.txt",
+      force: true,
+    });
+    expect(() => parseCliArgs(["review/request-changes", "LIN-1", "--summary", "x"])).toThrow(
+      /requires --finding or --findings-file/,
+    );
   });
 
   it("parses the standalone reconcile subcommand", () => {
@@ -4312,6 +4345,148 @@ describe("cli formatting", () => {
       expect(output).toContain("Resumable workflow runs:");
       expect(output).toContain("- LIN-903");
       expect(output).not.toContain("LIN-904");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("appends operator review feedback and replays merge_ready to changes_requested", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aigile-request-changes-"));
+    try {
+      const store = createFileRunStore({ directory });
+      for (const type of [
+        "issue_received",
+        "plan_drafted",
+        "plan_approved",
+        "developer_finished",
+        "verification_passed",
+        "checker_passed",
+      ] as const) {
+        await store.appendEvent("LIN-910", { type, issueId: "LIN-910" });
+      }
+
+      const output = await runReviewRequestChangesCli({
+        issueKey: "LIN-910",
+        runStatePath: directory,
+        summary: "Address review comments",
+        findings: ["Tighten CLI validation"],
+      });
+      const run = await store.load("LIN-910");
+      const appendedEvent = run?.events.at(-1);
+      const artifact = run?.artifacts.find((entry) => entry.kind === "review.feedback");
+
+      expect(output).toContain("Workflow state: merge_ready -> changes_requested");
+      expect(output).toContain("Event: review_changes_requested");
+      expect(output).toContain("Artifact: review-feedback:LIN-910:");
+      expect(appendedEvent).toMatchObject({
+        type: "review_changes_requested",
+        issueId: "LIN-910",
+        artifactId: artifact?.id,
+        reason: "Address review comments",
+      });
+      expect(artifact).toMatchObject({
+        kind: "review.feedback",
+        source: "operator",
+        payload: {
+          source: "operator",
+          body: "Address review comments",
+          findings: ["Tighten CLI validation"],
+        },
+      });
+      expect(run?.events.filter((event) => event.type === "review_changes_requested")).toHaveLength(
+        1,
+      );
+      expect(
+        replayWorkflow(initialWorkflowSnapshot("LIN-910"), run?.events ?? []).snapshot.state,
+      ).toBe("changes_requested");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("appends operator review feedback from checking and resumes development on replay", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aigile-request-changes-checking-"));
+    try {
+      const store = createFileRunStore({ directory });
+      for (const type of [
+        "issue_received",
+        "plan_drafted",
+        "plan_approved",
+        "developer_finished",
+        "verification_passed",
+      ] as const) {
+        await store.appendEvent("LIN-911", { type, issueId: "LIN-911" });
+      }
+
+      await runReviewRequestChangesCli({
+        issueKey: "LIN-911",
+        runStatePath: directory,
+        summary: "Reviewer found missing edge cases",
+        findings: ["Add terminal-state coverage"],
+      });
+      const run = await store.load("LIN-911");
+      const replay = replayWorkflow(initialWorkflowSnapshot("LIN-911"), run?.events ?? []);
+
+      expect(replay.snapshot.state).toBe("changes_requested");
+      expect(replay.commandLog.at(-1)).toEqual([
+        {
+          type: "start_developer_attempt",
+          issueId: "LIN-911",
+          reason: "Reviewer found missing edge cases",
+        },
+      ]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses terminal runs without force and leaves the store unchanged", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aigile-request-changes-terminal-"));
+    try {
+      const store = createFileRunStore({ directory });
+      for (const type of [
+        "issue_received",
+        "plan_drafted",
+        "plan_approved",
+        "developer_finished",
+        "verification_passed",
+        "checker_passed",
+        "merge_completed",
+      ] as const) {
+        await store.appendEvent("LIN-912", { type, issueId: "LIN-912" });
+      }
+      const before = await store.load("LIN-912");
+
+      await expect(
+        runReviewRequestChangesCli({
+          issueKey: "LIN-912",
+          runStatePath: directory,
+          summary: "Too late",
+          findings: ["Should not mutate"],
+        }),
+      ).rejects.toThrow(/refused.*merged.*--force/i);
+
+      expect(await store.load("LIN-912")).toEqual(before);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not mutate a missing run when requesting changes", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aigile-request-changes-missing-"));
+    try {
+      const store = createFileRunStore({ directory });
+
+      await expect(
+        runReviewRequestChangesCli({
+          issueKey: "LIN-913",
+          runStatePath: directory,
+          summary: "Missing",
+          findings: ["No persisted state"],
+        }),
+      ).rejects.toThrow(/no persisted run/i);
+
+      expect(await store.load("LIN-913")).toBeUndefined();
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

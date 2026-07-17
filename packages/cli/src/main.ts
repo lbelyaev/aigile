@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { formatDistanceStrict } from "date-fns";
 import {
@@ -61,6 +62,8 @@ import {
   isDeveloperAttemptPayload,
   type RuntimeTokenUsage,
   type WorkflowArtifact,
+  type WorkflowEvent,
+  type WorkflowState,
 } from "@aigile/types";
 import {
   ClaimedRunFailure,
@@ -86,8 +89,11 @@ import {
 } from "@aigile/workspace";
 import {
   createFileRunStore,
+  initialWorkflowSnapshot,
   listResumableRuns,
+  replayWorkflow,
   summarizePersistedRun,
+  transitionWorkflow,
   type WorkflowRunStatusSummary,
 } from "@aigile/workflow";
 import { dirname, join } from "node:path";
@@ -874,6 +880,7 @@ export type DemoMode =
   | "watch"
   | "daemon"
   | "reconcile"
+  | "request-changes"
   | "init";
 
 export const selectDemoMode = (args: readonly string[]): DemoMode =>
@@ -919,6 +926,9 @@ export interface CliArgs {
   progressLevel?: ProgressLevel;
   noColor?: boolean | undefined;
   force?: boolean;
+  summary?: string;
+  findings?: string[];
+  findingsFile?: string;
 }
 
 export interface ProductCliResolutionOptions {
@@ -1313,6 +1323,121 @@ export const runWorkflowRunStatus = async (input: WorkflowRunStatusInput): Promi
     input.issueKey,
     run === undefined ? undefined : summarizePersistedRun(run),
   );
+};
+
+export interface ReviewRequestChangesCliInput {
+  issueKey: string;
+  runStatePath: string;
+  summary: string;
+  findings?: readonly string[];
+  findingsFile?: string | undefined;
+  force?: boolean | undefined;
+}
+
+const TERMINAL_WORKFLOW_STATES = new Set<WorkflowState>([
+  "merged",
+  "satisfied",
+  "failed",
+  "cancelled",
+]);
+
+const requestChangesEligibleStates = new Set<WorkflowState>(["checking", "merge_ready"]);
+
+const safeIdPart = (value: string): string =>
+  value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "signal";
+
+const operatorFindingsFromFile = (path: string): string[] =>
+  readFileSync(path, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+const operatorReviewFeedbackArtifact = (
+  issueKey: string,
+  summary: string,
+  findings: readonly string[],
+): WorkflowArtifact => {
+  const signalHash = createHash("sha256")
+    .update(JSON.stringify({ issueKey, summary, findings }))
+    .digest("hex")
+    .slice(0, 12);
+  const signalId = `operator:${issueKey}:${signalHash}`;
+  return {
+    id: `review-feedback:${safeIdPart(issueKey)}:${safeIdPart(signalId)}`,
+    kind: "review.feedback",
+    source: "operator",
+    payload: {
+      source: "operator",
+      signalId,
+      body: summary,
+      findings,
+      comments: findings.map((finding, index) => ({
+        id: `operator-finding-${index + 1}`,
+        body: finding,
+      })),
+    },
+  };
+};
+
+export const runReviewRequestChangesCli = async (
+  input: ReviewRequestChangesCliInput,
+): Promise<string> => {
+  const summary = input.summary.trim();
+  if (summary.length === 0) throw new Error("request-changes requires --summary <text>");
+  const findings = [
+    ...(input.findings ?? []),
+    ...(input.findingsFile === undefined ? [] : operatorFindingsFromFile(input.findingsFile)),
+  ]
+    .map((finding) => finding.trim())
+    .filter((finding) => finding.length > 0);
+  if (findings.length === 0) {
+    throw new Error("request-changes requires at least one --finding or --findings-file entry");
+  }
+
+  const store = createFileRunStore({ directory: input.runStatePath });
+  const run = await store.load(input.issueKey);
+  if (run === undefined || run.events.length === 0) {
+    throw new Error(`no persisted run found for ${input.issueKey}`);
+  }
+
+  const replay = replayWorkflow(initialWorkflowSnapshot(input.issueKey), run.events);
+  const beforeState = replay.snapshot.state;
+  if (TERMINAL_WORKFLOW_STATES.has(beforeState) && input.force !== true) {
+    throw new Error(
+      `request changes refused for terminal workflow state "${beforeState}". Pass --force to attempt the reducer transition.`,
+    );
+  }
+  if (!requestChangesEligibleStates.has(beforeState) && input.force !== true) {
+    throw new Error(
+      `request changes requires workflow state checking or merge_ready, current state is "${beforeState}". Pass --force to attempt the reducer transition.`,
+    );
+  }
+
+  const artifact = operatorReviewFeedbackArtifact(input.issueKey, summary, findings);
+  const event: WorkflowEvent = {
+    type: "review_changes_requested",
+    issueId: input.issueKey,
+    artifactId: artifact.id,
+    reason: summary,
+  };
+  let afterState: WorkflowState;
+  try {
+    afterState = transitionWorkflow(replay.snapshot, event).snapshot.state;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `request changes cannot transition current workflow state "${beforeState}": ${message}`,
+    );
+  }
+
+  await store.appendEvent(input.issueKey, event, [artifact]);
+  return [
+    `Aigile request changes: ${input.issueKey}`,
+    "Source: operator",
+    `Workflow state: ${beforeState} -> ${afterState}`,
+    `Event: ${event.type}`,
+    `Artifact: ${artifact.id}`,
+  ].join("\n");
 };
 
 const defaultRunStatePathForWorktrees = (worktreesPath: string): string =>
@@ -2556,6 +2681,40 @@ export const parseCliArgs = (args: readonly string[]): CliArgs => {
     if (noColor) parsed.noColor = true;
     return parsed;
   }
+  if (
+    args[0] === "review/request-changes" ||
+    args[0] === "request-changes" ||
+    (args[0] === "review" && args[1] === "request-changes")
+  ) {
+    const issueKey = args[0] === "review" ? args[2] : args[1];
+    if (!issueKey || issueKey.startsWith("--")) {
+      throw new Error("request-changes requires an issue key");
+    }
+    const summary = optionValue(args, "--summary");
+    if (summary === undefined) throw new Error("request-changes requires --summary <text>");
+    const findings = optionValues(args, "--finding");
+    const findingsFile = optionValue(args, "--findings-file");
+    if (findings.length === 0 && findingsFile === undefined) {
+      throw new Error("request-changes requires --finding or --findings-file");
+    }
+    const parsed: CliArgs = { mode: "request-changes", issueKey, summary };
+    const repoPath = optionValue(args, "--repo");
+    const worktreesPath = optionValue(args, "--worktrees");
+    const baseBranch = optionValue(args, "--base-branch");
+    const productsConfigPath = optionValue(args, "--products-config");
+    const product = optionValue(args, "--product");
+    if (findings.length > 0) parsed.findings = findings;
+    if (findingsFile !== undefined) parsed.findingsFile = findingsFile;
+    if (repoPath !== undefined) parsed.repoPath = repoPath;
+    if (worktreesPath !== undefined) parsed.worktreesPath = worktreesPath;
+    if (baseBranch !== undefined) parsed.baseBranch = baseBranch;
+    if (productsConfigPath !== undefined) parsed.productsConfigPath = productsConfigPath;
+    if (product !== undefined) parsed.product = product;
+    if (args.includes("--force")) parsed.force = true;
+    if (progressLevel !== undefined) parsed.progressLevel = progressLevel;
+    if (noColor) parsed.noColor = true;
+    return parsed;
+  }
   if (args[0] === "reconcile") {
     const parsed: CliArgs = { mode: "reconcile" };
     const productsConfigPath = optionValue(args, "--products-config");
@@ -2696,6 +2855,7 @@ const isDemoCliMode = (mode: DemoMode): boolean =>
   mode !== "watch" &&
   mode !== "daemon" &&
   mode !== "reconcile" &&
+  mode !== "request-changes" &&
   mode !== "init";
 
 const issueFromRunArgs = (
@@ -2922,6 +3082,26 @@ const main = async (): Promise<void> => {
       baseBranch: statusContext?.baseBranch ?? args.baseBranch ?? "main",
       runStatePath,
       ...(args.progressLevel === undefined ? {} : { progressLevel: args.progressLevel }),
+    });
+    process.stdout.write(`${output}\n`);
+    return;
+  }
+  if (args.mode === "request-changes") {
+    if (args.issueKey === undefined) throw new Error("request-changes requires an issue key");
+    if (args.summary === undefined) throw new Error("request-changes requires --summary <text>");
+    const statusContext =
+      args.product !== undefined || args.productsConfigPath !== undefined
+        ? await resolveProductCliContext(args)
+        : undefined;
+    const worktreesPath =
+      statusContext?.worktreesPath ?? args.worktreesPath ?? `${process.cwd()}/.worktrees`;
+    const output = await runReviewRequestChangesCli({
+      issueKey: args.issueKey,
+      runStatePath: defaultRunStatePathForWorktrees(worktreesPath),
+      summary: args.summary,
+      ...(args.findings === undefined ? {} : { findings: args.findings }),
+      ...(args.findingsFile === undefined ? {} : { findingsFile: args.findingsFile }),
+      ...(args.force === undefined ? {} : { force: args.force }),
     });
     process.stdout.write(`${output}\n`);
     return;
