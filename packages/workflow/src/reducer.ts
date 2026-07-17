@@ -289,7 +289,7 @@ export const transitionWorkflow = (
       }
       // A deep (high-blast-radius) review is harder to satisfy, so it gets the
       // larger deep-review retry budget before escalating.
-      if (event.type === "review_changes_requested") {
+      if (event.type === "review_changes_requested" || event.type === "human_changes_requested") {
         return requestChangesOrEscalate(snapshot, event, policy.maxDeepReviewDeveloperAttempts);
       }
       if (event.type === "checker_escalated") {
@@ -319,7 +319,7 @@ export const transitionWorkflow = (
           event,
         );
       }
-      if (event.type === "review_changes_requested") {
+      if (event.type === "review_changes_requested" || event.type === "human_changes_requested") {
         return requestChangesOrEscalate(snapshot, event, policy.maxDeepReviewDeveloperAttempts);
       }
       return illegalTransition(snapshot.state, event);

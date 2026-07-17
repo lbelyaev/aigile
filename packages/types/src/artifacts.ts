@@ -13,6 +13,7 @@ export interface DeveloperAttemptPayload {
 }
 
 export type CheckerVerdict = "pass" | "changes_requested" | "escalate";
+export type HumanReviewVerdict = "approved" | "changes_requested" | "commented";
 export type ReviewFindingSeverity = "low" | "medium" | "high";
 
 export interface ReviewFinding {
@@ -29,6 +30,21 @@ export interface ReviewPunchListPayload {
   findings: ReviewFinding[];
 }
 
+export interface HumanReviewPullRequestMetadata {
+  reviewer?: string;
+  pullRequestUrl?: string;
+  reviewId?: string;
+  submittedAt?: string;
+}
+
+export interface HumanReviewPayload {
+  verdict: HumanReviewVerdict;
+  summary: string;
+  findings: ReviewFinding[];
+  source: string;
+  prReview?: HumanReviewPullRequestMetadata;
+}
+
 export interface CheckerVerdictPayload {
   verdict: CheckerVerdict;
   summary: string;
@@ -38,7 +54,12 @@ export interface CheckerVerdictPayload {
 }
 
 export interface RoleArtifactResponse {
-  artifactKind: "architect.plan" | "developer.attempt" | "checker.verdict" | string;
+  artifactKind:
+    | "architect.plan"
+    | "developer.attempt"
+    | "checker.verdict"
+    | "human.review"
+    | string;
   payload: unknown;
 }
 
@@ -86,6 +107,28 @@ const isReviewFindingArray = (value: unknown): value is ReviewFinding[] =>
 
 export const isReviewPunchListPayload = (value: unknown): value is ReviewPunchListPayload =>
   isRecord(value) && isReviewFindingArray(value.findings);
+
+const isOptionalNonEmptyString = (value: unknown): value is string | undefined =>
+  value === undefined || isNonEmptyString(value);
+
+const isHumanReviewPullRequestMetadata = (
+  value: unknown,
+): value is HumanReviewPullRequestMetadata =>
+  isRecord(value) &&
+  isOptionalNonEmptyString(value.reviewer) &&
+  isOptionalNonEmptyString(value.pullRequestUrl) &&
+  isOptionalNonEmptyString(value.reviewId) &&
+  isOptionalNonEmptyString(value.submittedAt);
+
+export const isHumanReviewPayload = (value: unknown): value is HumanReviewPayload =>
+  isRecord(value) &&
+  (value.verdict === "approved" ||
+    value.verdict === "changes_requested" ||
+    value.verdict === "commented") &&
+  isNonEmptyString(value.summary) &&
+  isReviewFindingArray(value.findings) &&
+  isNonEmptyString(value.source) &&
+  (value.prReview === undefined || isHumanReviewPullRequestMetadata(value.prReview));
 
 export const isCheckerVerdictPayload = (value: unknown): value is CheckerVerdictPayload =>
   isRecord(value) &&
@@ -161,6 +204,9 @@ const validateKnownPayload = (response: RoleArtifactResponse): RoleArtifactRespo
   }
   if (response.artifactKind === "review.punchlist" && !isReviewPunchListPayload(response.payload)) {
     throw new Error("Invalid review punch-list payload");
+  }
+  if (response.artifactKind === "human.review" && !isHumanReviewPayload(response.payload)) {
+    throw new Error("Invalid human review payload");
   }
   return response;
 };

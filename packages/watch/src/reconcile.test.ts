@@ -804,20 +804,30 @@ describe("ingestExternalReviewFeedback", () => {
       state: "changes_requested",
       developerAttempts: 2,
     });
-    expect(replay.snapshot.artifactIds).toContainEqual(expect.stringContaining("review-feedback"));
+    expect(replay.snapshot.artifactIds).toContainEqual(expect.stringContaining("human-review"));
+    expect(run?.events).toContainEqual(
+      expect.objectContaining({
+        type: "human_changes_requested",
+        artifactId: expect.stringContaining("human-review"),
+      }),
+    );
     expect(run?.artifacts).toContainEqual(
       expect.objectContaining({
-        kind: "review.feedback",
+        kind: "human.review",
         source: "github",
         payload: expect.objectContaining({
-          body: "Please rework the API boundary.",
-          comments: [
+          verdict: "changes_requested",
+          summary: "Please rework the API boundary.",
+          source: "github",
+          findings: [
             expect.objectContaining({
-              body: "This adapter should stay pure.",
-              path: "packages/watch/src/reconcile.ts",
+              scenario: "This adapter should stay pure.",
+              file: "packages/watch/src/reconcile.ts",
             }),
           ],
-          pullRequestId: pr.id,
+          prReview: expect.objectContaining({
+            pullRequestUrl: pr.url,
+          }),
         }),
       }),
     );
@@ -858,7 +868,7 @@ describe("ingestExternalReviewFeedback", () => {
     expect(second).toEqual({ kind: "already_processed" });
     expect(
       (await store.load(issueKey))?.events.filter(
-        (event) => event.type === "review_changes_requested",
+        (event) => event.type === "human_changes_requested",
       ),
     ).toHaveLength(1);
   });
