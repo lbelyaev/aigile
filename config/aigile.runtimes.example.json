@@ -42,5 +42,35 @@
     { "roleId": "developer", "runtimeProfileId": "codex-acp" },
     { "roleId": "checker", "runtimeProfileId": "claude-acp" },
     { "roleId": "deep_reviewer", "runtimeProfileId": "claude-acp" }
-  ]
+  ],
+  "reviewStrategies": {
+    "defaultMode": "light",
+    "highRiskMode": "deep-parallel",
+    "strategies": {
+      "light": {
+        "reviewers": ["checker"],
+        "angles": ["correctness"],
+        "maxFindings": 3,
+        "validationBudget": { "maxCalls": 1, "maxMinutes": 5 },
+        "concurrency": 1,
+        "skillHints": ["code_review"]
+      },
+      "deep-parallel": {
+        "reviewers": ["deep_reviewer"],
+        "angles": ["correctness", "removed-behavior", "cross-file", "tests-faithful-to-reality"],
+        "maxFindings": 1,
+        "validationBudget": { "maxCalls": 8, "maxMinutes": 10 },
+        "concurrency": 4,
+        "skillHints": ["code_review"]
+      },
+      "full": {
+        "reviewers": ["deep_reviewer"],
+        "angles": ["correctness", "removed-behavior", "cross-file", "tests-faithful-to-reality"],
+        "maxFindings": 10,
+        "validationBudget": { "maxCalls": 20, "maxMinutes": 20 },
+        "concurrency": 4,
+        "skillHints": ["code_review"]
+      }
+    }
+  }
 }

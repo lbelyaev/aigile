@@ -3,6 +3,7 @@ export {
   loadRuntimeConfigFromJson,
   runtimeConfigToRegistry,
 } from "./runtime-config.js";
+export { loadReviewStrategyConfig } from "./review-strategy.js";
 export {
   DEFAULT_MAX_CONCURRENT_RUNS,
   defaultProductWorktreesPath,
@@ -26,6 +27,13 @@ export {
 } from "./merge-policy.js";
 
 export type { IssueStatusLabels, RuntimeConfig } from "./runtime-config.js";
+export type {
+  ReviewStrategy,
+  ReviewStrategyConfig,
+  ReviewStrategyMode,
+  ReviewStrategyReviewer,
+  ReviewValidationBudget,
+} from "./review-strategy.js";
 export type {
   ProductChangedFileGuard,
   ProductMergePolicy,

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { loadReviewStrategyConfig, type ReviewStrategyConfig } from "./review-strategy.js";
 
 export type ProductRunMode = "dry_run" | "agent_write";
 export type ProductMergePolicy = "auto" | "manual";
@@ -47,6 +48,7 @@ export interface RuntimeProduct {
     publish: boolean;
   };
   verification?: ProductVerificationPolicy;
+  reviewStrategies?: ReviewStrategyConfig;
 }
 
 export interface ProductPathResolutionOptions {
@@ -249,11 +251,16 @@ const parseProduct = (value: unknown, index: number): RuntimeProduct => {
   const maxConcurrentRuns = optionalPositiveIntegerField(value, "maxConcurrentRuns", context);
   const packageManager = optionalStringField(value, "packageManager", context);
   const verification = parseVerification(value.verification, context);
+  const reviewStrategies =
+    value.reviewStrategies === undefined
+      ? undefined
+      : loadReviewStrategyConfig(value.reviewStrategies);
   if (repoPath !== undefined) product.repoPath = repoPath;
   if (worktreesPath !== undefined) product.worktreesPath = worktreesPath;
   if (maxConcurrentRuns !== undefined) product.maxConcurrentRuns = maxConcurrentRuns;
   if (packageManager !== undefined) product.packageManager = packageManager;
   if (verification !== undefined) product.verification = verification;
+  if (reviewStrategies !== undefined) product.reviewStrategies = reviewStrategies;
   return product;
 };
 

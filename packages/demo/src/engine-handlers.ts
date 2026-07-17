@@ -16,8 +16,18 @@ import {
   type PullRequestReviewInput,
 } from "@aigile/adapters";
 import type { IssueStatusLabels } from "@aigile/config";
-import { runAssignedDeepReview, type DeepReviewProgressEvent } from "@aigile/roles";
-import { reviewRoleForChangedFiles, type WorkflowCommandHandlers } from "@aigile/workflow";
+import {
+  runAssignedDeepReview,
+  type DeepReviewAngle,
+  type DeepReviewProgressEvent,
+} from "@aigile/roles";
+import {
+  reviewRoleForChangedFiles,
+  reviewStrategyForChangedFiles,
+  type WorkflowCommandHandlers,
+  type WorkflowReviewStrategy,
+  type WorkflowReviewStrategyConfig,
+} from "@aigile/workflow";
 import { withPublishRetry, type PublishRetryOptions } from "@aigile/workspace";
 import { effectiveMergePolicy, type MergePolicy } from "./merge-policy.js";
 import { syncIssueStatusForState } from "./status-sync.js";
@@ -44,6 +54,7 @@ export interface EngineHandlerDeps {
   mergePolicy?: MergePolicy;
   issueTracker?: IssueTrackerAdapter;
   issueStatusLabels?: Partial<IssueStatusLabels>;
+  reviewStrategies?: WorkflowReviewStrategyConfig;
   publishRetry?: PublishRetryOptions;
   onDeepReviewProgress?: (event: DeepReviewProgressEvent) => void;
 }
@@ -195,6 +206,32 @@ const developerChangedFiles = (attempt: WorkflowArtifact): readonly string[] => 
   }
   return attempt.payload.changedFiles;
 };
+
+const reviewStrategyArtifact = (
+  issueKey: string,
+  attemptNumber: number,
+  strategy: WorkflowReviewStrategy,
+): WorkflowArtifact => ({
+  id: `review-strategy:${issueKey}:attempt-${attemptNumber}`,
+  kind: "review.strategy",
+  source: "system",
+  payload: strategy,
+});
+
+const deepReviewModeForStrategy = (
+  strategy: WorkflowReviewStrategy,
+): "fail-fast" | "bounded" | "full" => {
+  if (strategy.mode === "full") return "full";
+  if (strategy.mode === "deep-parallel") return "bounded";
+  return "fail-fast";
+};
+
+const deepReviewAnglesForStrategy = (
+  strategy: WorkflowReviewStrategy,
+): readonly DeepReviewAngle[] =>
+  strategy.angles.filter((angle): angle is DeepReviewAngle =>
+    ["correctness", "removed-behavior", "cross-file", "tests-faithful-to-reality"].includes(angle),
+  );
 
 const checkerReview = (verdict: WorkflowArtifact): PullRequestReviewInput => {
   if (!isCheckerVerdictPayload(verdict.payload))
@@ -410,13 +447,39 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
       const checkpointRef = await deps.checkpoint?.(
         `${issue.key} attempt ${ctx.snapshot.developerAttempts} (checkpoint)`,
       );
-      const reviewRole = reviewRoleForChangedFiles(developerChangedFiles(attempt));
+      const changedFiles = developerChangedFiles(attempt);
+      const hasConfiguredReviewStrategies = deps.reviewStrategies !== undefined;
+      const reviewStrategy = reviewStrategyForChangedFiles(changedFiles, deps.reviewStrategies);
+      const reviewRole = reviewRoleForChangedFiles(changedFiles, deps.reviewStrategies);
+      const reviewArtifacts = hasConfiguredReviewStrategies
+        ? [
+            ...ctx.artifacts,
+            reviewStrategyArtifact(issue.key, ctx.snapshot.developerAttempts, reviewStrategy),
+          ]
+        : ctx.artifacts;
       const checkpointArtifacts = ctx.checkpointArtifacts;
+      const configuredDeepReviewOptions = hasConfiguredReviewStrategies
+        ? {
+            angles: deepReviewAnglesForStrategy(reviewStrategy),
+            deepReviewMode: deepReviewModeForStrategy(reviewStrategy),
+            maxDeepReviewCalls: reviewStrategy.validationBudget.maxCalls,
+            maxDeepReviewMinutes: reviewStrategy.validationBudget.maxMinutes,
+            maxSurvivingFindings: reviewStrategy.maxFindings,
+            maxFindingsPerAngle: reviewStrategy.maxFindings,
+            maxRefutationsTotal: reviewStrategy.validationBudget.maxCalls,
+            angleConcurrency: reviewStrategy.concurrency,
+            reviewStrategyMode: reviewStrategy.mode,
+            ...(reviewStrategy.skillHints === undefined
+              ? {}
+              : { skillHints: reviewStrategy.skillHints }),
+          }
+        : {};
       const reviewed = artifactWithRunSuffix(
         reviewRole === "deep_reviewer"
           ? await runAssignedDeepReview({
               issueId: issue.key,
-              inputArtifacts: ctx.artifacts,
+              inputArtifacts: reviewArtifacts,
+              ...configuredDeepReviewOptions,
               ...(checkpointArtifacts === undefined
                 ? {}
                 : { checkpointArtifact: (artifact) => checkpointArtifacts([artifact]) }),
@@ -425,7 +488,7 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
                 : { onProgress: deps.onDeepReviewProgress }),
               runRole: deps.runRole,
             })
-          : await deps.runRole(reviewRole, ctx.artifacts),
+          : await deps.runRole(reviewRole, reviewArtifacts),
         `attempt-${ctx.snapshot.developerAttempts}`,
       );
       // Tag the verdict with the checkpoint it reviewed so the loop can find and

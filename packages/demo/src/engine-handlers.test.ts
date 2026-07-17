@@ -91,6 +91,9 @@ const buildDeps = (
     ...(overrides.issueStatusLabels === undefined
       ? {}
       : { issueStatusLabels: overrides.issueStatusLabels }),
+    ...(overrides.reviewStrategies === undefined
+      ? {}
+      : { reviewStrategies: overrides.reviewStrategies }),
     ...(overrides.publishRetry === undefined ? {} : { publishRetry: overrides.publishRetry }),
   };
 };
@@ -146,6 +149,125 @@ describe("engine command handlers", () => {
 
     expect(passing.outcome).toBe("merged");
     expect((await passingHost.getPullRequestMergeState("o/r#1")).status).toBe("merged");
+  });
+
+  it("threads configured review strategy knobs into deep review", async () => {
+    const requestPayloads: Array<Record<string, unknown>> = [];
+    const handlers = createEngineCommandHandlers(
+      buildDeps({
+        reviewStrategies: {
+          defaultMode: "light",
+          highRiskMode: "full",
+          strategies: {
+            light: {
+              mode: "light",
+              reviewers: ["checker"],
+              angles: ["correctness"],
+              maxFindings: 3,
+              validationBudget: { maxCalls: 1, maxMinutes: 5 },
+              concurrency: 1,
+              skillHints: ["code_review"],
+            },
+            full: {
+              mode: "full",
+              reviewers: ["deep_reviewer"],
+              angles: ["correctness", "cross-file"],
+              maxFindings: 6,
+              validationBudget: { maxCalls: 10, maxMinutes: 11 },
+              concurrency: 2,
+              skillHints: ["code_review"],
+            },
+          },
+        },
+        runRole: async (roleId, artifacts) => {
+          if (roleId === "architect") return planArtifact();
+          if (roleId === "developer")
+            return attemptArtifact("developer:LIN-1", ["packages/workflow/src/engine.ts"]);
+          if (roleId !== "deep_reviewer") throw new Error(`unexpected role ${roleId}`);
+          const request = artifacts.at(-1);
+          requestPayloads.push(request?.payload as Record<string, unknown>);
+          return verdictArtifact("pass");
+        },
+      }),
+    );
+
+    await runWorkflowEngine({
+      issueId: "LIN-1",
+      store: createInMemoryRunStore(),
+      handlers,
+      initialArtifacts: [issueToArtifact(makeIssue())],
+    });
+
+    expect(requestPayloads.map((payload) => `${payload.mode}:${payload.angle}`)).toEqual([
+      "angle_pass:correctness",
+      "angle_pass:cross-file",
+      "refute_pass:correctness",
+      "refute_pass:cross-file",
+    ]);
+    expect(requestPayloads[0]).toMatchObject({
+      reviewStrategy: "full",
+      skillHints: ["code_review"],
+    });
+  });
+
+  it("preserves unconfigured deep-review defaults while selecting the legacy deep reviewer", async () => {
+    const requestModes: string[] = [];
+    const handlers = createEngineCommandHandlers(
+      buildDeps({
+        runRole: async (roleId, artifacts) => {
+          if (roleId !== "deep_reviewer") throw new Error(`unexpected role ${roleId}`);
+          const request = artifacts.at(-1);
+          const payload = request?.payload as { mode?: string; angle?: string };
+          requestModes.push(`${payload.mode}:${payload.angle ?? "none"}`);
+          if (payload.mode === "angle_pass" && payload.angle === "correctness") {
+            return {
+              id: "deep-review:correctness",
+              kind: "checker.verdict",
+              source: "agent",
+              payload: {
+                verdict: "changes_requested",
+                summary: "two refutable findings",
+                reasons: ["two findings"],
+                findings: [
+                  {
+                    file: "packages/workflow/src/engine.ts",
+                    line: 10,
+                    scenario: "first finding",
+                    severity: "medium",
+                    confidence: 0.9,
+                    whyItMatters: "would block review",
+                    minimalFix: "fix first",
+                  },
+                  {
+                    file: "packages/workflow/src/engine.ts",
+                    line: 11,
+                    scenario: "second finding",
+                    severity: "medium",
+                    confidence: 0.8,
+                    whyItMatters: "would block review",
+                    minimalFix: "fix second",
+                  },
+                ],
+              },
+            };
+          }
+          return verdictArtifact(payload.mode === "refute_finding" ? "changes_requested" : "pass");
+        },
+      }),
+    );
+
+    await handlers.start_checker_review?.({
+      command: { type: "start_checker_review", issueId: "LIN-1" },
+      snapshot: {
+        issueId: "LIN-1",
+        state: "checking",
+        developerAttempts: 1,
+        artifactIds: [],
+      },
+      artifacts: [attemptArtifact("developer:LIN-1", ["packages/workflow/src/engine.ts"])],
+    } as Parameters<NonNullable<typeof handlers.start_checker_review>>[0]);
+
+    expect(requestModes.filter((mode) => mode === "refute_finding:correctness")).toHaveLength(2);
   });
 
   it("keeps a green PR in review when merge policy is manual", async () => {

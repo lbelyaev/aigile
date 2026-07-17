@@ -13,11 +13,28 @@ export interface DeveloperAttemptPayload {
 }
 
 export type CheckerVerdict = "pass" | "changes_requested" | "escalate";
+export type ReviewFindingSeverity = "low" | "medium" | "high";
+
+export interface ReviewFinding {
+  file: string;
+  line: number;
+  scenario: string;
+  severity: ReviewFindingSeverity;
+  confidence: number;
+  whyItMatters: string;
+  minimalFix: string;
+}
+
+export interface ReviewPunchListPayload {
+  findings: ReviewFinding[];
+}
 
 export interface CheckerVerdictPayload {
   verdict: CheckerVerdict;
   summary: string;
   reasons: string[];
+  findings?: ReviewFinding[];
+  developerPunchList?: ReviewPunchListPayload;
 }
 
 export interface RoleArtifactResponse {
@@ -45,13 +62,40 @@ export const isDeveloperAttemptPayload = (value: unknown): value is DeveloperAtt
   isStringArray(value.changedFiles) &&
   typeof value.verificationNotes === "string";
 
+const isPositiveInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value > 0;
+
+const isConfidence = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.trim().length > 0;
+
+export const isReviewFinding = (value: unknown): value is ReviewFinding =>
+  isRecord(value) &&
+  isNonEmptyString(value.file) &&
+  isPositiveInteger(value.line) &&
+  isNonEmptyString(value.scenario) &&
+  (value.severity === "low" || value.severity === "medium" || value.severity === "high") &&
+  isConfidence(value.confidence) &&
+  isNonEmptyString(value.whyItMatters) &&
+  isNonEmptyString(value.minimalFix);
+
+const isReviewFindingArray = (value: unknown): value is ReviewFinding[] =>
+  Array.isArray(value) && value.every(isReviewFinding);
+
+export const isReviewPunchListPayload = (value: unknown): value is ReviewPunchListPayload =>
+  isRecord(value) && isReviewFindingArray(value.findings);
+
 export const isCheckerVerdictPayload = (value: unknown): value is CheckerVerdictPayload =>
   isRecord(value) &&
   (value.verdict === "pass" ||
     value.verdict === "changes_requested" ||
     value.verdict === "escalate") &&
   typeof value.summary === "string" &&
-  isStringArray(value.reasons);
+  isStringArray(value.reasons) &&
+  (value.findings === undefined || isReviewFindingArray(value.findings)) &&
+  (value.developerPunchList === undefined || isReviewPunchListPayload(value.developerPunchList));
 
 const extractJsonObjectTexts = (value: string): string[] => {
   const direct = value.trim();
@@ -114,6 +158,9 @@ const validateKnownPayload = (response: RoleArtifactResponse): RoleArtifactRespo
   }
   if (response.artifactKind === "checker.verdict" && !isCheckerVerdictPayload(response.payload)) {
     throw new Error("Invalid checker verdict payload");
+  }
+  if (response.artifactKind === "review.punchlist" && !isReviewPunchListPayload(response.payload)) {
+    throw new Error("Invalid review punch-list payload");
   }
   return response;
 };

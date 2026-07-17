@@ -28,6 +28,7 @@ import {
   runAssignedDeepReview,
   runAssignedRole,
   type AcpRuntimeConnector,
+  type DeepReviewAngle,
   type DeepReviewProgressEvent,
   type RoleRunner,
   type RoleRuntimeRegistry,
@@ -55,9 +56,12 @@ import {
   initialWorkflowSnapshot,
   requestPublishRetry,
   reviewRoleForChangedFiles,
+  reviewStrategyForChangedFiles,
   runWorkflowEngine,
   transitionWorkflow,
   type WorkflowEngineInput,
+  type WorkflowReviewStrategy,
+  type WorkflowReviewStrategyConfig,
   type WorkflowStageTiming,
   type WorkflowSnapshot,
 } from "@aigile/workflow";
@@ -84,6 +88,7 @@ export interface DemoWithRolesInput extends DemoIssueInput {
   verify?: (artifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact>;
   beforeVerification?: (artifacts: readonly WorkflowArtifact[]) => Promise<WorkflowArtifact[]>;
   beforePullRequest?: (artifacts: readonly WorkflowArtifact[]) => Promise<void>;
+  reviewStrategies?: WorkflowReviewStrategyConfig;
   onDeepReviewProgress?: (event: DeepReviewProgressEvent) => void;
 }
 
@@ -113,6 +118,7 @@ export interface DemoWorkspaceInput extends DemoIssueInput {
   autofixCommands?: ProductVerificationCommand[];
   mergePolicy?: ProductMergePolicy;
   changedFileGuards?: ProductChangedFileGuard[];
+  reviewStrategies?: WorkflowReviewStrategyConfig;
   runStatePath?: string;
   retryEscalated?: boolean;
   resumePublish?: boolean;
@@ -317,6 +323,29 @@ const developerAttemptChangedFiles = (artifact: WorkflowArtifact): readonly stri
   }
   return artifact.payload.changedFiles;
 };
+
+const reviewStrategyInputArtifact = (
+  issueKey: string,
+  strategy: WorkflowReviewStrategy,
+): WorkflowArtifact => ({
+  id: `review-strategy:${issueKey}`,
+  kind: "review.strategy",
+  source: "system",
+  payload: strategy,
+});
+
+const deepReviewModeForStrategy = (
+  strategy: WorkflowReviewStrategy,
+): "fail-fast" | "bounded" | "full" => {
+  if (strategy.mode === "full") return "full";
+  if (strategy.mode === "deep-parallel") return "bounded";
+  return "fail-fast";
+};
+
+const deepReviewAnglesForStrategy = (strategy: WorkflowReviewStrategy): DeepReviewAngle[] =>
+  strategy.angles.filter((angle): angle is DeepReviewAngle =>
+    ["correctness", "removed-behavior", "cross-file", "tests-faithful-to-reality"].includes(angle),
+  );
 
 const markdownList = (items: readonly string[]): string[] =>
   items.length === 0 ? ["- None"] : items.map((item) => `- ${item}`);
@@ -620,13 +649,30 @@ export const runDemoIssueWithRoles = async (input: DemoWithRolesInput): Promise<
     };
   }
 
-  const reviewRole = reviewRoleForChangedFiles(developerAttemptChangedFiles(attempt));
-  const reviewInputArtifacts = checkerInputArtifacts(artifacts, issue.key);
+  const changedFiles = developerAttemptChangedFiles(attempt);
+  const reviewStrategy = reviewStrategyForChangedFiles(changedFiles, input.reviewStrategies);
+  const reviewRole = reviewRoleForChangedFiles(changedFiles, input.reviewStrategies);
+  const reviewInputArtifacts = [
+    ...checkerInputArtifacts(artifacts, issue.key),
+    reviewStrategyInputArtifact(issue.key, reviewStrategy),
+  ];
   const verdict =
     reviewRole === "deep_reviewer"
       ? await runAssignedDeepReview({
           issueId: issue.key,
           inputArtifacts: reviewInputArtifacts,
+          angles: deepReviewAnglesForStrategy(reviewStrategy),
+          deepReviewMode: deepReviewModeForStrategy(reviewStrategy),
+          maxDeepReviewCalls: reviewStrategy.validationBudget.maxCalls,
+          maxDeepReviewMinutes: reviewStrategy.validationBudget.maxMinutes,
+          maxSurvivingFindings: reviewStrategy.maxFindings,
+          maxFindingsPerAngle: reviewStrategy.maxFindings,
+          maxRefutationsTotal: reviewStrategy.validationBudget.maxCalls,
+          angleConcurrency: reviewStrategy.concurrency,
+          reviewStrategyMode: reviewStrategy.mode,
+          ...(reviewStrategy.skillHints === undefined
+            ? {}
+            : { skillHints: reviewStrategy.skillHints }),
           reviewerModel:
             input.registry.getRuntimeForRole("deep_reviewer").defaultModel ??
             input.registry.getRuntimeForRole("deep_reviewer").id,
@@ -1071,6 +1117,7 @@ export const runWorkspaceIssueWithEngine = async (
     },
     codeHost,
     mergePolicy,
+    ...(input.reviewStrategies === undefined ? {} : { reviewStrategies: input.reviewStrategies }),
     runRole: (roleId, inputArtifacts) =>
       runAssignedRole({
         roleId,

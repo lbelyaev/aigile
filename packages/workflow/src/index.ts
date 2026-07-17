@@ -25,9 +25,18 @@ export {
   summarizePersistedRun,
 } from "./engine.js";
 
-export { reviewDepthForChangedFiles, reviewRoleForChangedFiles } from "./review-routing.js";
+export {
+  reviewDepthForChangedFiles,
+  reviewRoleForChangedFiles,
+  reviewStrategyForChangedFiles,
+} from "./review-routing.js";
 
-export type { ReviewDepth } from "./review-routing.js";
+export type {
+  ReviewDepth,
+  ReviewStrategyMode,
+  WorkflowReviewStrategy,
+  WorkflowReviewStrategyConfig,
+} from "./review-routing.js";
 
 export type {
   WorkflowCommandContext,

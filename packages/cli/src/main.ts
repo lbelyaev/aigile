@@ -26,6 +26,7 @@ import {
   splitGithubRepo,
   type ProductMergePolicy,
   type ProductVerificationPolicy,
+  type ReviewStrategyConfig,
   type RuntimeProduct,
   type RuntimeProductConfig,
 } from "@aigile/config";
@@ -946,6 +947,7 @@ export interface ResolvedProductCliContext {
   maxConcurrentRuns?: number;
   packageManager?: string;
   verification?: ProductVerificationPolicy;
+  reviewStrategies?: ReviewStrategyConfig;
 }
 
 const parseRemoteHeadBranch = (remote: string, ref: string): string | undefined => {
@@ -1043,6 +1045,9 @@ const resolveProductCliContextForProduct = async (
       : { maxConcurrentRuns: product.maxConcurrentRuns }),
     ...(product?.packageManager === undefined ? {} : { packageManager: product.packageManager }),
     ...(product?.verification === undefined ? {} : { verification: product.verification }),
+    ...(product?.reviewStrategies === undefined
+      ? {}
+      : { reviewStrategies: product.reviewStrategies }),
   };
 };
 
@@ -1535,6 +1540,7 @@ export interface LinearIssueWorkflowCliInput {
   onProgressLine?: (line: string) => void;
   runWorkspace?: (input: DemoWorkspaceInput) => Promise<DemoResult>;
   verification?: ProductVerificationPolicy;
+  reviewStrategies?: ReviewStrategyConfig;
   mergePolicy?: ProductMergePolicy;
   runStatePath?: string;
   retryEscalated?: boolean;
@@ -1675,6 +1681,10 @@ export const runLinearIssueWorkflowCli = async (
   if (input.verification?.changedFileGuards !== undefined) {
     runInput.changedFileGuards = input.verification.changedFileGuards;
   }
+  const reviewStrategies =
+    input.reviewStrategies ??
+    (runtimeConfig.reviewStrategiesConfigured ? runtimeConfig.reviewStrategies : undefined);
+  if (reviewStrategies !== undefined) runInput.reviewStrategies = reviewStrategies;
   if (input.mergePolicy !== undefined) runInput.mergePolicy = input.mergePolicy;
   if (input.runStatePath !== undefined) runInput.runStatePath = input.runStatePath;
   if (input.retryEscalated === true) runInput.retryEscalated = true;
@@ -3216,6 +3226,9 @@ const main = async (): Promise<void> => {
                 ...(context.verification === undefined
                   ? {}
                   : { verification: context.verification }),
+                ...(context.reviewStrategies === undefined
+                  ? {}
+                  : { reviewStrategies: context.reviewStrategies }),
                 ...(context.mergePolicy === undefined ? {} : { mergePolicy: context.mergePolicy }),
                 ...(options.retryEscalated === true ? { retryEscalated: true } : {}),
                 ...(options.resumePublish === true ? { resumePublish: true } : {}),
@@ -3376,6 +3389,9 @@ const main = async (): Promise<void> => {
       ...(runContext?.dryRun === true ? { dryRun: true } : {}),
       ...(runContext?.agentWrite === true ? { agentWrite: true } : {}),
       ...(runContext?.verification === undefined ? {} : { verification: runContext.verification }),
+      ...(runContext?.reviewStrategies === undefined
+        ? {}
+        : { reviewStrategies: runContext.reviewStrategies }),
       ...(args.retryEscalated === true ? { retryEscalated: true } : {}),
       ...(args.resumePublish === true ? { resumePublish: true } : {}),
       ...(args.progressLevel === undefined ? {} : { progressLevel: args.progressLevel }),
@@ -3400,6 +3416,9 @@ const main = async (): Promise<void> => {
     if (runContext.verification.changedFileGuards !== undefined) {
       runInput.changedFileGuards = runContext.verification.changedFileGuards;
     }
+  }
+  if (runContext?.reviewStrategies !== undefined) {
+    runInput.reviewStrategies = runContext.reviewStrategies;
   }
   if (runContext?.dryRun === true || args.dryRun) {
     runInput.dryRun = true;

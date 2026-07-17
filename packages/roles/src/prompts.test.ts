@@ -79,9 +79,38 @@ describe("role prompt builder", () => {
     expect(prompt).toContain("may be used as an optional aid");
     expect(prompt).toContain("explicit checker methodology");
     expect(prompt).toContain("checker.verdict JSON contract is authoritative");
+    expect(prompt).toContain('"findings": [');
     expect(prompt).toContain('"artifactKind": "checker.verdict"');
     expect(prompt).not.toContain("Claude");
     expect(prompt).not.toContain("Codex");
+  });
+
+  it("injects strategy skill hints only when the runtime advertised them", () => {
+    const advertised = buildRolePrompt({
+      roleId: "deep_reviewer",
+      issueId: "LIN-456",
+      instruction: getDefaultRoleInstruction("deep_reviewer"),
+      runtimeCapabilities: {
+        skills: ["code_review"],
+      },
+      reviewSkillHints: ["code_review", "repo_read"],
+      inputArtifacts: [],
+    });
+    const missing = buildRolePrompt({
+      roleId: "deep_reviewer",
+      issueId: "LIN-456",
+      instruction: getDefaultRoleInstruction("deep_reviewer"),
+      runtimeCapabilities: {
+        skills: ["repo_read"],
+      },
+      reviewSkillHints: ["code_review"],
+      inputArtifacts: [],
+    });
+
+    expect(advertised).toContain("Chosen review strategy skill hints available: code_review");
+    expect(advertised).toContain("checker.verdict JSON contract is authoritative");
+    expect(missing).not.toContain("Chosen review strategy skill hints available: code_review");
+    expect(missing).toContain("checker.verdict JSON contract is authoritative");
   });
 
   it("falls checker prompts back to manual review when no code review skill is advertised", () => {

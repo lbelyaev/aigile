@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
 import {
   isCheckerVerdictPayload,
+  isDeveloperAttemptPayload,
   type CheckerVerdictPayload,
+  type ReviewFinding,
+  type ReviewPunchListPayload,
   type WorkflowArtifact,
 } from "@aigile/types";
+import { createDeveloperPunchList } from "./review-coordinator.js";
 
 export const DEEP_REVIEW_ANGLES = [
   "correctness",
@@ -21,6 +25,12 @@ export interface DeepReviewFinding {
   title: string;
   detail: string;
   severity: DeepReviewFindingSeverity;
+  file?: string;
+  line?: number;
+  scenario?: string;
+  confidence?: number;
+  whyItMatters?: string;
+  minimalFix?: string;
 }
 
 export interface DeepReviewSurvivingFinding extends DeepReviewFinding {
@@ -81,6 +91,8 @@ export interface DeepReviewVerdictPayload {
   reviewerModel: string;
   passResults: DeepReviewPassResult[];
   findings: DeepReviewSurvivingFinding[];
+  reviewFindings: ReviewFinding[];
+  developerPunchList: ReviewPunchListPayload;
   refutations: DeepReviewRefutationRecord[];
 }
 
@@ -134,6 +146,28 @@ const verdictFor = (
   if (passResults.some((pass) => pass.verdict === "escalate")) return "escalate";
   return findings.length > 0 ? "changes_requested" : "pass";
 };
+
+const confidenceForSeverity = (severity: DeepReviewFindingSeverity): number => {
+  if (severity === "high") return 0.85;
+  if (severity === "medium") return 0.7;
+  return 0.55;
+};
+
+const firstChangedFile = (changedFiles: readonly string[]): string =>
+  changedFiles.find((file) => file.trim().length > 0) ?? "unknown";
+
+const reviewFindingFromSurviving = (
+  finding: DeepReviewSurvivingFinding,
+  changedFiles: readonly string[],
+): ReviewFinding => ({
+  file: finding.file ?? firstChangedFile(changedFiles),
+  line: finding.line ?? 1,
+  scenario: finding.scenario ?? finding.title,
+  severity: finding.severity,
+  confidence: finding.confidence ?? confidenceForSeverity(finding.severity),
+  whyItMatters: finding.whyItMatters ?? finding.detail,
+  minimalFix: finding.minimalFix ?? `Address: ${finding.title}`,
+});
 
 export const runDeepReview = async (input: DeepReviewInput): Promise<DeepReviewVerdictPayload> => {
   const angles = input.angles ?? DEEP_REVIEW_ANGLES;
@@ -192,6 +226,10 @@ export const runDeepReview = async (input: DeepReviewInput): Promise<DeepReviewV
   }
 
   const verdict = verdictFor(passResults, findings);
+  const reviewFindings = findings.map((finding) =>
+    reviewFindingFromSurviving(finding, input.changedFiles),
+  );
+  const developerPunchList = createDeveloperPunchList(reviewFindings);
   return {
     verdict,
     summary:
@@ -202,6 +240,8 @@ export const runDeepReview = async (input: DeepReviewInput): Promise<DeepReviewV
     reviewerModel: input.reviewerModel,
     passResults,
     findings,
+    reviewFindings,
+    developerPunchList,
     refutations,
   };
 };
@@ -218,6 +258,8 @@ export interface RunAssignedDeepReviewInput {
   maxFindingsPerAngle?: number;
   maxRefutationsTotal?: number;
   angleConcurrency?: number;
+  skillHints?: readonly string[];
+  reviewStrategyMode?: string;
   onProgress?: (event: DeepReviewProgressEvent) => void;
   checkpointArtifact?: (artifact: WorkflowArtifact) => Promise<void>;
   runRole: (
@@ -347,8 +389,22 @@ const findingSeverity = (payload: CheckerVerdictPayload): DeepReviewFindingSever
 const passResultFromArtifact = (
   angle: DeepReviewAngle,
   artifact: WorkflowArtifact,
+  changedFiles: readonly string[],
 ): DeepReviewPassResult => {
   const payload = requireCheckerPayload(artifact);
+  const structuredFindings =
+    payload.findings?.map((finding, index) => ({
+      id: `${angle}:${index + 1}`,
+      title: finding.scenario,
+      detail: finding.whyItMatters,
+      severity: finding.severity,
+      file: finding.file,
+      line: finding.line,
+      scenario: finding.scenario,
+      confidence: finding.confidence,
+      whyItMatters: finding.whyItMatters,
+      minimalFix: finding.minimalFix,
+    })) ?? [];
   return {
     angle,
     verdict: payload.verdict,
@@ -356,17 +412,50 @@ const passResultFromArtifact = (
     findings:
       payload.verdict === "pass"
         ? []
-        : payload.reasons.map((reason, index) => ({
-            id: `${angle}:${index + 1}`,
-            title: reason,
-            detail: payload.summary,
-            severity: findingSeverity(payload),
-          })),
+        : structuredFindings.length > 0
+          ? structuredFindings
+          : payload.reasons.map((reason, index) => ({
+              id: `${angle}:${index + 1}`,
+              title: reason,
+              detail: payload.summary,
+              severity: findingSeverity(payload),
+              file: firstChangedFile(changedFiles),
+              line: 1,
+              scenario: reason,
+              confidence: confidenceForSeverity(findingSeverity(payload)),
+              whyItMatters: payload.summary,
+              minimalFix: `Address: ${reason}`,
+            })),
   };
 };
 
 const refutationReason = (payload: CheckerVerdictPayload): string =>
   [payload.summary, ...payload.reasons].filter((line) => line.trim().length > 0).join(" ");
+
+const changedFilesFromArtifacts = (artifacts: readonly WorkflowArtifact[]): string[] => {
+  for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+    const artifact = artifacts[index];
+    if (artifact === undefined) continue;
+    if (artifact.kind === "developer.attempt" && isDeveloperAttemptPayload(artifact.payload)) {
+      return [...artifact.payload.changedFiles];
+    }
+    if (artifact.kind === "workspace.diff") {
+      const payload = artifact.payload;
+      if (
+        typeof payload === "object" &&
+        payload !== null &&
+        !Array.isArray(payload) &&
+        Array.isArray((payload as { changedFiles?: unknown }).changedFiles) &&
+        (payload as { changedFiles: unknown[] }).changedFiles.every(
+          (file) => typeof file === "string",
+        )
+      ) {
+        return [...(payload as { changedFiles: string[] }).changedFiles];
+      }
+    }
+  }
+  return [];
+};
 
 export const runAssignedDeepReview = async (
   input: RunAssignedDeepReviewInput,
@@ -387,6 +476,7 @@ export const runAssignedDeepReview = async (
       ? undefined
       : Date.now() + input.maxDeepReviewMinutes * 60_000;
   const anglePassConcurrency = boundedConcurrency(input.angleConcurrency, angles.length);
+  const changedFiles = changedFilesFromArtifacts(input.inputArtifacts);
   const reviewScope = deepReviewScope(input.inputArtifacts);
   const checkpoints = new Map<string, WorkflowArtifact>();
   for (const artifact of input.inputArtifacts) {
@@ -486,9 +576,12 @@ export const runAssignedDeepReview = async (
           reviewerModel,
           instructions:
             "Run only this independent deep-review angle. Return checker.verdict: pass only if this angle finds no issues, changes_requested for grounded defects, escalate for uncertainty requiring human attention.",
+          reviewStrategy: input.reviewStrategyMode,
+          skillHints: input.skillHints ?? [],
         },
         totalSubcalls,
       ),
+      changedFiles,
     );
 
   const refuteFinding = async (
@@ -508,6 +601,8 @@ export const runAssignedDeepReview = async (
           reviewerModel,
           instructions:
             "Adversarially try to disprove this finding. Return checker.verdict pass only if the finding survives refutation and should still count; return changes_requested if the refutation succeeds and the finding should be dropped; return escalate if the evidence is too ambiguous.",
+          reviewStrategy: input.reviewStrategyMode,
+          skillHints: input.skillHints ?? [],
         },
         totalSubcalls,
         finding.id,
@@ -540,6 +635,8 @@ export const runAssignedDeepReview = async (
           reviewerModel,
           instructions:
             "Adversarially try to disprove this pass verdict by looking for missed issues. Return checker.verdict pass only if the pass verdict survives refutation; return changes_requested if you found a missed issue; return escalate if the evidence is too ambiguous.",
+          reviewStrategy: input.reviewStrategyMode,
+          skillHints: input.skillHints ?? [],
         },
         totalSubcalls,
       ),
@@ -694,6 +791,10 @@ export const runAssignedDeepReview = async (
   }
 
   const verdict = verdictFor(passResults, findings);
+  const reviewFindings = findings.map((finding) =>
+    reviewFindingFromSurviving(finding, changedFiles),
+  );
+  const developerPunchList = createDeveloperPunchList(reviewFindings, input.maxSurvivingFindings);
   const result: DeepReviewVerdictPayload = {
     verdict,
     summary:
@@ -704,6 +805,8 @@ export const runAssignedDeepReview = async (
     reviewerModel,
     passResults,
     findings,
+    reviewFindings,
+    developerPunchList,
     refutations,
   };
 
@@ -716,6 +819,8 @@ export const runAssignedDeepReview = async (
       verdict: result.verdict,
       summary: result.summary,
       reasons: result.reasons,
+      findings: result.developerPunchList.findings,
+      developerPunchList: result.developerPunchList,
     },
   };
 };

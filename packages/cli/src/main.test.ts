@@ -3037,6 +3037,90 @@ describe("cli formatting", () => {
     expect(output).toContain("Pull request: https://github.local/lbelyaev/aigile/pull/1");
   });
 
+  it("passes explicitly configured runtime review strategies into Linear issue workflow runs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aigile-runtime-review-strategy-"));
+    const runtimeConfigPath = join(root, "runtime.json");
+    let capturedInput: DemoWorkspaceInput | undefined;
+    try {
+      writeFileSync(
+        runtimeConfigPath,
+        JSON.stringify({
+          runtimes: [
+            {
+              id: "checker-runtime",
+              transport: "stdio",
+              command: ["agent-acp", "--checker"],
+            },
+          ],
+          assignments: [{ roleId: "checker", runtimeProfileId: "checker-runtime" }],
+          reviewStrategies: {
+            defaultMode: "light",
+            highRiskMode: "full",
+            strategies: {
+              full: {
+                reviewers: ["deep_reviewer"],
+                angles: ["correctness", "cross-file"],
+                maxFindings: 7,
+                validationBudget: { maxCalls: 12, maxMinutes: 15 },
+                concurrency: 2,
+                skillHints: ["code_review"],
+              },
+            },
+          },
+        }),
+      );
+
+      await runLinearIssueWorkflowCli({
+        apiKey: "test-key",
+        issueKey: "LBE-70",
+        teamKey: "LBE",
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        runtimeConfigPath,
+        dryRun: true,
+        fetchGraphql: async (query) => {
+          if (query.includes("IssueByKey")) {
+            return {
+              issue: {
+                id: "issue-id",
+                identifier: "LBE-70",
+                title: "Configure review strategies",
+                description: "",
+                state: { name: "In Progress" },
+                comments: { nodes: [] },
+              },
+            };
+          }
+          throw new Error(`unexpected query: ${query}`);
+        },
+        runWorkspace: async (input) => {
+          capturedInput = input;
+          return {
+            issueKey: input.issue.key,
+            finalState: "satisfied",
+            artifacts: [],
+            timeline: [],
+            durationMs: 0,
+          };
+        },
+      });
+
+      const reviewStrategies = capturedInput?.reviewStrategies;
+      if (reviewStrategies === undefined) throw new Error("review strategies were not forwarded");
+      const fullStrategy = reviewStrategies.strategies?.full;
+      if (fullStrategy === undefined) throw new Error("full strategy was not forwarded");
+      expect(reviewStrategies.highRiskMode).toBe("full");
+      expect(fullStrategy).toMatchObject({
+        maxFindings: 7,
+        validationBudget: { maxCalls: 12, maxMinutes: 15 },
+        concurrency: 2,
+        skillHints: ["code_review"],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not post-sync already satisfied Linear runs outside the engine", async () => {
     const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
 

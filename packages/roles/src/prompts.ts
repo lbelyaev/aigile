@@ -6,6 +6,7 @@ export interface BuildRolePromptInput {
   instruction: string;
   inputArtifacts: readonly WorkflowArtifact[];
   runtimeCapabilities?: AcpRuntimeCapabilities;
+  reviewSkillHints?: readonly string[];
 }
 
 const DEFAULT_ROLE_INSTRUCTIONS: Record<string, string> = {
@@ -25,7 +26,7 @@ const DEFAULT_ROLE_INSTRUCTIONS: Record<string, string> = {
     "Apply a tests-faithful-to-reality lens: flag tests or mocks that return values real GitHub, Linear, CLIs, APIs, or adapters would not return, including nonexistent gh --json fields, nonexistent Linear states, impossible mergeability states, or success paths that skip real external-system constraints.",
     "Run or inspect the supplied verification suite/typecheck and relevant contract or smoke oracles when policy permits; if an angle is not verified, bias to changes_requested rather than pass.",
     "Perform a self-refutation pass before the verdict: list the strongest reason your conclusion could be wrong and check it against the artifacts, diff, callers, and verification evidence.",
-    "Return checker.verdict with a verdict of pass, changes_requested, or escalate and grounded reasons.",
+    "Return checker.verdict with a verdict of pass, changes_requested, or escalate, grounded reasons, and structured findings when defects are found.",
     "Do not edit files, merge, or update source-of-truth systems directly.",
   ].join(" "),
   deep_reviewer: [
@@ -33,7 +34,7 @@ const DEFAULT_ROLE_INSTRUCTIONS: Record<string, string> = {
     "Use multiple independent angles: correctness, removed-behavior, cross-file/callers, and tests-faithful-to-reality.",
     "For every finding and for every angle-level pass verdict, perform an adversarial refutation step before it influences the final verdict.",
     "Only surviving findings and unrefuted pass verdicts may drive the final result; if a pass verdict is refuted, bias to changes_requested.",
-    "Return checker.verdict with a verdict of pass, changes_requested, or escalate and grounded reasons so the FSM can consume it like the light checker.",
+    "Return checker.verdict with a verdict of pass, changes_requested, or escalate, grounded reasons, and structured findings so the FSM can consume it like the light checker.",
     "Do not edit files, merge, or update source-of-truth systems directly.",
   ].join(" "),
 };
@@ -62,11 +63,33 @@ const PAYLOAD_EXAMPLES_BY_ROLE: Record<string, unknown> = {
     verdict: "pass",
     summary: "string",
     reasons: ["string"],
+    findings: [
+      {
+        file: "string",
+        line: 1,
+        scenario: "string",
+        severity: "medium",
+        confidence: 0.8,
+        whyItMatters: "string",
+        minimalFix: "string",
+      },
+    ],
   },
   deep_reviewer: {
     verdict: "changes_requested",
     summary: "string",
     reasons: ["string"],
+    findings: [
+      {
+        file: "string",
+        line: 1,
+        scenario: "string",
+        severity: "medium",
+        confidence: 0.8,
+        whyItMatters: "string",
+        minimalFix: "string",
+      },
+    ],
   },
 };
 
@@ -85,6 +108,18 @@ const payloadExampleForRole = (roleId: string): unknown => PAYLOAD_EXAMPLES_BY_R
 const runtimeSkillSet = (capabilities: AcpRuntimeCapabilities | undefined): Set<string> =>
   new Set((capabilities?.skills ?? []).map((skill) => skill.trim()).filter(Boolean));
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const artifactReviewSkillHints = (artifacts: readonly WorkflowArtifact[]): string[] =>
+  artifacts.flatMap((artifact) => {
+    if (artifact.kind !== "review.strategy" && artifact.kind !== "deep_review.request") return [];
+    if (!isRecord(artifact.payload) || !Array.isArray(artifact.payload.skillHints)) return [];
+    return artifact.payload.skillHints.filter(
+      (hint): hint is string => typeof hint === "string" && hint.trim().length > 0,
+    );
+  });
+
 const runtimeCapabilitySection = (input: BuildRolePromptInput): string[] => {
   const skills = runtimeSkillSet(input.runtimeCapabilities);
   const advertisedSkills = [...skills].sort();
@@ -95,6 +130,18 @@ const runtimeCapabilitySection = (input: BuildRolePromptInput): string[] => {
     lines.push(`- Advertised agent-native skills: ${advertisedSkills.join(", ")}`);
   }
   if (input.roleId === "checker" || input.roleId === "deep_reviewer") {
+    const reviewSkillHints = [
+      ...new Set([
+        ...(input.reviewSkillHints ?? []),
+        ...artifactReviewSkillHints(input.inputArtifacts),
+      ]),
+    ];
+    const advertisedReviewSkillHints = reviewSkillHints.filter((hint) => skills.has(hint)).sort();
+    if (advertisedReviewSkillHints.length > 0) {
+      lines.push(
+        `- Chosen review strategy skill hints available: ${advertisedReviewSkillHints.join(", ")}. These may be used as optional aids only.`,
+      );
+    }
     if (skills.has("code_review")) {
       lines.push(
         "- A code_review skill/tool/plugin was advertised; it may be used as an optional aid, but the explicit checker methodology in the instructions remains authoritative.",
@@ -106,6 +153,9 @@ const runtimeCapabilitySection = (input: BuildRolePromptInput): string[] => {
     }
     lines.push(
       "- The checker.verdict JSON contract is authoritative regardless of which skill or fallback path is used.",
+    );
+    lines.push(
+      "- Aigile owns the structured finding schema: file, line, scenario, severity, confidence, whyItMatters, and minimalFix.",
     );
     if (input.roleId === "deep_reviewer") {
       lines.push(
