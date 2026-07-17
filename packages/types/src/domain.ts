@@ -48,6 +48,7 @@ export const ARTIFACT_SOURCES = [
   "agent",
   "verifier",
   "human",
+  "operator",
   "system",
 ] as const;
 
