@@ -618,8 +618,25 @@ describe("ACP role runner", () => {
       }),
     ).toBe("reject_once");
     for (const [requestId, tool] of [
+      ["review-github-pr-get", "mcp__github__get_pull_request"],
+      ["review-github-pr-list", "mcp__github__list_pull_requests"],
+      ["review-github-pr-files", "mcp__github__get_pull_request_files"],
+    ] as const) {
+      expect(
+        connectInput.decidePermission?.({
+          sessionId: "LIN-123:checker",
+          requestId,
+          tool,
+          kind: "read",
+          description: tool,
+          options: [],
+        }),
+      ).toBe("allow_once");
+    }
+    for (const [requestId, tool] of [
       ["review-linear-update", "mcp__linear__update_issue"],
       ["review-linear-comment", "mcp__linear__create_comment"],
+      ["review-github-pr-request-review", "mcp__github__request_pull_request_review"],
       ["review-github-pr-review", "mcp__github__create_pull_request_review"],
       ["review-github-pr-merge", "mcp__github__merge_pull_request"],
     ] as const) {

@@ -356,7 +356,9 @@ const isPullRequestMutationPermission = (request: AcpPermissionRequest): boolean
   const surface = `${request.tool} ${command}`.toLowerCase();
   return (
     (surface.includes("github") || /(^|[_\W])(gh|pull[_-]?request|pr)([_\W]|$)/.test(surface)) &&
-    /(create|update|edit|merge|close|reopen|comment|review|approve|request|mutat)/.test(surface)
+    /(create|update|edit|merge|close|reopen|comment|review|approve|request[_-]?review|mutat)/.test(
+      surface,
+    )
   );
 };
 
@@ -364,7 +366,9 @@ const isPullRequestMutationTool = (tool: string): boolean => {
   const lowered = tool.toLowerCase();
   return (
     (lowered.includes("github") || /(^|[_\W])(gh|pull[_-]?request|pr)([_\W]|$)/.test(lowered)) &&
-    /(create|update|edit|merge|close|reopen|comment|review|approve|request|mutat)/.test(lowered)
+    /(create|update|edit|merge|close|reopen|comment|review|approve|request[_-]?review|mutat)/.test(
+      lowered,
+    )
   );
 };
 
