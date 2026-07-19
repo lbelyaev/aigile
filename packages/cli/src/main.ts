@@ -1866,6 +1866,39 @@ export const runLinearIssueWorkflowCli = async (
     const line = formatDeepReviewProgress(event, input.display);
     if (line.trim().length > 0) input.onProgressLine?.(line);
   };
+  if (
+    input.dryRun !== true &&
+    input.publish === true &&
+    input.runStatePath !== undefined &&
+    runInput.codeHost !== undefined &&
+    runInput.pullRequestTarget !== undefined
+  ) {
+    const feedback = await ingestExternalReviewFeedback({
+      issueKey: input.issueKey,
+      branchName: issueBranchName(input.issueKey),
+      target: runInput.pullRequestTarget,
+      codeHost: runInput.codeHost,
+      store: createFileRunStore({ directory: input.runStatePath }),
+      issue,
+      issueStatusLabels: runtimeConfig.issueStatusLabels,
+      ...(runInput.issueTracker === undefined ? {} : { issueTracker: runInput.issueTracker }),
+    });
+    if (feedback.kind === "ingested") {
+      input.onProgressLine?.(
+        formatDisplayLine(
+          {
+            type: "row",
+            issueKey: input.issueKey,
+            source: feedback.source === "github" ? "github" : "linear",
+            action: "feedback",
+            detail: `Ingested ${feedback.source} feedback before run (${feedback.state})`,
+            severity: "info",
+          },
+          input.display,
+        ),
+      );
+    }
+  }
   const result = await (input.runWorkspace ?? runWorkspaceIssueWithEngine)(runInput);
   const syncedResult = await syncLinearIssueWorkflowResult(input, result);
   const formattedResult = formatDemoResult(syncedResult);

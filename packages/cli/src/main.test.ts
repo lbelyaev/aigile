@@ -3155,6 +3155,133 @@ describe("cli formatting", () => {
     expect(output).toContain("Pull request: https://github.local/lbelyaev/aigile/pull/1");
   });
 
+  it("ingests GitHub review feedback before direct Linear issue workflow runs", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aigile-direct-feedback-"));
+    const store = createFileRunStore({ directory });
+    try {
+      await store.appendEvent("LBE-78", { type: "issue_received", issueId: "LBE-78" });
+      await store.appendEvent("LBE-78", {
+        type: "plan_drafted",
+        issueId: "LBE-78",
+        artifactId: "plan",
+      });
+      await store.appendEvent("LBE-78", { type: "plan_approved", issueId: "LBE-78" });
+      await store.appendEvent("LBE-78", {
+        type: "developer_finished",
+        issueId: "LBE-78",
+        artifactId: "attempt",
+      });
+      await store.appendEvent("LBE-78", {
+        type: "verification_passed",
+        issueId: "LBE-78",
+        artifactId: "verification",
+      });
+      await store.appendEvent("LBE-78", {
+        type: "checker_passed",
+        issueId: "LBE-78",
+        artifactId: "verdict",
+      });
+
+      const codeHost = createFakeCodeHostAdapter({ mergeability: "mergeable", merged: false });
+      const pullRequest = await codeHost.createPullRequest({
+        owner: "lbelyaev",
+        repo: "aigile",
+        branch: "aigile/LBE-78",
+        baseBranch: "main",
+        title: "LBE-78 Human rework",
+        body: "",
+      });
+      await codeHost.submitPullRequestReview(pullRequest.id, {
+        event: "request_changes",
+        body: "Please fix the rework path.",
+        comments: [
+          {
+            id: "comment-1",
+            path: "packages/watch/src/reconcile.ts",
+            line: 42,
+            body: "Route this through human review.",
+          },
+        ],
+      });
+
+      const progressLines: string[] = [];
+      const graphqlCalls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+      await runLinearIssueWorkflowCli({
+        apiKey: "test-key",
+        issueKey: "LBE-78",
+        teamKey: "LBE",
+        repoPath: "/repo/aigile",
+        worktreesPath: "/repo/aigile/.worktrees",
+        runtimeConfigPath: "config/aigile.runtimes.example.json",
+        agentWrite: true,
+        publish: true,
+        pullRequestTarget: { owner: "lbelyaev", repo: "aigile", baseBranch: "main" },
+        codeHost,
+        runStatePath: directory,
+        onProgressLine: (line) => progressLines.push(line),
+        fetchGraphql: async (query, variables) => {
+          graphqlCalls.push({ query, variables });
+          if (query.includes("WorkflowStateByName")) {
+            return { workflowStates: { nodes: [{ id: "state-developing", name: "In Progress" }] } };
+          }
+          if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+          if (query.includes("issueUpdate")) return {};
+          if (query.includes("IssueByKey")) {
+            return {
+              issue: {
+                id: "issue-id",
+                identifier: "LBE-78",
+                title: "Human review rework",
+                description: "",
+                state: { name: "In Review" },
+                comments: { nodes: [] },
+              },
+            };
+          }
+          throw new Error(`unexpected query: ${query}`);
+        },
+        runWorkspace: async (input) => {
+          const persisted = await store.load(input.issue.key);
+          const latestEvent = persisted?.events.at(-1);
+          expect(latestEvent).toMatchObject({
+            type: "human_changes_requested",
+            issueId: "LBE-78",
+          });
+          const humanReview = persisted?.artifacts.find(
+            (artifact) => artifact.kind === "human.review",
+          );
+          expect(humanReview?.payload).toMatchObject({
+            verdict: "changes_requested",
+            summary: "Please fix the rework path.",
+            findings: [
+              {
+                file: "packages/watch/src/reconcile.ts",
+                line: 42,
+                scenario: "Route this through human review.",
+              },
+            ],
+          });
+          return {
+            issueKey: input.issue.key,
+            finalState: "changes_requested",
+            artifacts: persisted?.artifacts ?? [],
+            timeline: [],
+            durationMs: 0,
+          };
+        },
+      });
+
+      expect(
+        progressLines.some((line) =>
+          line.includes("Ingested github feedback before run (changes_requested)"),
+        ),
+      ).toBe(true);
+      expect(graphqlCalls.filter((call) => call.query.includes("issueUpdate"))).toHaveLength(1);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("passes explicitly configured runtime review strategies into Linear issue workflow runs", async () => {
     const root = mkdtempSync(join(tmpdir(), "aigile-runtime-review-strategy-"));
     const runtimeConfigPath = join(root, "runtime.json");
