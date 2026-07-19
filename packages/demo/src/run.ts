@@ -55,10 +55,12 @@ import {
   createFileRunStore,
   initialWorkflowSnapshot,
   requestPublishRetry,
+  summarizePersistedRun,
   reviewRoleForChangedFiles,
   reviewStrategyForChangedFiles,
   runWorkflowEngine,
   transitionWorkflow,
+  type RunStore,
   type WorkflowEngineInput,
   type WorkflowReviewStrategy,
   type WorkflowReviewStrategyConfig,
@@ -189,6 +191,22 @@ const workspaceToArtifact = (payload: unknown, issueKey: string): WorkflowArtifa
   source: "system",
   payload,
 });
+
+const shouldClearRunForEscalatedRetry = async (
+  store: RunStore,
+  issueKey: string,
+): Promise<boolean> => {
+  try {
+    const persisted = await store.load(issueKey);
+    if (persisted === undefined) return false;
+    return summarizePersistedRun(persisted).state === "escalated";
+  } catch {
+    // A retry request is also the operator's recovery path for an unreadable
+    // run file. Without clearing it, the engine cannot even replay far enough
+    // to decide what to do next.
+    return true;
+  }
+};
 
 const workspaceRolePayload = (
   workspace: { worktreePath: string },
@@ -1196,7 +1214,12 @@ export const runWorkspaceIssueWithEngine = async (
   const store = createFileRunStore({
     directory: input.runStatePath ?? join(input.worktreesPath, "..", "runs"),
   });
-  if (input.retryEscalated === true) await store.deleteRun(input.issue.key);
+  if (
+    input.retryEscalated === true &&
+    (await shouldClearRunForEscalatedRetry(store, input.issue.key))
+  ) {
+    await store.deleteRun(input.issue.key);
+  }
   if (input.resumePublish === true) await requestPublishRetry(store, input.issue.key);
   const engineInput: WorkflowEngineInput = {
     issueId: input.issue.key,
