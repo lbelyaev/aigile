@@ -27,6 +27,16 @@ export const issueStatusLabelForState = (
 const artifactIdByKind = (artifacts: readonly WorkflowArtifact[], kind: string): string =>
   artifacts.find((artifact) => artifact.kind === kind)?.id ?? "unavailable";
 
+const appendIssueCommentOnce = async (
+  tracker: IssueTrackerAdapter,
+  issueKey: string,
+  existingComments: readonly string[],
+  comment: string,
+): Promise<void> => {
+  if (existingComments.includes(comment)) return;
+  await tracker.appendIssueComment(issueKey, comment);
+};
+
 export const formatSatisfiedStatusComment = (
   state: WorkflowState,
   artifacts: readonly WorkflowArtifact[],
@@ -92,6 +102,9 @@ export const syncIssueStatusForState = async (input: {
   };
   const status = issueStatusLabelForState(input.state, labels, input.originalStatus);
   try {
+    const current = await tracker.getIssue(input.issueKey).catch(() => undefined);
+    if (current?.status === status) return;
+
     await tracker.updateIssueStatus(input.issueKey, status);
 
     const artifacts = input.artifacts ?? [];
@@ -103,20 +116,22 @@ export const syncIssueStatusForState = async (input: {
         ? (pullRequestArtifact.payload as PullRequestRecord)
         : undefined;
     if (input.state === "satisfied") {
-      await tracker.appendIssueComment(
-        input.issueKey,
-        formatSatisfiedStatusComment(input.state, artifacts),
-      );
+      const comment = formatSatisfiedStatusComment(input.state, artifacts);
+      if (current === undefined) await tracker.appendIssueComment(input.issueKey, comment);
+      else await appendIssueCommentOnce(tracker, input.issueKey, current.comments, comment);
     } else if ((input.state === "merged" || input.state === "merge_ready") && pullRequest) {
-      await tracker.appendIssueComment(
-        input.issueKey,
-        formatPublishedStatusComment(input.state, pullRequest, artifacts, input.reason),
+      const comment = formatPublishedStatusComment(
+        input.state,
+        pullRequest,
+        artifacts,
+        input.reason,
       );
+      if (current === undefined) await tracker.appendIssueComment(input.issueKey, comment);
+      else await appendIssueCommentOnce(tracker, input.issueKey, current.comments, comment);
     } else if (input.state === "escalated" || input.state === "failed") {
-      await tracker.appendIssueComment(
-        input.issueKey,
-        formatPullRequestBlockedComment(pullRequest, input.reason, artifacts),
-      );
+      const comment = formatPullRequestBlockedComment(pullRequest, input.reason, artifacts);
+      if (current === undefined) await tracker.appendIssueComment(input.issueKey, comment);
+      else await appendIssueCommentOnce(tracker, input.issueKey, current.comments, comment);
     }
   } catch (error) {
     input.onError?.(error, input.state, status);

@@ -2095,6 +2095,18 @@ export const runLinearWatchLoopCli = async (input: LinearWatchLoopCliInput): Pro
                     codeHost: input.codeHost!,
                     store: createFileRunStore({ directory: input.runStatePath! }),
                     issue,
+                    issueTracker: tracker,
+                    issueStatusLabels: {
+                      inReview: labels.inReview,
+                      done: labels.done,
+                      developing: input.claimStatus ?? DEFAULT_ISSUE_STATUS_LABELS.developing,
+                    },
+                    onStatusSyncError: (error, status) => {
+                      const message = error instanceof Error ? error.message : String(error);
+                      lines.push(
+                        `Reconcile ${issue.key}: Linear status sync failed (${status}): ${message}`,
+                      );
+                    },
                     ...(input.reworkStatus === undefined
                       ? {}
                       : { reworkStatus: input.reworkStatus }),

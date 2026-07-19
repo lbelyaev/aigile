@@ -873,6 +873,65 @@ describe("ingestExternalReviewFeedback", () => {
     ).toHaveLength(1);
   });
 
+  it("moves Linear back to in progress when external rework feedback is ingested", async () => {
+    const issueKey = "LIN-37";
+    const store = await seedMergeReadyRun(issueKey);
+    const codeHost = createFakeCodeHostAdapter();
+    const tracker = createFakeIssueTrackerAdapter([
+      {
+        id: "i",
+        key: issueKey,
+        title: "t",
+        description: "",
+        acceptanceCriteria: [],
+        status: "In Review",
+        comments: [],
+      },
+    ]);
+    const statusUpdates: string[] = [];
+    const issueTracker = {
+      ...tracker,
+      updateIssueStatus: async (key: string, status: string) => {
+        statusUpdates.push(status);
+        await tracker.updateIssueStatus(key, status);
+      },
+    };
+    const pr = await codeHost.createPullRequest({
+      owner: "o",
+      repo: "r",
+      branch: `aigile/${issueKey}`,
+      baseBranch: "main",
+      title: "t",
+      body: "b",
+    });
+    await codeHost.submitPullRequestReview(pr.id, {
+      event: "request_changes",
+      body: "Please rework the API boundary.",
+    });
+
+    const first = await ingestExternalReviewFeedback({
+      issueKey,
+      branchName: `aigile/${issueKey}`,
+      target,
+      codeHost,
+      store,
+      issueTracker,
+    });
+    const second = await ingestExternalReviewFeedback({
+      issueKey,
+      branchName: `aigile/${issueKey}`,
+      target,
+      codeHost,
+      store,
+      issueTracker,
+    });
+
+    expect(first).toMatchObject({ kind: "ingested", state: "changes_requested" });
+    expect(second).toEqual({ kind: "already_processed" });
+    expect(statusUpdates).toEqual(["In Progress"]);
+    expect((await tracker.getIssue(issueKey)).status).toBe("In Progress");
+  });
+
   it("does not reopen a merged pull request", async () => {
     const issueKey = "LIN-35";
     const store = await seedMergeReadyRun(issueKey);
