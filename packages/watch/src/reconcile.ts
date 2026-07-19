@@ -8,9 +8,11 @@ import type {
   PullRequestReviewComment,
 } from "@aigile/adapters";
 import {
+  DEFAULT_ISSUE_STATUS_LABELS,
   effectiveMergePolicy,
   resolveProductPaths,
   splitGithubRepo,
+  type IssueStatusLabels,
   type MergePolicy,
   type ProductPathResolutionOptions,
   type RuntimeProduct,
@@ -117,6 +119,9 @@ export interface IngestExternalReviewFeedbackInput {
   store: RunStore;
   issue?: IssueRecord;
   reworkStatus?: string;
+  issueTracker?: IssueTrackerAdapter;
+  issueStatusLabels?: Partial<IssueStatusLabels>;
+  onStatusSyncError?: ((error: unknown, status: string) => void) | undefined;
 }
 
 export type IngestExternalReviewFeedbackOutcome =
@@ -540,6 +545,21 @@ const linearReworkFeedbackArtifact = (issue: IssueRecord, status: string): Workf
   };
 };
 
+const syncReworkIssueStatus = async (input: IngestExternalReviewFeedbackInput): Promise<void> => {
+  if (input.issueTracker === undefined) return;
+  const status = {
+    ...DEFAULT_ISSUE_STATUS_LABELS,
+    ...(input.issueStatusLabels ?? {}),
+  }.developing;
+  try {
+    const current = await input.issueTracker.getIssue(input.issueKey).catch(() => input.issue);
+    if (current?.status === status) return;
+    await input.issueTracker.updateIssueStatus(input.issueKey, status);
+  } catch (error) {
+    input.onStatusSyncError?.(error, status);
+  }
+};
+
 export const ingestExternalReviewFeedback = async (
   input: IngestExternalReviewFeedbackInput,
 ): Promise<IngestExternalReviewFeedbackOutcome> => {
@@ -599,6 +619,7 @@ export const ingestExternalReviewFeedback = async (
   };
   const result = transitionWorkflow(replay.snapshot, event);
   await input.store.appendEvent(input.issueKey, event, [artifact]);
+  await syncReworkIssueStatus(input);
   return {
     kind: "ingested",
     source: source!,

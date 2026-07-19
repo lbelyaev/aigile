@@ -119,6 +119,24 @@ const strictStatusTracker = (statuses: string[], comments: string[] = []): Issue
   },
 });
 
+const mutableStatusTracker = (
+  initialStatus: string,
+  statuses: string[],
+  comments: string[] = [],
+): IssueTrackerAdapter => {
+  let currentStatus = initialStatus;
+  return {
+    getIssue: async () => makeIssue({ status: currentStatus, comments: [...comments] }),
+    updateIssueStatus: async (_key, status) => {
+      currentStatus = status;
+      statuses.push(status);
+    },
+    appendIssueComment: async (_key, comment) => {
+      comments.push(comment);
+    },
+  };
+};
+
 describe("engine command handlers", () => {
   it("auto-merges a green PR end to end", async () => {
     let published = 0;
@@ -537,6 +555,108 @@ describe("engine command handlers", () => {
     await expect(codeHost.getPullRequest("o/r#2")).rejects.toThrow(); // no second PR
   });
 
+  it("publishes HITL rework to the existing PR with one comment and status sync per attempt", async () => {
+    const baseCodeHost = createFakeCodeHostAdapter({
+      mergeability: "mergeable",
+      checks: { "o/r#1": { status: "pending", checks: [{ name: "ci", state: "pending" }] } },
+    });
+    await baseCodeHost.createPullRequest({
+      owner: "o",
+      repo: "r",
+      branch: "aigile/LIN-1",
+      baseBranch: "main",
+      title: "LIN-1 Build the thing",
+      body: "existing",
+    });
+    let createCalls = 0;
+    const codeHost: CodeHostAdapter = {
+      ...baseCodeHost,
+      createPullRequest: async (input) => {
+        createCalls += 1;
+        return baseCodeHost.createPullRequest(input);
+      },
+    };
+    const statuses: string[] = [];
+    const issueTracker = mutableStatusTracker("In Progress", statuses);
+    const handlers = createEngineCommandHandlers(
+      buildDeps({ codeHost, issueTracker, publish: async () => {} }),
+    );
+    const ctx = {
+      command: { type: "merge_pull_request" as const, issueId: "LIN-1" },
+      snapshot: {
+        issueId: "LIN-1",
+        state: "merge_ready" as const,
+        developerAttempts: 2,
+        artifactIds: [],
+      },
+      artifacts: [
+        attemptArtifact("developer:LIN-1:attempt-2"),
+        verificationArtifact("passed"),
+        verdictArtifact("pass"),
+        {
+          id: "human-review:LIN-1:review-1",
+          kind: "human.review",
+          source: "github",
+          payload: {
+            verdict: "changes_requested",
+            summary: "Please tighten the branch reuse logic.",
+            findings: [],
+            source: "github",
+            prReview: {
+              reviewId: "review-1",
+              pullRequestUrl: "https://github.local/o/r/pull/1",
+              submittedAt: "2026-07-17T00:00:00.000Z",
+            },
+          },
+        } satisfies WorkflowArtifact,
+      ],
+    };
+
+    await handlers.merge_pull_request!(ctx);
+    await handlers.merge_pull_request!(ctx);
+
+    expect(createCalls).toBe(0);
+    await expect(codeHost.getPullRequest("o/r#2")).rejects.toThrow();
+    const comments = (await codeHost.getPullRequest("o/r#1")).comments.filter((comment) =>
+      comment.includes("Aigile rework attempt 2"),
+    );
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toContain("Please tighten the branch reuse logic.");
+    expect(statuses).toEqual(["In Review"]);
+  });
+
+  it("does not reuse a closed unmerged PR for the branch", async () => {
+    const baseCodeHost = createFakeCodeHostAdapter();
+    const codeHost: CodeHostAdapter = {
+      ...baseCodeHost,
+      findPullRequestForBranch: async () => ({
+        id: "o/r#1",
+        number: 1,
+        url: "https://github.local/o/r/pull/1",
+        mergeState: "unmerged",
+        open: false,
+      }),
+      createPullRequest: async () => {
+        throw new Error("must not recreate without policy");
+      },
+    };
+    const handlers = createEngineCommandHandlers(buildDeps({ codeHost }));
+
+    const result = await handlers.merge_pull_request!({
+      command: { type: "merge_pull_request" as const, issueId: "LIN-1" },
+      snapshot: {
+        issueId: "LIN-1",
+        state: "merge_ready",
+        developerAttempts: 1,
+        artifactIds: [],
+      },
+      artifacts: [],
+    });
+
+    expect(result.event?.type).toBe("publish_failed");
+    expect(result.event?.reason).toContain("closed without merge");
+  });
+
   it("retries a transient PR-create failure before publishing failure", async () => {
     const baseCodeHost = createFakeCodeHostAdapter({ mergeability: "mergeable", merged: false });
     let createCalls = 0;
@@ -780,7 +900,7 @@ describe("engine command handlers", () => {
   it("reverts cancelled runs to the original issue status through the shared label map", async () => {
     const statuses: string[] = [];
     const handlers = createEngineCommandHandlers(
-      buildDeps({ issueTracker: strictStatusTracker(statuses) }),
+      buildDeps({ issueTracker: mutableStatusTracker("In Review", statuses) }),
     );
 
     await handlers.sync_sources_of_truth!({
@@ -795,6 +915,28 @@ describe("engine command handlers", () => {
     });
 
     expect(statuses).toEqual(["Todo"]);
+  });
+
+  it("moves changes_requested to In Progress before the rework developer attempt", async () => {
+    const statuses: string[] = [];
+    const handlers = createEngineCommandHandlers(
+      buildDeps({ issueTracker: mutableStatusTracker("In Review", statuses) }),
+    );
+    const ctx = {
+      command: { type: "start_developer_attempt" as const, issueId: "LIN-1" },
+      snapshot: {
+        issueId: "LIN-1",
+        state: "changes_requested" as const,
+        developerAttempts: 2,
+        artifactIds: [],
+      },
+      artifacts: [],
+    };
+
+    await handlers.start_developer_attempt!(ctx);
+    await handlers.start_developer_attempt!(ctx);
+
+    expect(statuses).toEqual(["In Progress"]);
   });
 });
 

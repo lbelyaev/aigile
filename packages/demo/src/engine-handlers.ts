@@ -372,6 +372,121 @@ const addPullRequestCommentToArtifact = (
   return cloned;
 };
 
+const addCommentToPullRequestArtifact = (
+  artifact: WorkflowArtifact,
+  comment: string,
+  hasComment: (comments: readonly string[]) => boolean,
+): WorkflowArtifact => {
+  const cloned = structuredClone(artifact);
+  const payload = cloned.payload;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return cloned;
+  const comments = (payload as { comments?: unknown }).comments;
+  if (!Array.isArray(comments) || hasComment(comments)) return cloned;
+  (payload as { comments: string[] }).comments = [...comments, comment];
+  return cloned;
+};
+
+const reworkAttemptMarker = (attemptNumber: number): string =>
+  `<!-- aigile:rework-attempt:${attemptNumber} -->`;
+
+const hasReworkAttemptComment = (comments: readonly string[], attemptNumber: number): boolean =>
+  comments.some((comment) => comment.includes(reworkAttemptMarker(attemptNumber)));
+
+const artifactsHaveReworkAttemptComment = (
+  artifacts: readonly WorkflowArtifact[],
+  attemptNumber: number,
+): boolean =>
+  artifacts.some((artifact) => {
+    if (artifact.kind !== "github.pull_request") return false;
+    const payload = artifact.payload;
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+    const comments = (payload as { comments?: unknown }).comments;
+    return Array.isArray(comments) && hasReworkAttemptComment(comments, attemptNumber);
+  });
+
+const latestHumanFeedback = (
+  artifacts: readonly WorkflowArtifact[],
+): WorkflowArtifact | undefined => {
+  for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+    const artifact = artifacts[index];
+    if (artifact?.kind === "human.review" || artifact?.kind === "review.feedback") return artifact;
+  }
+  return undefined;
+};
+
+const textFromPayloadField = (payload: unknown, field: string): string | undefined => {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return undefined;
+  const value = (payload as Record<string, unknown>)[field];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+};
+
+const feedbackReference = (feedback: WorkflowArtifact): string | undefined => {
+  const payload = feedback.payload;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return undefined;
+  const prReview = (payload as { prReview?: unknown }).prReview;
+  if (typeof prReview !== "object" || prReview === null || Array.isArray(prReview)) {
+    return textFromPayloadField(payload, "signalId");
+  }
+  const url = (prReview as { pullRequestUrl?: unknown }).pullRequestUrl;
+  const reviewId = (prReview as { reviewId?: unknown }).reviewId;
+  if (typeof url === "string" && url.length > 0) {
+    return typeof reviewId === "string" && reviewId.length > 0 ? `${url} (${reviewId})` : url;
+  }
+  return typeof reviewId === "string" && reviewId.length > 0 ? reviewId : undefined;
+};
+
+const feedbackText = (feedback: WorkflowArtifact): string => {
+  const payload = feedback.payload;
+  const body =
+    textFromPayloadField(payload, "body") ??
+    textFromPayloadField(payload, "summary") ??
+    textFromPayloadField(payload, "status") ??
+    feedback.id;
+  return body.length > 1_200 ? `${body.slice(0, 1_197)}...` : body;
+};
+
+const quoteBlock = (value: string): string =>
+  value
+    .split(/\r?\n/)
+    .slice(0, 20)
+    .map((line) => `> ${line}`)
+    .join("\n");
+
+const formatReworkAttemptComment = (
+  attemptNumber: number,
+  attempt: WorkflowArtifact,
+  feedback: WorkflowArtifact,
+): string => {
+  const summary = isDeveloperAttemptPayload(attempt.payload)
+    ? attempt.payload.summary
+    : "developer attempt completed";
+  const reference = feedbackReference(feedback);
+  return [
+    reworkAttemptMarker(attemptNumber),
+    `## Aigile rework attempt ${attemptNumber}`,
+    "",
+    `Developer: ${summary}`,
+    "",
+    "Human feedback:",
+    quoteBlock(feedbackText(feedback)),
+    ...(reference === undefined ? [] : ["", `Feedback source: ${reference}`]),
+  ].join("\n");
+};
+
+const pullRequestHasReworkAttemptComment = async (
+  codeHost: CodeHostAdapter,
+  prId: string,
+  artifacts: readonly WorkflowArtifact[],
+  attemptNumber: number,
+): Promise<boolean> => {
+  if (artifactsHaveReworkAttemptComment(artifacts, attemptNumber)) return true;
+  try {
+    return hasReworkAttemptComment((await codeHost.getPullRequest(prId)).comments, attemptNumber);
+  } catch {
+    return false;
+  }
+};
+
 const issueHasManualMergePolicyComment = async (
   issueTracker: IssueTrackerAdapter | undefined,
   issueKey: string,
@@ -418,6 +533,17 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
     },
     request_plan_approval: async () => ({ event: eventFor("plan_approved", issue.key) }),
     start_developer_attempt: async (ctx) => {
+      if (ctx.snapshot.state === "changes_requested") {
+        await syncIssueStatusForState({
+          issueTracker: deps.issueTracker,
+          issueKey: issue.key,
+          state: ctx.snapshot.state,
+          issueStatusLabels: deps.issueStatusLabels,
+          originalStatus: issue.status,
+          artifacts: ctx.artifacts,
+          reason: ctx.command.reason,
+        });
+      }
       // Anti-drift regression gate: if the attempt just reviewed scored worse than
       // the best checkpoint, revert the worktree to the best one so this attempt
       // hill-climbs from the best instead of building on a regression.
@@ -529,8 +655,50 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
               artifact: branchPullRequestArtifact(existing, issue, branchName, pullRequestTarget),
             };
           }
+          if (!existing.open) {
+            return {
+              event: eventFor("publish_failed", issue.key, {
+                reason: `pull request is closed without merge; refusing to reuse ${existing.url}`,
+              }),
+              artifact: branchPullRequestArtifact(existing, issue, branchName, pullRequestTarget),
+            };
+          }
           prId = existing.id;
           prArtifact = branchPullRequestArtifact(existing, issue, branchName, pullRequestTarget);
+          const latestAttempt = findLatestByKind(ctx.artifacts, "developer.attempt");
+          const feedback = latestHumanFeedback(ctx.artifacts);
+          const isHumanRework =
+            ctx.snapshot.developerAttempts > 1 &&
+            latestAttempt !== undefined &&
+            feedback !== undefined;
+          if (isHumanRework) {
+            await deps.publish();
+            const alreadyCommented = await pullRequestHasReworkAttemptComment(
+              codeHost,
+              prId,
+              ctx.artifacts,
+              ctx.snapshot.developerAttempts,
+            );
+            if (!alreadyCommented) {
+              const comment = formatReworkAttemptComment(
+                ctx.snapshot.developerAttempts,
+                latestAttempt,
+                feedback,
+              );
+              await codeHost.appendPullRequestComment(prId, comment);
+              prArtifact = addCommentToPullRequestArtifact(prArtifact, comment, (comments) =>
+                hasReworkAttemptComment(comments, ctx.snapshot.developerAttempts),
+              );
+            }
+            await syncIssueStatusForState({
+              issueTracker: deps.issueTracker,
+              issueKey: issue.key,
+              state: ctx.snapshot.state,
+              issueStatusLabels: deps.issueStatusLabels,
+              originalStatus: issue.status,
+              artifacts: [...ctx.artifacts, prArtifact],
+            });
+          }
         } else {
           await deps.publish();
           const plan = findLatestByKind(ctx.artifacts, "architect.plan");
@@ -580,17 +748,15 @@ export const createEngineCommandHandlers = (deps: EngineHandlerDeps): WorkflowCo
           if (!alreadyRecordedManualPolicy) {
             await codeHost.appendPullRequestComment(prId, manualPolicyComment);
           }
-          if (!alreadyRecordedManualPolicy) {
-            await syncIssueStatusForState({
-              issueTracker: deps.issueTracker,
-              issueKey: issue.key,
-              state: ctx.snapshot.state,
-              issueStatusLabels: deps.issueStatusLabels,
-              originalStatus: issue.status,
-              artifacts: [...ctx.artifacts, prArtifact],
-              reason: `Merge policy: manual; ${manualMergePolicyReason}`,
-            });
-          }
+          await syncIssueStatusForState({
+            issueTracker: deps.issueTracker,
+            issueKey: issue.key,
+            state: ctx.snapshot.state,
+            issueStatusLabels: deps.issueStatusLabels,
+            originalStatus: issue.status,
+            artifacts: [...ctx.artifacts, prArtifact],
+            reason: `Merge policy: manual; ${manualMergePolicyReason}`,
+          });
           return {
             artifact: alreadyRecordedManualPolicy
               ? prArtifact
