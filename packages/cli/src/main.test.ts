@@ -2555,6 +2555,91 @@ describe("cli formatting", () => {
     expect(calls.filter((call) => call.query.includes("issueUpdate"))).toHaveLength(1);
   });
 
+  it("moves Linear review issues back to In Progress when external review feedback is ingested", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aigile-watch-rework-ingest-"));
+    const runStatePath = join(root, "runs");
+    const store = createFileRunStore({ directory: runStatePath });
+    const issueKey = "LBE-81";
+    for (const event of [
+      { type: "issue_received" as const, issueId: issueKey },
+      { type: "plan_drafted" as const, issueId: issueKey, artifactId: "plan-1" },
+      { type: "plan_approved" as const, issueId: issueKey },
+      { type: "developer_finished" as const, issueId: issueKey, artifactId: "attempt-1" },
+      { type: "verification_passed" as const, issueId: issueKey, artifactId: "verify-1" },
+      { type: "checker_passed" as const, issueId: issueKey, artifactId: "verdict-1" },
+    ]) {
+      await store.appendEvent(issueKey, event);
+    }
+
+    const codeHost = createFakeCodeHostAdapter();
+    const pr = await codeHost.createPullRequest({
+      owner: "lbelyaev",
+      repo: "aigile",
+      branch: `aigile/${issueKey}`,
+      baseBranch: "main",
+      title: "LBE-81 Preserve PR state",
+      body: "Demo PR",
+    });
+    await codeHost.submitPullRequestReview(pr.id, {
+      event: "request_changes",
+      body: "Please wire the live watch caller.",
+    });
+
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    try {
+      const output = await runLinearWatchLoopCli({
+        apiKey: "test-key",
+        teamKey: "LBE",
+        readyStatus: "Todo",
+        reviewStatus: "In Review",
+        claimStatus: "In Progress",
+        pollIntervalMs: 1,
+        maxPolls: 1,
+        sleep: async () => {},
+        codeHost,
+        pullRequestTarget: { owner: "lbelyaev", repo: "aigile" },
+        runStatePath,
+        fetchGraphql: async (query, variables) => {
+          calls.push({ query, variables });
+          if (query.includes("ReadyIssues")) {
+            if (variables.readyStatus === "In Review") {
+              return {
+                issues: {
+                  nodes: [
+                    {
+                      id: "issue-id",
+                      identifier: issueKey,
+                      title: "Preserve PR state",
+                      description: "",
+                      state: { name: "In Review" },
+                      comments: { nodes: [] },
+                    },
+                  ],
+                },
+              };
+            }
+            return { issues: { nodes: [] } };
+          }
+          if (query.includes("WorkflowStateByName")) {
+            return {
+              workflowStates: { nodes: [{ id: "state-in-progress", name: "In Progress" }] },
+            };
+          }
+          if (query.includes("IssueIdByKey")) return { issue: { id: "issue-id" } };
+          if (query.includes("issueUpdate")) return {};
+          return {};
+        },
+      });
+
+      expect(output).toContain("Poll 1: ingested github feedback for LBE-81");
+      expect(
+        calls.filter((call) => call.query.includes("issueUpdate")).map((call) => call.variables),
+      ).toContainEqual({ key: "issue-id", status: "state-in-progress" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("starts a run after claiming an issue when requested", async () => {
     const startedIssueKeys: string[] = [];
 
